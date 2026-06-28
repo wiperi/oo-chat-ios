@@ -1,0 +1,138 @@
+
+  import {
+    isHostedAgentAddress,
+    resolveHostedAgentEndpoint,
+    testAgentConnection,
+  } from '../src/session/remoteAgentClient';
+
+  describe('remoteAgentClient', () => {
+    const agentAddress =
+      '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+
+    beforeEach(() => {
+      jest.resetAllMocks();
+    });
+
+    test('validates hosted agent address format', () => {
+      expect(
+        isHostedAgentAddress(
+          '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        ),
+      ).toBe(true);
+
+      expect(isHostedAgentAddress('0xabc')).toBe(false);
+      expect(isHostedAgentAddress('not-an-address')).toBe(false);
+    });
+
+    test('resolves localhost websocket when /info matches agent address', async () => {
+      globalThis.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: jest.fn().mockResolvedValue({address: agentAddress}),
+      }) as jest.Mock;
+
+      await expect(resolveHostedAgentEndpoint(agentAddress)).resolves.toBe(
+        'ws://localhost:8000/ws',
+      );
+    });
+
+    test('falls back to relay websocket when local endpoint does not match', async () => {
+      globalThis.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: jest.fn().mockResolvedValue({
+          address:
+            '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        }),
+      }) as jest.Mock;
+
+      await expect(resolveHostedAgentEndpoint(agentAddress)).resolves.toBe(
+        'wss://oo.openonion.ai/ws/input',
+      );
+    });
+
+    test('rejects invalid agent address', async () => {
+      await expect(resolveHostedAgentEndpoint('bad-address')).rejects.toThrow(
+        'Invalid hosted agent address',
+      );
+    });
+
+    test('test connection sends CONNECT and reports success', async () => {
+      globalThis.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: jest.fn().mockResolvedValue({address: agentAddress}),
+      }) as jest.Mock;
+      const sockets: MockSocket[] = [];
+      const WebSocketImpl = makeMockWebSocket(sockets);
+
+      const promise = testAgentConnection(agentAddress, {
+        WebSocketImpl,
+        timeoutMs: 100,
+      });
+
+      await flushPromises();
+      sockets[0].onopen?.();
+      expect(JSON.parse(sockets[0].sent[0])).toEqual({
+        type: 'CONNECT',
+        to: agentAddress,
+      });
+      sockets[0].onmessage?.({data: JSON.stringify({type: 'CONNECTED'})});
+
+      await expect(promise).resolves.toEqual({
+        ok: true,
+        endpoint: 'ws://localhost:8000/ws',
+        message: 'Connected to ws://localhost:8000/ws.',
+      });
+    });
+
+    test('test connection reports backend failure reason', async () => {
+      globalThis.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: jest.fn().mockResolvedValue({address: agentAddress}),
+      }) as jest.Mock;
+      const sockets: MockSocket[] = [];
+      const WebSocketImpl = makeMockWebSocket(sockets);
+
+      const promise = testAgentConnection(agentAddress, {
+        WebSocketImpl,
+        timeoutMs: 100,
+      });
+
+      await flushPromises();
+      sockets[0].onopen?.();
+      sockets[0].onmessage?.({data: JSON.stringify({type: 'ERROR', message: 'token expired'})});
+
+      await expect(promise).resolves.toEqual({
+        ok: false,
+        message: 'token expired',
+      });
+    });
+  });
+
+class MockSocket {
+  onopen: (() => void) | null = null;
+  onmessage: ((event: { data: unknown }) => void) | null = null;
+  onerror: (() => void) | null = null;
+  onclose: (() => void) | null = null;
+  sent: string[] = [];
+
+  constructor(readonly url: string) {}
+
+  send(data: string) {
+    this.sent.push(data);
+  }
+
+  close() {}
+}
+
+function makeMockWebSocket(sockets: MockSocket[]) {
+  return class extends MockSocket {
+    constructor(url: string) {
+      super(url);
+      sockets.push(this);
+    }
+  };
+}
+
+async function flushPromises() {
+  await Promise.resolve();
+  await Promise.resolve();
+}
