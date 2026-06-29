@@ -17,9 +17,16 @@ import {
   saveAgentToken,
   type StoredAgentToken,
 } from '../storage/keyManager';
+import { testAgentConnectionForm } from '../agent/agentConnectionConfig';
 import { styles } from '../styles/appStyles';
 import type { StoredIdentity } from '../types';
 import { shortAddress } from '../utils/format';
+import {
+  invalidAddressError,
+  toUserFacingError,
+  type ErrorAction,
+  type UserFacingError,
+} from '../utils/errorMessages';
 import type { PreviewChatItem, PreviewConnectionState, PreviewConversation } from './previewTypes';
 import type { AppTab } from './tabs';
 
@@ -58,6 +65,8 @@ export function AppShell() {
   const [tokenDraft, setTokenDraft] = useState('');
   const [prompt, setPrompt] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [connectionError, setConnectionError] = useState<UserFacingError | null>(null);
+  const [isConnecting, setIsConnecting] = useState(false);
   const [conversations, setConversations] = useState<PreviewConversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [connectBackTarget, setConnectBackTarget] = useState<AppTab | null>(null);
@@ -128,15 +137,20 @@ export function AppShell() {
     setDraft(initialDraft ?? '');
     setTokenDraft('');
     setError(null);
+    setConnectionError(null);
     setConnectBackTarget(backTarget);
     setIsAddingAgent(true);
     setIsChatOpen(false);
   }, []);
 
   const handleConnect = async () => {
+    if (isConnecting) {
+      return;
+    }
+
     const normalized = draft.trim();
     if (!isHostedAgentAddress(normalized)) {
-      setError('Enter a hosted agent address in 0x-prefixed Ed25519 format.');
+      setConnectionError(invalidAddressError());
       return;
     }
 
@@ -146,12 +160,35 @@ export function AppShell() {
         setActiveAgentToken(await saveAgentToken(normalized, token));
         setTokenDraft('');
       } catch {
-        setError('Could not save the access token.');
+        setConnectionError({
+          kind: 'unknown',
+          title: 'Could not save token',
+          message: 'We could not securely save the access token. Please try again.',
+          actions: ['retry', 'dismiss'],
+        });
         return;
       }
     }
 
-    setError(null);
+    // Verify the agent is actually reachable before opening the chat, so network
+    // loss, timeouts and unreachable endpoints surface as plain-language errors.
+    setConnectionError(null);
+    setIsConnecting(true);
+    let result;
+    try {
+      result = await testAgentConnectionForm({ agentAddress: normalized });
+    } catch (err) {
+      setIsConnecting(false);
+      setConnectionError(toUserFacingError(err));
+      return;
+    }
+    setIsConnecting(false);
+    if (!result.ok) {
+      setConnectionError(toUserFacingError(result.message));
+      return;
+    }
+
+    setConnectionError(null);
     const existing = conversations.find(conversation => conversation.agentAddress === normalized);
     const now = Date.now();
     const nextConversation = existing ?? starterConversation(normalized);
@@ -233,8 +270,19 @@ export function AppShell() {
 
   const handleReconnect = () => openAddAgent('settings', activeConversation?.agentAddress ?? '');
 
+  const handleErrorAction = (action: ErrorAction) => {
+    if (action === 'retry') {
+      handleConnect();
+      return;
+    }
+    // Both "edit connection" and "dismiss" clear the error and leave the user on
+    // the form so they can correct the address or token.
+    setConnectionError(null);
+  };
+
   const handleConnectBack = () => {
     setTokenDraft('');
+    setConnectionError(null);
     setIsAddingAgent(false);
     if (connectBackTarget) {
       setTab(connectBackTarget);
@@ -292,6 +340,7 @@ export function AppShell() {
 
   const changeTab = useCallback((nextTab: AppTab) => {
     setError(null);
+    setConnectionError(null);
     setConnectBackTarget(null);
     setIsAddingAgent(false);
     setIsChatOpen(false);
@@ -329,9 +378,12 @@ export function AppShell() {
             draft={draft}
             tokenDraft={tokenDraft}
             error={error}
+            connectionError={connectionError}
+            busy={isConnecting}
             onDraftChange={setDraft}
             onTokenDraftChange={setTokenDraft}
             onConnect={handleConnect}
+            onErrorAction={handleErrorAction}
             onBack={handleConnectBack}
             showBack
           />

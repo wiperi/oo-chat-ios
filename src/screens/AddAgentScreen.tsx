@@ -1,20 +1,25 @@
 import React from 'react';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { BackChevron } from '../components/layout/BackChevron';
+import { ErrorBanner } from '../components/ErrorBanner';
 import { styles } from '../styles/appStyles';
+import type { ErrorAction, UserFacingError } from '../utils/errorMessages';
 
 export function AddAgentScreen(props: {
   draft: string;
   tokenDraft: string;
   error?: string | null;
+  connectionError?: UserFacingError | null;
+  busy?: boolean;
   onDraftChange: (value: string) => void;
   onTokenDraftChange: (value: string) => void;
   onConnect: () => void;
+  onErrorAction?: (action: ErrorAction) => void;
   onBack: () => void;
   showBack?: boolean;
 }) {
   const showBack = props.showBack ?? true;
-  const canSubmit = props.draft.trim().length > 0;
+  const canSubmit = props.draft.trim().length > 0 && !props.busy;
 
   return (
     <View style={styles.fullScreen}>
@@ -73,7 +78,14 @@ export function AddAgentScreen(props: {
           />
           <Text style={styles.helperText}>Saved in Keychain and hidden after entry.</Text>
         </View>
-        {props.error ? <Text style={styles.errorBanner}>{props.error}</Text> : null}
+        {props.connectionError ? (
+          <ErrorBanner
+            error={props.connectionError}
+            onAction={action => props.onErrorAction?.(action)}
+          />
+        ) : props.error ? (
+          <Text style={styles.errorBanner}>{props.error}</Text>
+        ) : null}
         <Pressable
           disabled={!canSubmit}
           style={({ pressed }) => [
@@ -83,7 +95,9 @@ export function AddAgentScreen(props: {
           ]}
           onPress={props.onConnect}
         >
-          <Text style={styles.fullWidthPrimaryButtonText}>Connect</Text>
+          <Text style={styles.fullWidthPrimaryButtonText}>
+            {props.busy ? 'Connecting…' : 'Connect'}
+          </Text>
         </Pressable>
       </ScrollView>
     </View>

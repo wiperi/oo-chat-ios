@@ -68,7 +68,7 @@
         timeoutMs: 100,
       });
 
-      await flushPromises();
+      await waitForSocket(sockets);
       sockets[0].onopen?.();
       expect(JSON.parse(sockets[0].sent[0])).toEqual({
         type: 'CONNECT',
@@ -96,7 +96,7 @@
         timeoutMs: 100,
       });
 
-      await flushPromises();
+      await waitForSocket(sockets);
       sockets[0].onopen?.();
       sockets[0].onmessage?.({data: JSON.stringify({type: 'ERROR', message: 'token expired'})});
 
@@ -132,7 +132,15 @@ function makeMockWebSocket(sockets: MockSocket[]) {
   };
 }
 
-async function flushPromises() {
-  await Promise.resolve();
-  await Promise.resolve();
+// testAgentConnection resolves the endpoint (several awaited fetch ticks) before
+// it constructs the WebSocket, so we poll the microtask queue until the mock
+// socket exists rather than guessing a fixed number of ticks.
+async function waitForSocket(sockets: MockSocket[], index = 0) {
+  for (let i = 0; i < 100; i++) {
+    if (sockets[index]) {
+      return;
+    }
+    await Promise.resolve();
+  }
+  throw new Error('Expected a WebSocket to be constructed');
 }
