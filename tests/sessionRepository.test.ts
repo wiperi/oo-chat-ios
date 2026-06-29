@@ -6,6 +6,7 @@ import {
   saveActiveConversationId,
   saveConversation,
 } from '../src/storage/sessionRepository';
+import { deleteAgentSecrets } from '../src/storage/keyManager';
 import type { Conversation } from '../src/types';
 
 // Stateful in-memory stand-in for @react-native-async-storage/async-storage (3.x API:
@@ -33,6 +34,10 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
       mockStore.set(key, value);
     }
   }),
+}));
+
+jest.mock('../src/storage/keyManager', () => ({
+  deleteAgentSecrets: jest.fn(async () => undefined),
 }));
 
 // Mirrors the internal storage keys of sessionRepository.ts. Used only to craft a
@@ -204,6 +209,7 @@ describe('sessionRepository', () => {
 
       expect((await listConversations()).map(item => item.id)).toEqual(['b']);
       expect(await loadActiveConversationId()).toBeNull();
+      expect(deleteAgentSecrets).toHaveBeenCalledWith('0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
     });
 
     test('deleting a non-active conversation leaves the active id intact', async () => {

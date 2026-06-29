@@ -1,16 +1,22 @@
 import React from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, Share, Text, View } from 'react-native';
 import { styles } from '../styles/appStyles';
 import { compactJson, shortAddress } from '../utils/format';
 import type { PreviewConnectionState, PreviewConversation } from '../app/previewTypes';
+import type { StoredAgentToken } from '../storage/keyManager';
+import type { StoredIdentity } from '../types';
 
 export function SettingsScreen(props: {
   active: PreviewConversation | null;
   conversations: PreviewConversation[];
   connectionState: PreviewConnectionState;
-  identity: { address: string; publicKeyHex: string } | null;
+  identity: StoredIdentity | null;
+  activeAgentToken: StoredAgentToken | null;
   lastOutbound: unknown;
   onReconnect: () => void;
+  onBackupSeed: () => Promise<string | null>;
+  onImportSeed: (seedHex: string) => Promise<StoredIdentity | null>;
+  onResetIdentity: () => Promise<StoredIdentity | null>;
 }) {
   const agentCount = new Set(
     props.conversations
@@ -22,6 +28,7 @@ export function SettingsScreen(props: {
     0,
   );
   const status = getAgentStatus(Boolean(props.active?.agentAddress), props.connectionState);
+  const activeAgentAddress = props.active?.agentAddress.trim();
 
   return (
     <ScrollView
@@ -90,6 +97,27 @@ export function SettingsScreen(props: {
             <Text numberOfLines={1} style={styles.valueText}>{props.identity?.publicKeyHex ?? 'Pending'}</Text>
           </View>
         </View>
+        <View style={styles.listSeparator} />
+        <Pressable
+          style={({ pressed }) => [styles.settingsActionRow, pressed && styles.listRowPressed]}
+          onPress={() => backupSeed(props.onBackupSeed)}
+        >
+          <Text style={styles.settingsActionText}>Backup Seed</Text>
+        </Pressable>
+        <View style={styles.listSeparator} />
+        <Pressable
+          style={({ pressed }) => [styles.settingsActionRow, pressed && styles.listRowPressed]}
+          onPress={() => importSeed(props.onImportSeed)}
+        >
+          <Text style={styles.settingsActionText}>Import Seed</Text>
+        </Pressable>
+        <View style={styles.listSeparator} />
+        <Pressable
+          style={({ pressed }) => [styles.settingsActionRow, pressed && styles.listRowPressed]}
+          onPress={() => resetIdentity(props.onResetIdentity)}
+        >
+          <Text style={styles.settingsDangerText}>Reset Identity</Text>
+        </Pressable>
       </View>
 
       <Text style={styles.sectionKicker}>Agents</Text>
@@ -106,6 +134,31 @@ export function SettingsScreen(props: {
         </View>
       </View>
 
+      <Text style={styles.sectionKicker}>Security</Text>
+      <View style={styles.groupedList}>
+        <View style={styles.settingsRowTall}>
+          <View style={styles.listMain}>
+            <Text style={styles.label}>Current Agent Credential</Text>
+            <Text numberOfLines={1} style={styles.valueText}>
+              {activeAgentAddress
+                ? props.activeAgentToken ? 'Stored in Keychain' : 'Not saved'
+                : 'No active agent'}
+            </Text>
+          </View>
+        </View>
+        {activeAgentAddress && props.activeAgentToken ? (
+          <>
+            <View style={styles.listSeparator} />
+            <View style={styles.settingsRowTall}>
+              <View style={styles.listMain}>
+                <Text style={styles.label}>Updated</Text>
+                <Text numberOfLines={1} style={styles.valueText}>{formatDate(props.activeAgentToken.updatedAt)}</Text>
+              </View>
+            </View>
+          </>
+        ) : null}
+      </View>
+
       <Text style={styles.sectionKicker}>Developer</Text>
       <View style={styles.codeCard}>
         <Text style={styles.label}>Last outbound frame</Text>
@@ -113,6 +166,59 @@ export function SettingsScreen(props: {
       </View>
     </ScrollView>
   );
+}
+
+async function backupSeed(loadSeed: () => Promise<string | null>) {
+  const seed = await loadSeed();
+  if (!seed) {
+    return;
+  }
+  await Share.share({ message: seed }).catch(() => {
+    Alert.alert('Seed', seed);
+  });
+}
+
+function importSeed(importSeedHex: (seedHex: string) => Promise<StoredIdentity | null>) {
+  Alert.prompt(
+    'Import Seed',
+    'Paste the 32-byte recovery seed.',
+    [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Import',
+        onPress: (value?: string) => {
+          const seed = value?.trim();
+          if (seed) {
+            importSeedHex(seed);
+          }
+        },
+      },
+    ],
+    'plain-text',
+  );
+}
+
+function resetIdentity(reset: () => Promise<StoredIdentity | null>) {
+  Alert.alert(
+    'Reset Identity',
+    'This replaces the device identity stored in Keychain.',
+    [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Reset', style: 'destructive', onPress: () => { reset(); } },
+    ],
+  );
+}
+
+function formatDate(value: number) {
+  if (!value) {
+    return 'Unknown';
+  }
+  return new Date(value).toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 function getAgentStatus(hasActiveAgent: boolean, connectionState: PreviewConnectionState) {

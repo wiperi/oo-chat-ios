@@ -36,6 +36,30 @@ export interface HostedAgentCallbacks {
   onStreamItems?: (items: ChatItem[]) => void;
 }
 
+export interface ConnectionTestResult {
+  ok: boolean;
+  message: string;
+  endpoint?: string;
+}
+
+interface ConnectionTestOptions {
+  WebSocketImpl?: new (url: string) => WebSocketLike;
+  timeoutMs?: number;
+}
+
+interface WebSocketLike {
+  onopen: (() => void) | null;
+  onmessage: ((event: { data: unknown }) => void) | null;
+  onerror: (() => void) | null;
+  onclose: (() => void) | null;
+  send(data: string): void;
+  close(): void;
+}
+
+export function isHostedAgentAddress(address: string): boolean {
+  return /^0x[0-9a-fA-F]{64}$/.test(address);
+}
+
 function makeId(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -111,7 +135,11 @@ async function probeHttpEndpoint(httpUrl: string, agentAddress: string, timeoutM
   };
 }
 
-async function resolveHostedAgentEndpoint(agentAddress: string, relayUrl = DEFAULT_RELAY_URL): Promise<ResolvedEndpoint> {
+async function resolveEndpointDetails(agentAddress: string, relayUrl = DEFAULT_RELAY_URL): Promise<ResolvedEndpoint> {
+  if (!isHostedAgentAddress(agentAddress)) {
+    throw new Error('Invalid hosted agent address');
+  }
+
   for (const httpUrl of LOCAL_DEV_ENDPOINTS) {
     const localEndpoint = await probeHttpEndpoint(httpUrl, agentAddress, 1200);
     if (localEndpoint) {
@@ -136,6 +164,61 @@ async function resolveHostedAgentEndpoint(agentAddress: string, relayUrl = DEFAU
     kind: 'relay',
     label: normallizedRelay,
   };
+}
+
+export async function resolveHostedAgentEndpoint(agentAddress: string, relayUrl = DEFAULT_RELAY_URL): Promise<string> {
+  return (await resolveEndpointDetails(agentAddress, relayUrl)).wsUrl;
+}
+
+export async function testAgentConnection(
+  agentAddress: string,
+  options: ConnectionTestOptions = {},
+): Promise<ConnectionTestResult> {
+  if (!isHostedAgentAddress(agentAddress)) {
+    return { ok: false, message: 'Invalid hosted agent address.' };
+  }
+
+  const endpoint = await resolveHostedAgentEndpoint(agentAddress);
+  const WebSocketImpl = options.WebSocketImpl ?? WebSocket;
+  const timeoutMs = options.timeoutMs ?? 10000;
+
+  return new Promise(resolve => {
+    let settled = false;
+    const timeout = setTimeout(() => {
+      finish({ ok: false, message: `Connection timed out while opening ${endpoint}.` });
+    }, timeoutMs);
+    const ws = new WebSocketImpl(endpoint);
+
+    function finish(result: ConnectionTestResult) {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      ws.close();
+      resolve(result);
+    }
+
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ type: 'CONNECT', to: agentAddress }));
+    };
+    ws.onmessage = (event: { data: unknown }) => {
+      const frame = parseFrame(event.data);
+      if (frame?.type === 'CONNECTED') {
+        finish({ ok: true, endpoint, message: `Connected to ${endpoint}.` });
+        return;
+      }
+      if (frame?.type === 'ERROR') {
+        finish({ ok: false, message: messageText(frame) });
+      }
+    };
+    ws.onerror = () => finish({ ok: false, message: `Could not connect to ${endpoint}.` });
+    ws.onclose = () => {
+      if (!settled) {
+        finish({ ok: false, message: `Connection closed before ${endpoint} accepted the session.` });
+      }
+    };
+  });
 }
 
 async function buildConnectFrame(agentAddress: string, conversation: Conversation, endpoint: ResolvedEndpoint): Promise<ProtocolFrame> {
@@ -341,7 +424,7 @@ export async function connectHostedAgent(
   conversation: Conversation,
   callbacks: HostedAgentCallbacks = {},
 ): Promise<HostedAgentResult> {
-  const endpoint = await resolveHostedAgentEndpoint(agentAddress);
+  const endpoint = await resolveEndpointDetails(agentAddress);
   callbacks.onConnectionState?.('reconnecting');
 
   return new Promise((resolve, reject) => {
@@ -426,7 +509,7 @@ export async function sendPromptToHostedAgent(
   files: FileAttachment[],
   callbacks: HostedAgentCallbacks = {},
 ): Promise<HostedAgentResult> {
-  const endpoint = await resolveHostedAgentEndpoint(agentAddress);
+  const endpoint = await resolveEndpointDetails(agentAddress);
   callbacks.onConnectionState?.('reconnecting');
 
   return new Promise((resolve, reject) => {

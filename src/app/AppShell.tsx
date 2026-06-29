@@ -7,7 +7,18 @@ import { AgentsScreen } from '../screens/AgentsScreen';
 import { ChatScreen } from '../screens/ChatScreen';
 import { HistoryScreen } from '../screens/HistoryScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
+import {
+  deleteAgentSecrets,
+  exportIdentitySeed,
+  importIdentitySeed,
+  loadAgentTokenMetadata,
+  loadOrCreateIdentity,
+  resetIdentity,
+  saveAgentToken,
+  type StoredAgentToken,
+} from '../storage/keyManager';
 import { styles } from '../styles/appStyles';
+import type { StoredIdentity } from '../types';
 import { shortAddress } from '../utils/format';
 import type { PreviewChatItem, PreviewConnectionState, PreviewConversation } from './previewTypes';
 import type { AppTab } from './tabs';
@@ -44,18 +55,65 @@ export function AppShell() {
   const [isAddingAgent, setIsAddingAgent] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [draft, setDraft] = useState('');
+  const [tokenDraft, setTokenDraft] = useState('');
   const [prompt, setPrompt] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [conversations, setConversations] = useState<PreviewConversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [connectBackTarget, setConnectBackTarget] = useState<AppTab | null>(null);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [identity, setIdentity] = useState<StoredIdentity | null>(null);
+  const [activeAgentToken, setActiveAgentToken] = useState<StoredAgentToken | null>(null);
 
   const activeConversation = useMemo(
     () => conversations.find(conversation => conversation.id === activeConversationId) ?? null,
     [activeConversationId, conversations],
   );
   const connectionState: PreviewConnectionState = activeConversation ? 'connected' : 'disconnected';
+
+  useEffect(() => {
+    let mounted = true;
+    loadOrCreateIdentity()
+      .then(value => {
+        if (mounted) {
+          setIdentity(value);
+        }
+      })
+      .catch(() => {
+        if (mounted) {
+          setError('Could not load device identity.');
+        }
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    const agentAddress = activeConversation?.agentAddress;
+    if (!agentAddress) {
+      setActiveAgentToken(null);
+      return () => {
+        mounted = false;
+      };
+    }
+
+    loadAgentTokenMetadata(agentAddress)
+      .then(value => {
+        if (mounted) {
+          setActiveAgentToken(value);
+        }
+      })
+      .catch(() => {
+        if (mounted) {
+          setActiveAgentToken(null);
+        }
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [activeConversation?.agentAddress]);
 
   useEffect(() => {
     const showSubscription = Keyboard.addListener('keyboardWillShow', () => setKeyboardVisible(true));
@@ -68,17 +126,29 @@ export function AppShell() {
 
   const openAddAgent = useCallback((backTarget: AppTab | null = 'agents', initialDraft?: string) => {
     setDraft(initialDraft ?? '');
+    setTokenDraft('');
     setError(null);
     setConnectBackTarget(backTarget);
     setIsAddingAgent(true);
     setIsChatOpen(false);
   }, []);
 
-  const handleConnect = () => {
+  const handleConnect = async () => {
     const normalized = draft.trim();
     if (!isHostedAgentAddress(normalized)) {
       setError('Enter a hosted agent address in 0x-prefixed Ed25519 format.');
       return;
+    }
+
+    const token = tokenDraft.trim();
+    if (token) {
+      try {
+        setActiveAgentToken(await saveAgentToken(normalized, token));
+        setTokenDraft('');
+      } catch {
+        setError('Could not save the access token.');
+        return;
+      }
     }
 
     setError(null);
@@ -145,6 +215,7 @@ export function AppShell() {
   };
 
   const handleDeleteConversation = (conversationId: string) => {
+    const target = conversations.find(conversation => conversation.id === conversationId);
     setConversations(current => {
       const next = current.filter(conversation => conversation.id !== conversationId);
       setActiveConversationId(activeId => {
@@ -155,11 +226,15 @@ export function AppShell() {
       });
       return next;
     });
+    if (target?.agentAddress) {
+      deleteAgentSecrets(target.agentAddress).catch(() => undefined);
+    }
   };
 
   const handleReconnect = () => openAddAgent('settings', activeConversation?.agentAddress ?? '');
 
   const handleConnectBack = () => {
+    setTokenDraft('');
     setIsAddingAgent(false);
     if (connectBackTarget) {
       setTab(connectBackTarget);
@@ -180,6 +255,40 @@ export function AppShell() {
   };
 
   const handleAddAgent = () => openAddAgent('agents');
+
+  const handleBackupSeed = useCallback(async () => {
+    try {
+      return await exportIdentitySeed();
+    } catch {
+      setError('Could not read device identity.');
+      return null;
+    }
+  }, []);
+
+  const handleImportSeed = useCallback(async (seedHex: string) => {
+    try {
+      const nextIdentity = await importIdentitySeed(seedHex);
+      setIdentity(nextIdentity);
+      setError(null);
+      return nextIdentity;
+    } catch {
+      setError('Could not import that seed.');
+      return null;
+    }
+  }, []);
+
+  const handleResetIdentity = useCallback(async () => {
+    try {
+      await resetIdentity();
+      const nextIdentity = await loadOrCreateIdentity();
+      setIdentity(nextIdentity);
+      setError(null);
+      return nextIdentity;
+    } catch {
+      setError('Could not reset device identity.');
+      return null;
+    }
+  }, []);
 
   const changeTab = useCallback((nextTab: AppTab) => {
     setError(null);
@@ -218,8 +327,10 @@ export function AppShell() {
         {!isChatOpen && isAddingAgent ? (
           <AddAgentScreen
             draft={draft}
+            tokenDraft={tokenDraft}
             error={error}
             onDraftChange={setDraft}
+            onTokenDraftChange={setTokenDraft}
             onConnect={handleConnect}
             onBack={handleConnectBack}
             showBack
@@ -249,9 +360,13 @@ export function AppShell() {
             active={activeConversation}
             conversations={conversations}
             connectionState={connectionState}
-            identity={null}
+            identity={identity}
+            activeAgentToken={activeAgentToken}
             lastOutbound={null}
             onReconnect={handleReconnect}
+            onBackupSeed={handleBackupSeed}
+            onImportSeed={handleImportSeed}
+            onResetIdentity={handleResetIdentity}
           />
         ) : null}
       </View>

@@ -5,8 +5,10 @@ import { styles } from '../styles/appStyles';
 
 export function AddAgentScreen(props: {
   draft: string;
+  tokenDraft: string;
   error?: string | null;
   onDraftChange: (value: string) => void;
+  onTokenDraftChange: (value: string) => void;
   onConnect: () => void;
   onBack: () => void;
   showBack?: boolean;
@@ -54,6 +56,22 @@ export function AddAgentScreen(props: {
             style={styles.input}
           />
           <Text style={styles.helperText}>Use the hosted agent address provided by the agent.</Text>
+        </View>
+        <View style={styles.formCard}>
+          <Text style={styles.label}>Access Token</Text>
+          <TextInput
+            value={props.tokenDraft}
+            onChangeText={props.onTokenDraftChange}
+            autoCapitalize="none"
+            autoCorrect={false}
+            secureTextEntry
+            placeholder="Optional"
+            placeholderTextColor="#7B8190"
+            returnKeyType="go"
+            onSubmitEditing={canSubmit ? props.onConnect : undefined}
+            style={styles.input}
+          />
+          <Text style={styles.helperText}>Saved in Keychain and hidden after entry.</Text>
         </View>
         {props.error ? <Text style={styles.errorBanner}>{props.error}</Text> : null}
         <Pressable

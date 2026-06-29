@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Conversation } from '../types';
+import { deleteAgentSecrets } from './keyManager';
 
 const INDEX_KEY = 'connectonion.mobile.conversations.index';
 const ACTIVE_KEY = 'connectonion.mobile.conversations.active';
@@ -33,8 +34,13 @@ export async function saveConversation(conversation: Conversation): Promise<void
 
 export async function deleteConversation(id: string): Promise<void> {
   const ids = await readIndex();
+  const rawConversation = await AsyncStorage.getItem(CONVERSATION_PREFIX + id);
+  const conversation = rawConversation ? JSON.parse(rawConversation) as Conversation : null;
   await AsyncStorage.removeItem(CONVERSATION_PREFIX + id);
   await writeIndex(ids.filter(existing => existing !== id));
+  if (conversation?.agentAddress) {
+    await deleteAgentSecrets(conversation.agentAddress);
+  }
   const activeId = await loadActiveConversationId();
   if (activeId === id) {
     await AsyncStorage.removeItem(ACTIVE_KEY);
