@@ -1,9 +1,20 @@
 
+  jest.mock('../src/storage/keyManager', () => ({
+    signPayload: jest.fn(async (type: string, payload: Record<string, unknown>) => ({
+      type,
+      payload,
+      from: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      signature: 'mock-signature',
+      timestamp: payload.timestamp,
+    })),
+  }));
+
   import {
     isHostedAgentAddress,
     resolveHostedAgentEndpoint,
     testAgentConnection,
   } from '../src/session/remoteAgentClient';
+  import { signPayload } from '../src/storage/keyManager';
 
   describe('remoteAgentClient', () => {
     const agentAddress =
@@ -70,8 +81,21 @@
 
       await waitForSocket(sockets);
       sockets[0].onopen?.();
-      expect(JSON.parse(sockets[0].sent[0])).toEqual({
+      await waitForSentMessage(sockets[0]);
+      const sentFrame = JSON.parse(sockets[0].sent[0]);
+      expect(signPayload).toHaveBeenCalledWith('CONNECT', {
+        timestamp: expect.any(Number),
+        to: agentAddress,
+      });
+      expect(sentFrame).toEqual({
         type: 'CONNECT',
+        payload: {
+          timestamp: expect.any(Number),
+          to: agentAddress,
+        },
+        from: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        signature: 'mock-signature',
+        timestamp: expect.any(Number),
         to: agentAddress,
       });
       sockets[0].onmessage?.({data: JSON.stringify({type: 'CONNECTED'})});
@@ -143,4 +167,14 @@ async function waitForSocket(sockets: MockSocket[], index = 0) {
     await Promise.resolve();
   }
   throw new Error('Expected a WebSocket to be constructed');
+}
+
+async function waitForSentMessage(socket: MockSocket, index = 0) {
+  for (let i = 0; i < 100; i++) {
+    if (socket.sent[index]) {
+      return;
+    }
+    await Promise.resolve();
+  }
+  throw new Error('Expected a WebSocket message to be sent');
 }

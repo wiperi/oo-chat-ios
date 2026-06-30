@@ -199,8 +199,22 @@ export async function testAgentConnection(
       resolve(result);
     }
 
-    ws.onopen = () => {
-      ws.send(JSON.stringify({ type: 'CONNECT', to: agentAddress }));
+    ws.onopen = async () => {
+      try {
+        const timestamp = Math.floor(Date.now() / 1000);
+        const signed = await signPayload('CONNECT', { timestamp, to: agentAddress });
+        ws.send(JSON.stringify({
+          ...signed,
+          type: 'CONNECT',
+          timestamp,
+          to: agentAddress,
+        }));
+      } catch (error) {
+        finish({
+          ok: false,
+          message: error instanceof Error ? error.message : 'Failed to sign connection request.',
+        });
+      }
     };
     ws.onmessage = (event: { data: unknown }) => {
       const frame = parseFrame(event.data);

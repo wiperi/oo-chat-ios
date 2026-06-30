@@ -18,8 +18,9 @@ import {
   type StoredAgentToken,
 } from '../storage/keyManager';
 import { testAgentConnectionForm } from '../agent/agentConnectionConfig';
+import { sendPromptToHostedAgent } from '../session/remoteAgentClient';
 import { styles } from '../styles/appStyles';
-import type { StoredIdentity } from '../types';
+import type { ChatItem, Conversation, StoredIdentity } from '../types';
 import { shortAddress } from '../utils/format';
 import {
   invalidAddressError,
@@ -73,6 +74,7 @@ export function AppShell() {
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [identity, setIdentity] = useState<StoredIdentity | null>(null);
   const [activeAgentToken, setActiveAgentToken] = useState<StoredAgentToken | null>(null);
+  const [isSending, setIsSending] = useState(false);
 
   const activeConversation = useMemo(
     () => conversations.find(conversation => conversation.id === activeConversationId) ?? null,
@@ -211,8 +213,67 @@ export function AppShell() {
     setIsChatOpen(true);
   };
 
-  const handleSend = () => {
+  function toHostedConversation(conversation: PreviewConversation): Conversation {
+    return {
+      id: conversation.id,
+      title: conversation.title,
+      agentAddress: conversation.agentAddress,
+      createdAt: conversation.updatedAt,
+      updatedAt: conversation.updatedAt,
+      mode: 'safe',
+      ulwTurns: null,
+      ulwTurnsUsed: null,
+      serverSession: conversation.serverSession,
+      ui: conversation.ui.map(item => ({
+        id: item.id,
+        type: item.type === 'system' ? 'error' : item.type,
+        content: item.content,
+        message: item.content,
+      })) as ChatItem[],
+    };
+  }
+
+  function previewItemsFromHosted(items: ChatItem[]): PreviewChatItem[] {
+    const now = Date.now();
+    return items.map(item => {
+      if (item.type === 'agent') {
+        return {
+          id: item.id,
+          type: 'agent',
+          content: item.content,
+          timestamp: now,
+        };
+      }
+      if (item.type === 'error') {
+        return {
+          id: item.id,
+          type: 'system',
+          content: item.message,
+          timestamp: now,
+        };
+      }
+      if (item.type === 'thinking') {
+        return {
+          id: item.id,
+          type: 'system',
+          content: item.content ?? 'Agent is thinking...',
+          timestamp: now,
+        };
+      }
+      return {
+        id: item.id,
+        type: 'system',
+        content: 'Agent activity received.',
+        timestamp: now,
+      };
+    });
+  }
+
+  const handleSend = async () => {
     if (!activeConversation) {
+      return;
+    }
+    if (isSending) {
       return;
     }
 
@@ -222,6 +283,7 @@ export function AppShell() {
     }
 
     const now = Date.now();
+    const requestConversation = toHostedConversation(activeConversation);
     const userMessage: PreviewChatItem = {
       id: makeId('user'),
       type: 'user',
@@ -244,6 +306,50 @@ export function AppShell() {
         .sort((a, b) => b.updatedAt - a.updatedAt),
     );
     setPrompt('');
+    setIsSending(true);
+
+    try {
+      const result = await sendPromptToHostedAgent(
+        activeConversation.agentAddress,
+        requestConversation,
+        trimmed,
+        [],
+      );
+      const responseItems = previewItemsFromHosted(result.items);
+      setConversations(current =>
+        current.map(conversation =>
+          conversation.id === activeConversation.id
+            ? {
+                ...conversation,
+                updatedAt: Date.now(),
+                serverSession: result.serverSession ?? conversation.serverSession,
+                ui: [...conversation.ui, ...responseItems],
+              }
+            : conversation,
+        ),
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'The agent did not respond.';
+      const errorItem: PreviewChatItem = {
+        id: makeId('error'),
+        type: 'system',
+        content: message,
+        timestamp: Date.now(),
+      };
+      setConversations(current =>
+        current.map(conversation =>
+          conversation.id === activeConversation.id
+            ? {
+                ...conversation,
+                updatedAt: Date.now(),
+                ui: [...conversation.ui, errorItem],
+              }
+            : conversation,
+        ),
+      );
+    } finally {
+      setIsSending(false);
+    }
   };
 
   const handleOpenConversation = (conversationId: string) => {

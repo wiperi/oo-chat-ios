@@ -13,4 +13,5 @@ export interface PreviewConversation {
   agentAddress: string;
   updatedAt: number;
   ui: PreviewChatItem[];
+  serverSession?: Record<string, unknown>;
 }
