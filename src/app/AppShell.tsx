@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Keyboard, KeyboardAvoidingView, Platform, View } from 'react-native';
+import { AppState, Keyboard, KeyboardAvoidingView, Platform, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { TabBar } from '../components/layout/TabBar';
 import { AddAgentScreen } from '../screens/AddAgentScreen';
@@ -8,7 +8,6 @@ import { ChatScreen } from '../screens/ChatScreen';
 import { HistoryScreen } from '../screens/HistoryScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import {
-  deleteAgentSecrets,
   exportIdentitySeed,
   importIdentitySeed,
   loadAgentTokenMetadata,
@@ -17,6 +16,13 @@ import {
   saveAgentToken,
   type StoredAgentToken,
 } from '../storage/keyManager';
+import {
+  deleteConversation,
+  listConversations,
+  loadActiveConversationId,
+  saveActiveConversationId,
+  saveConversation,
+} from '../storage/sessionRepository';
 import { testAgentConnectionForm } from '../agent/agentConnectionConfig';
 import { sendPromptToHostedAgent } from '../session/remoteAgentClient';
 import { styles } from '../styles/appStyles';
@@ -57,6 +63,84 @@ function starterConversation(agentAddress: string): PreviewConversation {
   };
 }
 
+// Bridge between the UI-facing PreviewConversation and the persisted Conversation
+// shape that sessionRepository / the hosted-agent client speak. Kept lossless for the
+// three preview item kinds (user / agent / system) so a saved conversation round-trips.
+function toHostedConversation(conversation: PreviewConversation): Conversation {
+  return {
+    id: conversation.id,
+    title: conversation.title,
+    agentAddress: conversation.agentAddress,
+    createdAt: conversation.updatedAt,
+    updatedAt: conversation.updatedAt,
+    mode: 'safe',
+    ulwTurns: null,
+    ulwTurnsUsed: null,
+    serverSession: conversation.serverSession,
+    ui: conversation.ui.map(item => ({
+      id: item.id,
+      type: item.type === 'system' ? 'error' : item.type,
+      content: item.content,
+      message: item.content,
+    })) as ChatItem[],
+  };
+}
+
+function previewItemsFromHosted(items: ChatItem[]): PreviewChatItem[] {
+  const now = Date.now();
+  return items.map(item => {
+    if (item.type === 'user') {
+      return {
+        id: item.id,
+        type: 'user',
+        content: item.content,
+        timestamp: now,
+      };
+    }
+    if (item.type === 'agent') {
+      return {
+        id: item.id,
+        type: 'agent',
+        content: item.content,
+        timestamp: now,
+      };
+    }
+    if (item.type === 'error') {
+      return {
+        id: item.id,
+        type: 'system',
+        content: item.message,
+        timestamp: now,
+      };
+    }
+    if (item.type === 'thinking') {
+      return {
+        id: item.id,
+        type: 'system',
+        content: item.content ?? 'Agent is thinking...',
+        timestamp: now,
+      };
+    }
+    return {
+      id: item.id,
+      type: 'system',
+      content: 'Agent activity received.',
+      timestamp: now,
+    };
+  });
+}
+
+function hostedConversationToPreview(conversation: Conversation): PreviewConversation {
+  return {
+    id: conversation.id,
+    title: conversation.title,
+    agentAddress: conversation.agentAddress,
+    updatedAt: conversation.updatedAt,
+    serverSession: conversation.serverSession,
+    ui: previewItemsFromHosted(conversation.ui),
+  };
+}
+
 export function AppShell() {
   const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<AppTab>('agents');
@@ -81,6 +165,64 @@ export function AppShell() {
     [activeConversationId, conversations],
   );
   const connectionState: PreviewConnectionState = activeConversation ? 'connected' : 'disconnected';
+
+  // Mirrors the old hook's persistence approach: write the conversation through
+  // sessionRepository every time it changes, and remember which one is active.
+  const persist = useCallback((conversation: PreviewConversation) => {
+    saveConversation(toHostedConversation(conversation)).catch(() => {
+      setError('Could not save the conversation.');
+    });
+  }, []);
+
+  const upsertConversation = useCallback((next: PreviewConversation) => {
+    setConversations(current => {
+      const without = current.filter(conversation => conversation.id !== next.id);
+      return [next, ...without].sort((a, b) => b.updatedAt - a.updatedAt);
+    });
+    persist(next);
+  }, [persist]);
+
+  const selectActive = useCallback((id: string | null) => {
+    setActiveConversationId(id);
+    if (id) {
+      saveActiveConversationId(id).catch(() => undefined);
+    }
+  }, []);
+
+  // Hydrate saved conversations on launch so history survives an app restart.
+  useEffect(() => {
+    let mounted = true;
+    Promise.all([listConversations(), loadActiveConversationId()])
+      .then(([stored, storedActiveId]) => {
+        if (!mounted) {
+          return;
+        }
+        const restored = stored.map(hostedConversationToPreview);
+        setConversations(restored);
+        if (storedActiveId && restored.some(conversation => conversation.id === storedActiveId)) {
+          setActiveConversationId(storedActiveId);
+        }
+      })
+      .catch(() => {
+        if (mounted) {
+          setError('Could not load saved conversations.');
+        }
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  // Flush the active conversation when the app is backgrounded, so an OS kill
+  // mid-session does not lose the latest messages.
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', state => {
+      if ((state === 'background' || state === 'inactive') && activeConversation) {
+        persist(activeConversation);
+      }
+    });
+    return () => subscription.remove();
+  }, [activeConversation, persist]);
 
   useEffect(() => {
     let mounted = true;
@@ -193,81 +335,16 @@ export function AppShell() {
     setConnectionError(null);
     const existing = conversations.find(conversation => conversation.agentAddress === normalized);
     const now = Date.now();
-    const nextConversation = existing ?? starterConversation(normalized);
+    const nextConversation = existing
+      ? { ...existing, updatedAt: now }
+      : starterConversation(normalized);
 
-    setConversations(current => {
-      if (existing) {
-        return current
-          .map(conversation =>
-            conversation.id === existing.id
-              ? { ...conversation, updatedAt: now }
-              : conversation,
-          )
-          .sort((a, b) => b.updatedAt - a.updatedAt);
-      }
-      return [nextConversation, ...current];
-    });
-    setActiveConversationId(nextConversation.id);
+    upsertConversation(nextConversation);
+    selectActive(nextConversation.id);
     setConnectBackTarget(null);
     setIsAddingAgent(false);
     setIsChatOpen(true);
   };
-
-  function toHostedConversation(conversation: PreviewConversation): Conversation {
-    return {
-      id: conversation.id,
-      title: conversation.title,
-      agentAddress: conversation.agentAddress,
-      createdAt: conversation.updatedAt,
-      updatedAt: conversation.updatedAt,
-      mode: 'safe',
-      ulwTurns: null,
-      ulwTurnsUsed: null,
-      serverSession: conversation.serverSession,
-      ui: conversation.ui.map(item => ({
-        id: item.id,
-        type: item.type === 'system' ? 'error' : item.type,
-        content: item.content,
-        message: item.content,
-      })) as ChatItem[],
-    };
-  }
-
-  function previewItemsFromHosted(items: ChatItem[]): PreviewChatItem[] {
-    const now = Date.now();
-    return items.map(item => {
-      if (item.type === 'agent') {
-        return {
-          id: item.id,
-          type: 'agent',
-          content: item.content,
-          timestamp: now,
-        };
-      }
-      if (item.type === 'error') {
-        return {
-          id: item.id,
-          type: 'system',
-          content: item.message,
-          timestamp: now,
-        };
-      }
-      if (item.type === 'thinking') {
-        return {
-          id: item.id,
-          type: 'system',
-          content: item.content ?? 'Agent is thinking...',
-          timestamp: now,
-        };
-      }
-      return {
-        id: item.id,
-        type: 'system',
-        content: 'Agent activity received.',
-        timestamp: now,
-      };
-    });
-  }
 
   const handleSend = async () => {
     if (!activeConversation) {
@@ -291,20 +368,15 @@ export function AppShell() {
       timestamp: now,
     };
 
-    setConversations(current =>
-      current
-        .map(conversation =>
-          conversation.id === activeConversation.id
-              ? {
-                  ...conversation,
-                  title: conversation.ui.length === 0 ? titleFromPrompt(trimmed) : conversation.title,
-                  updatedAt: now,
-                  ui: [...conversation.ui, userMessage],
-                }
-            : conversation,
-        )
-        .sort((a, b) => b.updatedAt - a.updatedAt),
-    );
+    // Track the conversation locally so each async step appends to the latest
+    // state (activeConversation from the closure is stale after the first save).
+    let latest: PreviewConversation = {
+      ...activeConversation,
+      title: activeConversation.ui.length === 0 ? titleFromPrompt(trimmed) : activeConversation.title,
+      updatedAt: now,
+      ui: [...activeConversation.ui, userMessage],
+    };
+    upsertConversation(latest);
     setPrompt('');
     setIsSending(true);
 
@@ -316,18 +388,13 @@ export function AppShell() {
         [],
       );
       const responseItems = previewItemsFromHosted(result.items);
-      setConversations(current =>
-        current.map(conversation =>
-          conversation.id === activeConversation.id
-            ? {
-                ...conversation,
-                updatedAt: Date.now(),
-                serverSession: result.serverSession ?? conversation.serverSession,
-                ui: [...conversation.ui, ...responseItems],
-              }
-            : conversation,
-        ),
-      );
+      latest = {
+        ...latest,
+        updatedAt: Date.now(),
+        serverSession: result.serverSession ?? latest.serverSession,
+        ui: [...latest.ui, ...responseItems],
+      };
+      upsertConversation(latest);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'The agent did not respond.';
       const errorItem: PreviewChatItem = {
@@ -336,42 +403,31 @@ export function AppShell() {
         content: message,
         timestamp: Date.now(),
       };
-      setConversations(current =>
-        current.map(conversation =>
-          conversation.id === activeConversation.id
-            ? {
-                ...conversation,
-                updatedAt: Date.now(),
-                ui: [...conversation.ui, errorItem],
-              }
-            : conversation,
-        ),
-      );
+      latest = {
+        ...latest,
+        updatedAt: Date.now(),
+        ui: [...latest.ui, errorItem],
+      };
+      upsertConversation(latest);
     } finally {
       setIsSending(false);
     }
   };
 
   const handleOpenConversation = (conversationId: string) => {
-    setActiveConversationId(conversationId);
+    selectActive(conversationId);
     setIsChatOpen(true);
   };
 
   const handleDeleteConversation = (conversationId: string) => {
-    const target = conversations.find(conversation => conversation.id === conversationId);
-    setConversations(current => {
-      const next = current.filter(conversation => conversation.id !== conversationId);
-      setActiveConversationId(activeId => {
-        if (activeId !== conversationId) {
-          return activeId;
-        }
-        return next[0]?.id ?? null;
-      });
-      return next;
-    });
-    if (target?.agentAddress) {
-      deleteAgentSecrets(target.agentAddress).catch(() => undefined);
+    setConversations(current => current.filter(conversation => conversation.id !== conversationId));
+    if (activeConversationId === conversationId) {
+      const fallback = conversations.find(conversation => conversation.id !== conversationId);
+      selectActive(fallback ? fallback.id : null);
     }
+    // deleteConversation removes the row, fixes the stored active id, and cascades
+    // the agent secrets cleanup in sessionRepository.
+    deleteConversation(conversationId).catch(() => undefined);
   };
 
   const handleReconnect = () => openAddAgent('settings', activeConversation?.agentAddress ?? '');
@@ -403,8 +459,8 @@ export function AppShell() {
     }
 
     const nextConversation = starterConversation(activeConversation.agentAddress);
-    setConversations(current => [nextConversation, ...current]);
-    setActiveConversationId(nextConversation.id);
+    upsertConversation(nextConversation);
+    selectActive(nextConversation.id);
     setPrompt('');
   };
 
