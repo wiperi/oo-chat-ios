@@ -313,14 +313,27 @@ function messageText(event: Record<string, unknown>): string {
 
 function mapStreamEvent(event: Record<string, unknown>): ChatItem[] {
   const type = event.type;
-  if (type === 'thinking') {
+  if (type === 'thinking' || type === 'llm_call') {
     return [{
       id: String(event.id ?? makeId('thinking')),
       type: 'thinking',
-      status: 'done',
+      status: type === 'llm_call' ? 'running' : 'done',
       model: typeof event.model === 'string' ? event.model : undefined,
       content: typeof event.content === 'string' ? event.content : undefined,
       kind: typeof event.kind === 'string' ? event.kind : undefined,
+      context_percent: typeof event.context_percent === 'number' ? event.context_percent : undefined,
+    }];
+  }
+
+  if (type === 'llm_result') {
+    return [{
+      id: String(event.id ?? makeId('thinking')),
+      type: 'thinking',
+      status: event.status === 'error' ? 'error' : 'done',
+      model: typeof event.model === 'string' ? event.model : undefined,
+      duration_ms: typeof event.duration_ms === 'number' ? event.duration_ms : undefined,
+      content: 'Agent response ready.',
+      context_percent: typeof event.context_percent === 'number' ? event.context_percent : undefined,
     }];
   }
 
@@ -334,7 +347,7 @@ function mapStreamEvent(event: Record<string, unknown>): ChatItem[] {
 
   if (type === 'tool_call') {
     return [{
-      id: String(event.id ?? makeId('tool')),
+      id: String(event.tool_id ?? event.id ?? makeId('tool')),
       type: 'tool_call',
       name: typeof event.name === 'string' ? event.name : 'tool',
       args: typeof event.args === 'object' && event.args !== null ? event.args as Record<string, unknown> : undefined,
@@ -344,7 +357,7 @@ function mapStreamEvent(event: Record<string, unknown>): ChatItem[] {
 
   if (type === 'tool_result') {
     return [{
-      id: String(event.id ?? makeId('tool')),
+      id: String(event.tool_id ?? event.id ?? makeId('tool')),
       type: 'tool_call',
       name: typeof event.name === 'string' ? event.name : 'tool_result',
       status: event.status === 'error' ? 'error' : 'done',

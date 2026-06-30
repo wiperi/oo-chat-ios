@@ -12,6 +12,7 @@
   import {
     isHostedAgentAddress,
     resolveHostedAgentEndpoint,
+    sendPromptToHostedAgent,
     testAgentConnection,
   } from '../src/session/remoteAgentClient';
   import { signPayload } from '../src/storage/keyManager';
@@ -128,6 +129,113 @@
         ok: false,
         message: 'token expired',
       });
+    });
+
+    test('forwards hosted agent progress and tool events before final output', async () => {
+      globalThis.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: jest.fn().mockResolvedValue({address: agentAddress}),
+      }) as jest.Mock;
+      const sockets: MockSocket[] = [];
+      const WebSocketImpl = makeMockWebSocket(sockets);
+      const previousWebSocket = globalThis.WebSocket;
+      Object.defineProperty(globalThis, 'WebSocket', {
+        configurable: true,
+        value: WebSocketImpl,
+      });
+      const onStreamItems = jest.fn();
+
+      try {
+        const promise = sendPromptToHostedAgent(
+          agentAddress,
+          {
+            id: 'conversation-1',
+            title: 'Test conversation',
+            agentAddress,
+            createdAt: 1,
+            updatedAt: 1,
+            mode: 'safe',
+            ulwTurns: null,
+            ulwTurnsUsed: null,
+            ui: [],
+          },
+          'hello',
+          [],
+          {onStreamItems},
+        );
+
+        await waitForSocket(sockets);
+        sockets[0].onopen?.();
+        await waitForSentMessage(sockets[0]);
+        sockets[0].onmessage?.({data: JSON.stringify({type: 'CONNECTED', session_id: 'server-session-1'})});
+        await waitForSentMessage(sockets[0], 1);
+
+        sockets[0].onmessage?.({data: JSON.stringify({type: 'llm_call', id: 'llm-1', model: 'gemini-2.5-pro'})});
+        expect(onStreamItems).toHaveBeenLastCalledWith([
+          expect.objectContaining({
+            id: 'llm-1',
+            type: 'thinking',
+            status: 'running',
+            model: 'gemini-2.5-pro',
+          }),
+        ]);
+
+        sockets[0].onmessage?.({data: JSON.stringify({type: 'tool_call', tool_id: 'tool-1', name: 'search'})});
+        expect(onStreamItems).toHaveBeenLastCalledWith([
+          expect.objectContaining({
+            id: 'tool-1',
+            type: 'tool_call',
+            name: 'search',
+            status: 'running',
+          }),
+        ]);
+
+        sockets[0].onmessage?.({data: JSON.stringify({type: 'tool_result', tool_id: 'tool-1', name: 'search', result: 'found it'})});
+        expect(onStreamItems).toHaveBeenLastCalledWith([
+          expect.objectContaining({
+            id: 'tool-1',
+            type: 'tool_call',
+            name: 'search',
+            status: 'done',
+            result: 'found it',
+          }),
+        ]);
+
+        sockets[0].onmessage?.({data: JSON.stringify({type: 'llm_result', id: 'llm-1', model: 'gemini-2.5-pro', duration_ms: 1200})});
+        expect(onStreamItems).toHaveBeenLastCalledWith([
+          expect.objectContaining({
+            id: 'llm-1',
+            type: 'thinking',
+            status: 'done',
+            model: 'gemini-2.5-pro',
+            duration_ms: 1200,
+          }),
+        ]);
+
+        sockets[0].onmessage?.({
+          data: JSON.stringify({
+            type: 'OUTPUT',
+            result: 'Hello world',
+            session: {turn: 1},
+          }),
+        });
+
+        await expect(promise).resolves.toEqual({
+          items: [
+            expect.objectContaining({type: 'thinking', status: 'done'}),
+            expect.objectContaining({type: 'agent', content: 'Hello world'}),
+          ],
+          done: true,
+          endpoint: 'http://localhost:8000',
+          sessionId: 'server-session-1',
+          serverSession: {turn: 1},
+        });
+      } finally {
+        Object.defineProperty(globalThis, 'WebSocket', {
+          configurable: true,
+          value: previousWebSocket,
+        });
+      }
     });
   });
 

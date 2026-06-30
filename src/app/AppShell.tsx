@@ -121,6 +121,62 @@ function previewItemsFromHosted(items: ChatItem[]): PreviewChatItem[] {
         timestamp: now,
       };
     }
+    if (item.type === 'tool_call') {
+      return {
+        id: item.id,
+        type: 'system',
+        content: item.result ?? `${item.status === 'running' ? 'Running' : 'Finished'} ${item.name}`,
+        timestamp: now,
+      };
+    }
+    if (item.type === 'ask_user') {
+      return {
+        id: item.id,
+        type: 'system',
+        content: item.text,
+        timestamp: now,
+      };
+    }
+    if (item.type === 'approval_needed') {
+      return {
+        id: item.id,
+        type: 'system',
+        content: item.description ?? `Approval needed for ${item.tool}`,
+        timestamp: now,
+      };
+    }
+    if (item.type === 'onboard_required') {
+      return {
+        id: item.id,
+        type: 'system',
+        content: 'Onboarding required before the agent can continue.',
+        timestamp: now,
+      };
+    }
+    if (item.type === 'onboard_success') {
+      return {
+        id: item.id,
+        type: 'system',
+        content: item.message,
+        timestamp: now,
+      };
+    }
+    if (item.type === 'plan_review') {
+      return {
+        id: item.id,
+        type: 'system',
+        content: item.plan_content,
+        timestamp: now,
+      };
+    }
+    if (item.type === 'ulw_turns_reached') {
+      return {
+        id: item.id,
+        type: 'system',
+        content: `ULW turn limit reached (${item.turns_used}/${item.max_turns}).`,
+        timestamp: now,
+      };
+    }
     return {
       id: item.id,
       type: 'system',
@@ -128,6 +184,19 @@ function previewItemsFromHosted(items: ChatItem[]): PreviewChatItem[] {
       timestamp: now,
     };
   });
+}
+
+function mergePreviewItems(current: PreviewChatItem[], incoming: PreviewChatItem[]): PreviewChatItem[] {
+  const next = [...current];
+  for (const item of incoming) {
+    const existingIndex = next.findIndex(existing => existing.id === item.id);
+    if (existingIndex >= 0) {
+      next[existingIndex] = { ...next[existingIndex], ...item };
+    } else {
+      next.push(item);
+    }
+  }
+  return next;
 }
 
 function hostedConversationToPreview(conversation: Conversation): PreviewConversation {
@@ -386,13 +455,27 @@ export function AppShell() {
         requestConversation,
         trimmed,
         [],
+        {
+          onStreamItems: items => {
+            const streamItems = previewItemsFromHosted(items);
+            if (streamItems.length === 0) {
+              return;
+            }
+            latest = {
+              ...latest,
+              updatedAt: Date.now(),
+              ui: mergePreviewItems(latest.ui, streamItems),
+            };
+            upsertConversation(latest);
+          },
+        },
       );
       const responseItems = previewItemsFromHosted(result.items);
       latest = {
         ...latest,
         updatedAt: Date.now(),
         serverSession: result.serverSession ?? latest.serverSession,
-        ui: [...latest.ui, ...responseItems],
+        ui: mergePreviewItems(latest.ui, responseItems),
       };
       upsertConversation(latest);
     } catch (err) {
