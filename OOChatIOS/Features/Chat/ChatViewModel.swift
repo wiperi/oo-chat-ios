@@ -37,6 +37,10 @@ final class ChatViewModel: ObservableObject {
         return conversations.first { $0.id == activeConversationID }
     }
 
+    var activeMode: ChatMode {
+        activeConversation?.mode ?? .safe
+    }
+
     init() {
         let snapshot = store.load()
         self.agents = snapshot.agents
@@ -140,6 +144,15 @@ final class ChatViewModel: ObservableObject {
         persist()
     }
 
+    func setMode(_ mode: ChatMode) {
+        guard var conversation = activeConversation else {
+            return
+        }
+        conversation.mode = mode
+        conversation.serverSession = session(conversation.serverSession, applying: mode, conversationID: conversation.id)
+        upsert(conversation)
+    }
+
     func connectToAgent() async -> AgentConnection? {
         let address = agentAddressDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard HostedAgentClient.isHostedAgentAddress(address) else {
@@ -163,7 +176,7 @@ final class ChatViewModel: ObservableObject {
         do {
             let result = try await client.connect(agentAddress: address, conversation: conversation)
             if let session = result.serverSession {
-                conversation.serverSession = session
+                conversation.serverSession = self.session(session, applying: conversation.mode, conversationID: conversation.id)
             }
             let savedAgent = upsertAgent(agent)
             ensureDefaultConversation(for: savedAgent, seed: conversation)
@@ -211,7 +224,7 @@ final class ChatViewModel: ObservableObject {
                 var updated = self.conversation(withID: conversation.id) ?? conversation
                 updated.messages.removeAll { $0.role == .thinking }
                 if let session = result.serverSession {
-                    updated.serverSession = session
+                    updated.serverSession = self.session(session, applying: updated.mode, conversationID: updated.id)
                 }
                 updated.messages.append(ChatMessage(role: .agent, content: result.output ?? ""))
                 updated.updatedAt = Date()
@@ -243,7 +256,7 @@ final class ChatViewModel: ObservableObject {
                 var updated = self.conversation(withID: conversation.id) ?? conversation
                 updated.agentID = agent.id
                 updated.agentAddress = agent.address
-                updated.serverSession = session
+                updated.serverSession = self.session(session, applying: updated.mode, conversationID: updated.id)
                 self.upsert(updated)
             }
             connectionState = .connected
@@ -272,7 +285,7 @@ final class ChatViewModel: ObservableObject {
     private func ensureDefaultConversation(for agent: AgentConnection, seed: Conversation) {
         if var existing = conversations(for: agent).first {
             if let session = seed.serverSession {
-                existing.serverSession = session
+                existing.serverSession = self.session(session, applying: existing.mode, conversationID: existing.id)
             }
             existing.agentID = agent.id
             existing.agentAddress = agent.address
@@ -323,6 +336,24 @@ final class ChatViewModel: ObservableObject {
 
     private func conversationBelongsToAgent(_ conversation: Conversation, _ agent: AgentConnection) -> Bool {
         conversation.agentID == agent.id || conversation.agentAddress == agent.address
+    }
+
+    private func session(_ session: [String: JSONValue]?, applying mode: ChatMode, conversationID: String) -> [String: JSONValue] {
+        var next = session ?? [:]
+        next["session_id"] = .string(conversationID)
+        next["mode"] = .string(mode.rawValue)
+        if mode == .ulw {
+            if next["ulw_turns"] == nil {
+                next["ulw_turns"] = .number(100)
+            }
+            if next["ulw_turns_used"] == nil {
+                next["ulw_turns_used"] = .number(0)
+            }
+        } else {
+            next.removeValue(forKey: "ulw_turns")
+            next.removeValue(forKey: "ulw_turns_used")
+        }
+        return next
     }
 
     private func persist() {

@@ -195,13 +195,29 @@ final class HostedAgentClient {
         ]
         var frame = try identityStore.signedEnvelope(type: "CONNECT", payload: payload)
         frame["session_id"] = .string(conversation.id)
-        if let serverSession = conversation.serverSession {
-            frame["session"] = .object(serverSession)
-        }
+        frame["session"] = .object(sessionPayload(for: conversation))
         if endpoint.kind == .relay {
             frame["to"] = .string(agentAddress)
         }
         return frame
+    }
+
+    private func sessionPayload(for conversation: Conversation) -> [String: JSONValue] {
+        var session = conversation.serverSession ?? [:]
+        session["session_id"] = .string(conversation.id)
+        session["mode"] = .string(conversation.mode.rawValue)
+        if conversation.mode == .ulw {
+            if session["ulw_turns"] == nil {
+                session["ulw_turns"] = .number(100)
+            }
+            if session["ulw_turns_used"] == nil {
+                session["ulw_turns_used"] = .number(0)
+            }
+        } else {
+            session.removeValue(forKey: "ulw_turns")
+            session.removeValue(forKey: "ulw_turns_used")
+        }
+        return session
     }
 
     private func buildInputFrame(agentAddress: String, prompt: String, endpoint: ResolvedEndpoint) throws -> [String: JSONValue] {

@@ -13,6 +13,30 @@ enum ChatRole: String, Codable {
     case error
 }
 
+enum ChatMode: String, CaseIterable, Codable, Identifiable, Equatable {
+    case safe
+    case plan
+    case accept = "accept_edits"
+    case ulw
+
+    var id: String {
+        rawValue
+    }
+
+    var label: String {
+        switch self {
+        case .safe:
+            return "Safe"
+        case .plan:
+            return "Plan"
+        case .accept:
+            return "Accept"
+        case .ulw:
+            return "ULW"
+        }
+    }
+}
+
 struct AgentConnection: Identifiable, Codable, Equatable {
     let id: String
     var name: String
@@ -63,6 +87,7 @@ struct Conversation: Identifiable, Codable, Equatable {
     var title: String
     var agentID: String?
     var agentAddress: String
+    var mode: ChatMode
     var createdAt: Date
     var updatedAt: Date
     var messages: [ChatMessage]
@@ -74,11 +99,50 @@ struct Conversation: Identifiable, Codable, Equatable {
         self.title = "New mobile session"
         self.agentID = agentID
         self.agentAddress = agentAddress
+        self.mode = .safe
         self.createdAt = now
         self.updatedAt = now
         self.messages = [
             ChatMessage(role: .agent, content: Self.defaultInitialMessage)
         ]
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case agentID
+        case agentAddress
+        case mode
+        case createdAt
+        case updatedAt
+        case messages
+        case serverSession
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        agentID = try container.decodeIfPresent(String.self, forKey: .agentID)
+        agentAddress = try container.decode(String.self, forKey: .agentAddress)
+        mode = try container.decodeIfPresent(ChatMode.self, forKey: .mode) ?? .safe
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+        messages = try container.decode([ChatMessage].self, forKey: .messages)
+        serverSession = try container.decodeIfPresent([String: JSONValue].self, forKey: .serverSession)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encodeIfPresent(agentID, forKey: .agentID)
+        try container.encode(agentAddress, forKey: .agentAddress)
+        try container.encode(mode, forKey: .mode)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(updatedAt, forKey: .updatedAt)
+        try container.encode(messages, forKey: .messages)
+        try container.encodeIfPresent(serverSession, forKey: .serverSession)
     }
 }
 
