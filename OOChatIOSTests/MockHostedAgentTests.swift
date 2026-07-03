@@ -20,4 +20,12 @@ final class MockHostedAgentTests: XCTestCase {
         XCTAssertTrue(message.content.contains("hello from test"))
         XCTAssertFalse(message.id.isEmpty)
     }
+
+    func testNewConversationStartsWithDefaultAgentMessage() {
+        let conversation = Conversation()
+
+        XCTAssertEqual(conversation.messages.count, 1)
+        XCTAssertEqual(conversation.messages.first?.role, .agent)
+        XCTAssertEqual(conversation.messages.first?.content, Conversation.defaultInitialMessage)
+    }
 }

@@ -57,6 +57,8 @@ struct ChatMessage: Identifiable, Codable, Equatable {
 }
 
 struct Conversation: Identifiable, Codable, Equatable {
+    static let defaultInitialMessage = "ConnectOnion native iOS session is ready."
+
     let id: String
     var title: String
     var agentID: String?
@@ -75,7 +77,7 @@ struct Conversation: Identifiable, Codable, Equatable {
         self.createdAt = now
         self.updatedAt = now
         self.messages = [
-            ChatMessage(role: .agent, content: "ConnectOnion native iOS session is ready.")
+            ChatMessage(role: .agent, content: Self.defaultInitialMessage)
         ]
     }
 }
