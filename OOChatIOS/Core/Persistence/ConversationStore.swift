@@ -1,8 +1,9 @@
 import Foundation
 
 final class ConversationStore {
-    private let conversationsKey = "connectonion.native-ios.conversations"
-    private let activeKey = "connectonion.native-ios.activeConversation"
+    private let snapshotKey = "connectonion.native-ios.chatSnapshot.v2"
+    private let legacyConversationsKey = "connectonion.native-ios.conversations"
+    private let legacyActiveConversationKey = "connectonion.native-ios.activeConversation"
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
@@ -11,18 +12,75 @@ final class ConversationStore {
         decoder.dateDecodingStrategy = .iso8601
     }
 
-    func load() -> ([Conversation], String?) {
-        guard let data = UserDefaults.standard.data(forKey: conversationsKey),
-              let conversations = try? decoder.decode([Conversation].self, from: data) else {
-            return ([Conversation()], nil)
+    func load() -> ChatSnapshot {
+        if let data = UserDefaults.standard.data(forKey: snapshotKey),
+           let snapshot = try? decoder.decode(ChatSnapshot.self, from: data) {
+            return sorted(snapshot)
         }
-        return (conversations.sorted { $0.updatedAt > $1.updatedAt }, UserDefaults.standard.string(forKey: activeKey))
+
+        guard let data = UserDefaults.standard.data(forKey: legacyConversationsKey),
+              let conversations = try? decoder.decode([Conversation].self, from: data) else {
+            return .empty
+        }
+
+        return migrateLegacyConversations(
+            conversations,
+            activeConversationID: UserDefaults.standard.string(forKey: legacyActiveConversationKey)
+        )
     }
 
-    func save(_ conversations: [Conversation], activeID: String?) {
-        if let data = try? encoder.encode(conversations) {
-            UserDefaults.standard.set(data, forKey: conversationsKey)
+    func save(_ snapshot: ChatSnapshot) {
+        if let data = try? encoder.encode(sorted(snapshot)) {
+            UserDefaults.standard.set(data, forKey: snapshotKey)
         }
-        UserDefaults.standard.set(activeID, forKey: activeKey)
+    }
+
+    private func sorted(_ snapshot: ChatSnapshot) -> ChatSnapshot {
+        ChatSnapshot(
+            agents: snapshot.agents.sorted { $0.updatedAt > $1.updatedAt },
+            conversations: snapshot.conversations.sorted { $0.updatedAt > $1.updatedAt },
+            activeAgentID: snapshot.activeAgentID,
+            activeConversationID: snapshot.activeConversationID
+        )
+    }
+
+    private func migrateLegacyConversations(_ conversations: [Conversation], activeConversationID: String?) -> ChatSnapshot {
+        var agents: [AgentConnection] = []
+        var migratedConversations: [Conversation] = []
+
+        for var conversation in conversations {
+            let address = conversation.agentAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !address.isEmpty else {
+                continue
+            }
+
+            if let index = agents.firstIndex(where: { $0.address == address }) {
+                if conversation.updatedAt > agents[index].updatedAt {
+                    agents[index].updatedAt = conversation.updatedAt
+                }
+                conversation.agentID = agents[index].id
+            } else {
+                let agent = AgentConnection(
+                    address: address,
+                    createdAt: conversation.createdAt,
+                    updatedAt: conversation.updatedAt
+                )
+                agents.append(agent)
+                conversation.agentID = agent.id
+            }
+
+            conversation.agentAddress = address
+            migratedConversations.append(conversation)
+        }
+
+        let activeAgentID = activeConversationID.flatMap { activeConversationID in
+            migratedConversations.first { $0.id == activeConversationID }?.agentID
+        } ?? agents.first?.id
+        return sorted(ChatSnapshot(
+            agents: agents,
+            conversations: migratedConversations,
+            activeAgentID: activeAgentID,
+            activeConversationID: activeConversationID
+        ))
     }
 }

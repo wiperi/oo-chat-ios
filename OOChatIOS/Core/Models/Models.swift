@@ -13,6 +13,35 @@ enum ChatRole: String, Codable {
     case error
 }
 
+struct AgentConnection: Identifiable, Codable, Equatable {
+    let id: String
+    var name: String
+    var address: String
+    var createdAt: Date
+    var updatedAt: Date
+
+    init(
+        id: String = UUID().uuidString,
+        address: String,
+        name: String? = nil,
+        createdAt: Date = Date(),
+        updatedAt: Date = Date()
+    ) {
+        self.id = id
+        self.address = address
+        self.name = name ?? Self.defaultName(for: address)
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    static func defaultName(for address: String) -> String {
+        guard address.count > 16 else {
+            return address.isEmpty ? "Agent" : "Agent \(address)"
+        }
+        return "Agent \(address.prefix(8))...\(address.suffix(6))"
+    }
+}
+
 struct ChatMessage: Identifiable, Codable, Equatable {
     let id: String
     var role: ChatRole
@@ -30,16 +59,18 @@ struct ChatMessage: Identifiable, Codable, Equatable {
 struct Conversation: Identifiable, Codable, Equatable {
     let id: String
     var title: String
+    var agentID: String?
     var agentAddress: String
     var createdAt: Date
     var updatedAt: Date
     var messages: [ChatMessage]
     var serverSession: [String: JSONValue]?
 
-    init(agentAddress: String = "") {
+    init(agentID: String? = nil, agentAddress: String = "") {
         let now = Date()
         self.id = UUID().uuidString
         self.title = "New mobile session"
+        self.agentID = agentID
         self.agentAddress = agentAddress
         self.createdAt = now
         self.updatedAt = now
@@ -47,6 +78,20 @@ struct Conversation: Identifiable, Codable, Equatable {
             ChatMessage(role: .agent, content: "ConnectOnion native iOS session is ready.")
         ]
     }
+}
+
+struct ChatSnapshot: Codable, Equatable {
+    var agents: [AgentConnection]
+    var conversations: [Conversation]
+    var activeAgentID: String?
+    var activeConversationID: String?
+
+    static let empty = ChatSnapshot(
+        agents: [],
+        conversations: [],
+        activeAgentID: nil,
+        activeConversationID: nil
+    )
 }
 
 struct StoredIdentity: Codable, Equatable {

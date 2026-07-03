@@ -15,49 +15,94 @@ struct ContentView: View {
     }
 }
 
+enum AgentRoute: Hashable {
+    case sessions(String)
+    case chat(String)
+}
+
 struct AgentsView: View {
     @ObservedObject var viewModel: ChatViewModel
+    @State private var path: [AgentRoute] = []
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             List {
-                Section("Hosted agent") {
+                Section("Connect agent") {
                     TextField("0x...", text: $viewModel.agentAddressDraft, axis: .vertical)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .font(.system(.body, design: .monospaced))
-                    Button("Use Address") {
-                        viewModel.useAddress()
-                    }
-                    Button("New Chat") {
-                        viewModel.createConversation()
-                    }
-                }
-
-                Section("Conversations") {
-                    ForEach(viewModel.conversations) { conversation in
-                        Button {
-                            viewModel.selectConversation(conversation)
-                        } label: {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(conversation.title)
-                                    .font(.headline)
-                                Text("\(short(conversation.agentAddress)) - \(conversation.messages.count) items")
-                                    .foregroundStyle(.secondary)
-                                    .font(.caption)
+                    Button {
+                        Task {
+                            if let agent = await viewModel.connectToAgent() {
+                                path = [.sessions(agent.id)]
                             }
                         }
+                    } label: {
+                        HStack {
+                            if viewModel.isConnecting {
+                                ProgressView()
+                            }
+                            Text("Connect to Agent")
+                        }
                     }
-                    .onDelete { offsets in
-                        offsets.map { viewModel.conversations[$0] }.forEach(viewModel.deleteConversation)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(
+                        viewModel.isConnecting ||
+                            viewModel.agentAddressDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    )
+                }
+
+                Section("Agents") {
+                    if viewModel.agents.isEmpty {
+                        Text("No agents connected")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(viewModel.agents) { agent in
+                            NavigationLink(value: AgentRoute.sessions(agent.id)) {
+                                AgentRow(
+                                    agent: agent,
+                                    sessionCount: viewModel.conversations(for: agent).count
+                                )
+                            }
+                        }
+                        .onDelete { offsets in
+                            offsets.map { viewModel.agents[$0] }.forEach(viewModel.deleteAgent)
+                        }
                     }
                 }
             }
             .navigationTitle("ConnectOnion")
+            .navigationDestination(for: AgentRoute.self) { route in
+                switch route {
+                case .sessions(let agentID):
+                    AgentSessionsView(viewModel: viewModel, agentID: agentID, path: $path)
+                case .chat(let conversationID):
+                    RoutedChatView(viewModel: viewModel, conversationID: conversationID)
+                }
+            }
+            .alert("Connection Failed", isPresented: connectionFailedBinding) {
+                Button("OK", role: .cancel) {
+                    viewModel.connectionFailureMessage = nil
+                }
+            } message: {
+                Text(viewModel.connectionFailureMessage ?? "")
+            }
             .overlay(alignment: .bottom) {
                 ErrorBanner(message: viewModel.errorMessage)
             }
         }
+    }
+
+    private var connectionFailedBinding: Binding<Bool> {
+        Binding(
+            get: { viewModel.connectionFailureMessage != nil },
+            set: { isPresented in
+                if !isPresented {
+                    viewModel.connectionFailureMessage = nil
+                }
+            }
+        )
     }
 }
 
@@ -66,38 +111,156 @@ struct ChatView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                if let conversation = viewModel.activeConversation {
-                    ScrollViewReader { proxy in
-                        ScrollView {
-                            LazyVStack(alignment: .leading, spacing: 12) {
-                                ForEach(conversation.messages) { message in
-                                    MessageBubble(message: message)
-                                        .id(message.id)
+            ChatScreen(viewModel: viewModel)
+        }
+    }
+}
+
+struct AgentSessionsView: View {
+    @ObservedObject var viewModel: ChatViewModel
+    let agentID: String
+    @Binding var path: [AgentRoute]
+
+    private var agent: AgentConnection? {
+        viewModel.agent(withID: agentID)
+    }
+
+    private var sessions: [Conversation] {
+        guard let agent else {
+            return []
+        }
+        return viewModel.conversations(for: agent)
+    }
+
+    var body: some View {
+        Group {
+            if let agent {
+                List {
+                    Section("Agent") {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(agent.name)
+                                .font(.headline)
+                            Text(short(agent.address))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Section {
+                        Button {
+                            let conversation = viewModel.createConversation(for: agent)
+                            path.append(.chat(conversation.id))
+                        } label: {
+                            Label("New Chat", systemImage: "plus.bubble")
+                        }
+                    }
+
+                    Section("Chat Sessions") {
+                        if sessions.isEmpty {
+                            Text("No chat sessions")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ForEach(sessions) { conversation in
+                                Button {
+                                    viewModel.selectConversation(conversation)
+                                    path.append(.chat(conversation.id))
+                                } label: {
+                                    ConversationRow(conversation: conversation)
                                 }
                             }
-                            .padding()
-                        }
-                        .onChange(of: conversation.messages.count) {
-                            if let last = conversation.messages.last {
-                                proxy.scrollTo(last.id, anchor: .bottom)
+                            .onDelete { offsets in
+                                offsets.map { sessions[$0] }.forEach(viewModel.deleteConversation)
                             }
                         }
                     }
-                    Composer(viewModel: viewModel)
-                } else {
-                    ContentUnavailableView("No Conversation", systemImage: "bubble.left")
                 }
-            }
-            .navigationTitle(viewModel.activeConversation?.title ?? "Chat")
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    StatusPill(state: viewModel.connectionState)
+                .navigationTitle(agent.name)
+                .onAppear {
+                    viewModel.selectAgent(agent)
                 }
+            } else {
+                ContentUnavailableView("Agent Not Found", systemImage: "network.slash")
             }
-            .overlay(alignment: .bottom) {
-                ErrorBanner(message: viewModel.errorMessage)
+        }
+    }
+}
+
+struct RoutedChatView: View {
+    @ObservedObject var viewModel: ChatViewModel
+    let conversationID: String
+
+    var body: some View {
+        ChatScreen(viewModel: viewModel)
+            .onAppear {
+                viewModel.selectConversation(withID: conversationID)
             }
+    }
+}
+
+struct ChatScreen: View {
+    @ObservedObject var viewModel: ChatViewModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if let conversation = viewModel.activeConversation {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 12) {
+                            ForEach(conversation.messages) { message in
+                                MessageBubble(message: message)
+                                    .id(message.id)
+                            }
+                        }
+                        .padding()
+                    }
+                    .onChange(of: conversation.messages.count) {
+                        if let last = conversation.messages.last {
+                            proxy.scrollTo(last.id, anchor: .bottom)
+                        }
+                    }
+                }
+                Composer(viewModel: viewModel)
+            } else {
+                ContentUnavailableView("No Conversation", systemImage: "bubble.left")
+            }
+        }
+        .navigationTitle(viewModel.activeConversation?.title ?? "Chat")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                StatusPill(state: viewModel.connectionState)
+            }
+        }
+        .overlay(alignment: .bottom) {
+            ErrorBanner(message: viewModel.errorMessage)
+        }
+    }
+}
+
+struct AgentRow: View {
+    let agent: AgentConnection
+    let sessionCount: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(agent.name)
+                .font(.headline)
+            Text("\(short(agent.address)) - \(sessionCount) sessions")
+                .foregroundStyle(.secondary)
+                .font(.caption)
+        }
+    }
+}
+
+struct ConversationRow: View {
+    let conversation: Conversation
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(conversation.title)
+                .font(.headline)
+            Text("\(conversation.messages.count) items")
+                .foregroundStyle(.secondary)
+                .font(.caption)
         }
     }
 }
