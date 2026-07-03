@@ -2,26 +2,38 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject var viewModel: ChatViewModel
+    @State private var selectedTab: AppTab = .agents
 
     var body: some View {
-        TabView {
-            AgentsView(viewModel: viewModel)
+        TabView(selection: $selectedTab) {
+            AgentsView(viewModel: viewModel) {
+                selectedTab = .chat
+            }
                 .tabItem { Label("Agents", systemImage: "network") }
+                .tag(AppTab.agents)
             ChatView(viewModel: viewModel)
                 .tabItem { Label("Chat", systemImage: "bubble.left.and.bubble.right") }
+                .tag(AppTab.chat)
             SettingsView(viewModel: viewModel)
                 .tabItem { Label("Settings", systemImage: "gearshape") }
+                .tag(AppTab.settings)
         }
     }
 }
 
+enum AppTab: Hashable {
+    case agents
+    case chat
+    case settings
+}
+
 enum AgentRoute: Hashable {
     case sessions(String)
-    case chat(String)
 }
 
 struct AgentsView: View {
     @ObservedObject var viewModel: ChatViewModel
+    let switchToChat: () -> Void
     @State private var path: [AgentRoute] = []
 
     var body: some View {
@@ -76,9 +88,11 @@ struct AgentsView: View {
             .navigationDestination(for: AgentRoute.self) { route in
                 switch route {
                 case .sessions(let agentID):
-                    AgentSessionsView(viewModel: viewModel, agentID: agentID, path: $path)
-                case .chat(let conversationID):
-                    RoutedChatView(viewModel: viewModel, conversationID: conversationID)
+                    AgentSessionsView(
+                        viewModel: viewModel,
+                        agentID: agentID,
+                        switchToChat: switchToChat
+                    )
                 }
             }
             .alert("Connection Failed", isPresented: connectionFailedBinding) {
@@ -119,7 +133,7 @@ struct ChatView: View {
 struct AgentSessionsView: View {
     @ObservedObject var viewModel: ChatViewModel
     let agentID: String
-    @Binding var path: [AgentRoute]
+    let switchToChat: () -> Void
 
     private var agent: AgentConnection? {
         viewModel.agent(withID: agentID)
@@ -148,8 +162,8 @@ struct AgentSessionsView: View {
 
                     Section {
                         Button {
-                            let conversation = viewModel.createConversation(for: agent)
-                            path.append(.chat(conversation.id))
+                            _ = viewModel.createConversation(for: agent)
+                            switchToChat()
                         } label: {
                             Label("New Chat", systemImage: "plus.bubble")
                         }
@@ -163,7 +177,7 @@ struct AgentSessionsView: View {
                             ForEach(sessions) { conversation in
                                 Button {
                                     viewModel.selectConversation(conversation)
-                                    path.append(.chat(conversation.id))
+                                    switchToChat()
                                 } label: {
                                     ConversationRow(conversation: conversation)
                                 }
@@ -182,18 +196,6 @@ struct AgentSessionsView: View {
                 ContentUnavailableView("Agent Not Found", systemImage: "network.slash")
             }
         }
-    }
-}
-
-struct RoutedChatView: View {
-    @ObservedObject var viewModel: ChatViewModel
-    let conversationID: String
-
-    var body: some View {
-        ChatScreen(viewModel: viewModel)
-            .onAppear {
-                viewModel.selectConversation(withID: conversationID)
-            }
     }
 }
 
