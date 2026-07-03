@@ -1,0 +1,4 @@
+interface:
+  display_name: "RN iOS Simulator Deploy"
+  short_description: "Clean build and install React Native iOS apps"
+  default_prompt: "Use $rn-ios-simulator-deploy to cleanly rebuild and install the current React Native iOS branch on the booted simulator."

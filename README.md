@@ -22,7 +22,23 @@ xcodebuild \
   -configuration Debug \
   -sdk iphonesimulator \
   -destination 'generic/platform=iOS Simulator' \
+  -derivedDataPath build/DerivedData \
   build
+```
+
+## Project Structure
+
+```text
+OOChatIOS/
+├── App/                  # SwiftUI app entry point and tab shell
+├── Features/Chat/        # Chat screen state and workflows
+├── Core/
+│   ├── Protocol/         # Hosted-agent WebSocket frames and canonical signing JSON
+│   ├── Identity/         # Keychain-backed Ed25519 identity
+│   ├── Persistence/      # UserDefaults conversation snapshots
+│   ├── Models/           # Codable app and protocol models
+│   └── Utilities/        # Shared helpers
+└── Resources/            # Info.plist and future bundled assets
 ```
 
 ## Install to a Booted Simulator
@@ -33,6 +49,17 @@ xcrun simctl install booted build/DerivedData/Build/Products/Debug-iphonesimulat
 
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 xcrun simctl launch booted com.connectonion.oochatios
+```
+
+## Test
+
+```sh
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+xcodebuild test \
+  -project OOChatIOS.xcodeproj \
+  -scheme OOChatIOS \
+  -destination 'platform=iOS Simulator,name=iPhone 17' \
+  -derivedDataPath build/DerivedData
 ```
 
 ## Local Agent Smoke Path
