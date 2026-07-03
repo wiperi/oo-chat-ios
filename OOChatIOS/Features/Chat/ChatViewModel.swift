@@ -253,6 +253,10 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
+    func dismissError() {
+        errorMessage = nil
+    }
+
     private func upsertAgent(_ agent: AgentConnection) -> AgentConnection {
         var next = agent
         next.name = next.name.isEmpty ? AgentConnection.defaultName(for: next.address) : next.name
