@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-This repository is the native SwiftUI iOS client for OO Chat and the ConnectOnion hosted-agent chat protocol. App source lives in `OOChatIOS/`: `App/ContentView.swift` defines the UI shell, `Features/Chat/ChatViewModel.swift` coordinates chat state, `Core/Protocol/HostedAgentClient.swift` handles signed protocol traffic, `Core/Identity/IdentityStore.swift` owns Keychain-backed identity, and `Core/Persistence/ConversationStore.swift` persists conversation snapshots. The Xcode project is `OOChatIOS.xcodeproj`.
+This repository is the native SwiftUI iOS client for OO Chat and the ConnectOnion hosted-agent chat protocol. App source lives in `OOChatIOS/`: `App/ContentView.swift` defines the UI shell, `Features/Chat/ChatViewModel.swift` coordinates agent and chat state, `Core/Protocol/HostedAgentClient.swift` handles signed protocol traffic, `Core/Identity/IdentityStore.swift` owns Keychain-backed identity, and `Core/Persistence/ConversationStore.swift` persists agent/session snapshots. The Xcode project is `OOChatIOS.xcodeproj`.
 
 Reference implementations and protocol context are kept as submodules under `submodules/`: `connectonion/` is the Python agent SDK, `connectonion-ts/` owns the TypeScript remote-agent/WebSocket client, and `oo-chat/` is the Next.js web UI. Treat these as upstream references unless a task explicitly asks to edit a submodule.
 
@@ -34,7 +34,7 @@ Use the `DEVELOPER_DIR` prefix when this machine points `xcode-select` at Comman
 
 ## Coding Style & Naming Conventions
 
-Follow Swift API Design Guidelines: types in `UpperCamelCase`, methods/properties in `lowerCamelCase`, and clear protocol/data model names such as `HostedAgentClient` or `ConversationSnapshot`. Keep SwiftUI views small and move protocol, identity, persistence, and parsing logic into focused files. Prefer value types for protocol models and avoid persisting private key material outside Keychain.
+Follow Swift API Design Guidelines: types in `UpperCamelCase`, methods/properties in `lowerCamelCase`, and clear protocol/data model names such as `HostedAgentClient` or `ChatSnapshot`. Keep SwiftUI views small and move protocol, identity, persistence, and parsing logic into focused files. Prefer value types for protocol models and avoid persisting private key material outside Keychain.
 
 ## Testing Guidelines
 

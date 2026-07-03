@@ -8,9 +8,9 @@ This mirrors the React Native example's core flow without React Native:
 - Signed CONNECT and INPUT protocol frames.
 - Local simulator fallback for agents hosted at `http://localhost:8000`.
 - Relay endpoint discovery through `wss://oo.openonion.ai`.
-- SwiftUI tabs for agent selection, chat, and identity/settings.
+- SwiftUI tabs for agent connections, chat sessions, and identity/settings.
 - Server session state is saved with each conversation and sent back on the next CONNECT.
-- UserDefaults-backed conversation snapshots, with private key material kept out of ordinary persistence.
+- UserDefaults-backed agent/session snapshots, with private key material kept out of ordinary persistence.
 
 ## Build
 
@@ -35,7 +35,7 @@ OOChatIOS/
 ├── Core/
 │   ├── Protocol/         # Hosted-agent WebSocket frames and canonical signing JSON
 │   ├── Identity/         # Keychain-backed Ed25519 identity
-│   ├── Persistence/      # UserDefaults conversation snapshots
+│   ├── Persistence/      # UserDefaults agent/session snapshots
 │   ├── Models/           # Codable app and protocol models
 │   └── Utilities/        # Shared helpers
 └── Resources/            # Info.plist and future bundled assets
@@ -71,4 +71,4 @@ python3 server.py
 curl http://localhost:8000/info
 ```
 
-In the app, open the Agents tab, paste the address, tap `Use Address`, then send `hello`.
+In the app, open the Agents tab, paste the address, tap `Connect to Agent`, open a chat session, then send `hello`.
