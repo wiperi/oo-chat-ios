@@ -1,7 +1,21 @@
 tt.*
 
+# Build and Derived Data
 build/
 DerivedData/
 *.xcuserstate
 xcuserdata/
 .DS_Store
+
+# Secrets & Local Keys (Do not commit!)
+.co/
+
+# Dependencies & Package Managers
+node_modules/
+.pnpm-store/
+vendor/
+Pods/
+
+# Local configuration files
+.xcode.env.local
+*.env
