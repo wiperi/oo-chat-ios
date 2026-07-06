@@ -394,6 +394,10 @@ struct StatusPill: View {
             return .orange.opacity(0.22)
         case .disconnected:
             return .yellow.opacity(0.24)
+        case .waiting:
+            return .blue.opacity(0.18)
+        case .suspended:
+            return .gray.opacity(0.22)
         }
     }
 }
