@@ -33,7 +33,6 @@ export interface HostedAgentResult {
 export interface HostedAgentCallbacks {
   onConnectionState?: (state: 'disconnected' | 'connected' | 'reconnecting') => void;
   onOutbound?: (message: SignedMessage | ProtocolFrame) => void;
-  onStreamItems?: (items: ChatItem[]) => void;
 }
 
 export interface ConnectionTestResult {
@@ -544,7 +543,7 @@ export async function sendPromptToHostedAgent(
     let inputSent = false;
     let sessionId = conversation.id;
     let serverSession = conversation.serverSession;
-    const streamedItems: ChatItem[] = [];
+    const toolItems: ChatItem[] = [];
     const timeout = setTimeout(() => {
       fail(new Error(`Agent reply timed out via ${endpoint.label}`));
     }, 120000);
@@ -618,15 +617,8 @@ export async function sendPromptToHostedAgent(
 
       if (frame.type === 'OUTPUT') {
         const result = typeof frame.result === 'string' ? frame.result : messageText(frame);
-        const duration = typeof frame.duration_ms === 'number' ? frame.duration_ms : undefined;
         const finalItems: ChatItem[] = [
-          ...(duration ? [{
-            id: makeId('thinking'),
-            type: 'thinking' as const,
-            status: 'done' as const,
-            duration_ms: duration,
-            content: 'Agent response received.',
-          }] : []),
+          ...toolItems,
           { id: makeId('agent'), type: 'agent', content: result },
         ];
         finish({
@@ -644,15 +636,21 @@ export async function sendPromptToHostedAgent(
         return;
       }
 
-      const items = mapStreamEvent(frame);
-      if (items.length > 0) {
-        streamedItems.push(...items);
-        callbacks.onStreamItems?.(items);
+      if (frame.type === 'tool_call' || frame.type === 'tool_result') {
+        for (const item of mapStreamEvent(frame)) {
+          const existingIndex = toolItems.findIndex(existing => existing.id === item.id);
+          if (existingIndex >= 0) {
+            toolItems[existingIndex] = { ...toolItems[existingIndex], ...item } as ChatItem;
+          } else {
+            toolItems.push(item);
+          }
+        }
+        return;
       }
 
       if (frame.type === 'ask_user' || frame.type === 'approval_needed' || frame.type === 'ONBOARD_REQUIRED' || frame.type === 'plan_review' || frame.type === 'ulw_turns_reached') {
         finish({
-          items: [],
+          items: mapStreamEvent(frame),
           done: false,
           endpoint: endpoint.label,
           sessionId,

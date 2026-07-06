@@ -455,20 +455,6 @@ export function AppShell() {
         requestConversation,
         trimmed,
         [],
-        {
-          onStreamItems: items => {
-            const streamItems = previewItemsFromHosted(items);
-            if (streamItems.length === 0) {
-              return;
-            }
-            latest = {
-              ...latest,
-              updatedAt: Date.now(),
-              ui: mergePreviewItems(latest.ui, streamItems),
-            };
-            upsertConversation(latest);
-          },
-        },
       );
       const responseItems = previewItemsFromHosted(result.items);
       latest = {

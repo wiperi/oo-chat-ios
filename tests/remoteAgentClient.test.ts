@@ -22,7 +22,7 @@
       '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
     beforeEach(() => {
-      jest.resetAllMocks();
+      jest.clearAllMocks();
     });
 
     test('validates hosted agent address format', () => {
@@ -131,7 +131,7 @@
       });
     });
 
-    test('forwards hosted agent progress and tool events before final output', async () => {
+    test('keeps hosted agent tool events before final output', async () => {
       globalThis.fetch = jest.fn().mockResolvedValue({
         ok: true,
         json: jest.fn().mockResolvedValue({address: agentAddress}),
@@ -143,7 +143,6 @@
         configurable: true,
         value: WebSocketImpl,
       });
-      const onStreamItems = jest.fn();
 
       try {
         const promise = sendPromptToHostedAgent(
@@ -161,7 +160,6 @@
           },
           'hello',
           [],
-          {onStreamItems},
         );
 
         await waitForSocket(sockets);
@@ -171,46 +169,9 @@
         await waitForSentMessage(sockets[0], 1);
 
         sockets[0].onmessage?.({data: JSON.stringify({type: 'llm_call', id: 'llm-1', model: 'gemini-2.5-pro'})});
-        expect(onStreamItems).toHaveBeenLastCalledWith([
-          expect.objectContaining({
-            id: 'llm-1',
-            type: 'thinking',
-            status: 'running',
-            model: 'gemini-2.5-pro',
-          }),
-        ]);
-
         sockets[0].onmessage?.({data: JSON.stringify({type: 'tool_call', tool_id: 'tool-1', name: 'search'})});
-        expect(onStreamItems).toHaveBeenLastCalledWith([
-          expect.objectContaining({
-            id: 'tool-1',
-            type: 'tool_call',
-            name: 'search',
-            status: 'running',
-          }),
-        ]);
-
         sockets[0].onmessage?.({data: JSON.stringify({type: 'tool_result', tool_id: 'tool-1', name: 'search', result: 'found it'})});
-        expect(onStreamItems).toHaveBeenLastCalledWith([
-          expect.objectContaining({
-            id: 'tool-1',
-            type: 'tool_call',
-            name: 'search',
-            status: 'done',
-            result: 'found it',
-          }),
-        ]);
-
         sockets[0].onmessage?.({data: JSON.stringify({type: 'llm_result', id: 'llm-1', model: 'gemini-2.5-pro', duration_ms: 1200})});
-        expect(onStreamItems).toHaveBeenLastCalledWith([
-          expect.objectContaining({
-            id: 'llm-1',
-            type: 'thinking',
-            status: 'done',
-            model: 'gemini-2.5-pro',
-            duration_ms: 1200,
-          }),
-        ]);
 
         sockets[0].onmessage?.({
           data: JSON.stringify({
@@ -222,7 +183,13 @@
 
         await expect(promise).resolves.toEqual({
           items: [
-            expect.objectContaining({type: 'thinking', status: 'done'}),
+            expect.objectContaining({
+              id: 'tool-1',
+              type: 'tool_call',
+              name: 'search',
+              status: 'done',
+              result: 'found it',
+            }),
             expect.objectContaining({type: 'agent', content: 'Hello world'}),
           ],
           done: true,
