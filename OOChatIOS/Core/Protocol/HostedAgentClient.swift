@@ -7,6 +7,9 @@ enum HostedAgentClientError: LocalizedError {
     case server(String)
     case closed
     case timeout
+    case notConnected
+    case requestInFlight
+    case duplicateProtected
 
     var errorDescription: String? {
         switch self {
@@ -22,6 +25,12 @@ enum HostedAgentClientError: LocalizedError {
             return "Connection closed before the agent replied."
         case .timeout:
             return "The hosted agent did not reply before the timeout."
+        case .notConnected:
+            return "No active hosted-agent connection."
+        case .requestInFlight:
+            return "Another hosted-agent request is already in progress."
+        case .duplicateProtected:
+            return "The connection dropped after the request was sent. It was not retried to avoid duplicate execution."
         }
     }
 }
@@ -97,7 +106,12 @@ final class HostedAgentClient {
                 }
                 if !inputSent {
                     inputSent = true
-                    let inputFrame = try buildInputFrame(agentAddress: agentAddress, prompt: prompt, endpoint: endpoint)
+                    let inputFrame = try buildInputFrame(
+                        agentAddress: agentAddress,
+                        conversationID: conversation.id,
+                        prompt: prompt,
+                        endpoint: endpoint
+                    )
                     try await send(inputFrame, over: socket)
                 }
             case "OUTPUT":
@@ -115,7 +129,11 @@ final class HostedAgentClient {
         }
     }
 
-    private func resolveEndpoint(agentAddress: String) async throws -> ResolvedEndpoint {
+    func makeWebSocketTask(for endpoint: ResolvedEndpoint) -> URLSessionWebSocketTask {
+        session.webSocketTask(with: endpoint.wsURL)
+    }
+
+    func resolveEndpoint(agentAddress: String) async throws -> ResolvedEndpoint {
         for httpURL in localEndpoints {
             if let endpoint = try await probe(httpURL: httpURL, agentAddress: agentAddress, timeout: 1.2) {
                 return endpoint
@@ -187,7 +205,7 @@ final class HostedAgentClient {
         return "\(scheme)://\(base)/ws"
     }
 
-    private func buildConnectFrame(agentAddress: String, conversation: Conversation, endpoint: ResolvedEndpoint) throws -> [String: JSONValue] {
+    func buildConnectFrame(agentAddress: String, conversation: Conversation, endpoint: ResolvedEndpoint) throws -> [String: JSONValue] {
         let timestamp = Double(Int(Date().timeIntervalSince1970))
         let payload: [String: JSONValue] = [
             "timestamp": .number(timestamp),
@@ -202,7 +220,7 @@ final class HostedAgentClient {
         return frame
     }
 
-    private func sessionPayload(for conversation: Conversation) -> [String: JSONValue] {
+    func sessionPayload(for conversation: Conversation) -> [String: JSONValue] {
         var session = conversation.serverSession ?? [:]
         session["session_id"] = .string(conversation.id)
         session["mode"] = .string(conversation.mode.rawValue)
@@ -220,7 +238,13 @@ final class HostedAgentClient {
         return session
     }
 
-    private func buildInputFrame(agentAddress: String, prompt: String, endpoint: ResolvedEndpoint) throws -> [String: JSONValue] {
+    func buildInputFrame(
+        agentAddress: String,
+        conversationID: String,
+        prompt: String,
+        endpoint: ResolvedEndpoint,
+        inputID: String = UUID().uuidString
+    ) throws -> [String: JSONValue] {
         let timestamp = Double(Int(Date().timeIntervalSince1970))
         var payload: [String: JSONValue] = [
             "prompt": .string(prompt),
@@ -230,7 +254,8 @@ final class HostedAgentClient {
             payload["to"] = .string(agentAddress)
         }
         var frame = try identityStore.signedEnvelope(type: "INPUT", payload: payload)
-        frame["input_id"] = .string(UUID().uuidString)
+        frame["input_id"] = .string(inputID)
+        frame["session_id"] = .string(conversationID)
         frame["prompt"] = .string(prompt)
         if endpoint.kind == .relay {
             frame["to"] = .string(agentAddress)
@@ -238,14 +263,44 @@ final class HostedAgentClient {
         return frame
     }
 
-    private func extractServerSession(from frame: [String: JSONValue]) -> [String: JSONValue]? {
+    func buildControlFrame(type: String, payload: [String: JSONValue]) throws -> [String: JSONValue] {
+        if type == "ONBOARD_SUBMIT" {
+            var signedPayload = payload
+            signedPayload["timestamp"] = .number(Double(Int(Date().timeIntervalSince1970)))
+            return try identityStore.signedEnvelope(type: type, payload: signedPayload)
+        }
+
+        var frame = payload
+        frame["type"] = .string(type)
+        return frame
+    }
+
+    func buildModeChangeFrame(mode: ChatMode, turns: Int? = nil) -> [String: JSONValue] {
+        var frame: [String: JSONValue] = [
+            "type": .string("mode_change"),
+            "mode": .string(mode.rawValue),
+        ]
+        if let turns {
+            frame["turns"] = .number(Double(turns))
+        }
+        return frame
+    }
+
+    func extractServerSession(from frame: [String: JSONValue]) -> [String: JSONValue]? {
         if case .object(let session)? = frame["session"] {
+            return session
+        }
+        if let sessionID = frame["session_id"]?.stringValue {
+            var session: [String: JSONValue] = ["session_id": .string(sessionID)]
+            if let mode = frame["mode"]?.stringValue {
+                session["mode"] = .string(mode)
+            }
             return session
         }
         return nil
     }
 
-    private func send(_ frame: [String: JSONValue], over socket: URLSessionWebSocketTask) async throws {
+    func send(_ frame: [String: JSONValue], over socket: URLSessionWebSocketTask) async throws {
         let data = try JSONEncoder().encode(frame)
         guard let text = String(data: data, encoding: .utf8) else {
             throw HostedAgentClientError.badFrame
@@ -253,7 +308,7 @@ final class HostedAgentClient {
         try await socket.send(.string(text))
     }
 
-    private func receiveFrame(from socket: URLSessionWebSocketTask, timeout: TimeInterval = 45.0) async throws -> [String: JSONValue] {
+    func receiveFrame(from socket: URLSessionWebSocketTask, timeout: TimeInterval = 45.0) async throws -> [String: JSONValue] {
         try await withThrowingTaskGroup(of: [String: JSONValue].self) { group in
             group.addTask {
                 try await self.readFrame(from: socket)
@@ -271,7 +326,7 @@ final class HostedAgentClient {
         }
     }
 
-    private func readFrame(from socket: URLSessionWebSocketTask) async throws -> [String: JSONValue] {
+    func readFrame(from socket: URLSessionWebSocketTask) async throws -> [String: JSONValue] {
         let message = try await socket.receive()
         switch message {
         case .string(let text):
@@ -286,7 +341,7 @@ final class HostedAgentClient {
         }
     }
 
-    private func messageText(_ frame: [String: JSONValue]) -> String {
+    func messageText(_ frame: [String: JSONValue]) -> String {
         for key in ["result", "message", "error", "text", "content"] {
             if let value = frame[key]?.stringValue {
                 return value
