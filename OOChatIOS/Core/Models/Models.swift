@@ -4,8 +4,6 @@ enum ConnectionState: String, Codable {
     case disconnected
     case connected
     case reconnecting
-    case waiting
-    case suspended
 }
 
 enum ChatRole: String, Codable {
@@ -240,51 +238,4 @@ struct HostedAgentResult {
     let output: String?
     let endpointLabel: String
     let serverSession: [String: JSONValue]?
-    let done: Bool
-
-    init(output: String?, endpointLabel: String, serverSession: [String: JSONValue]?, done: Bool = true) {
-        self.output = output
-        self.endpointLabel = endpointLabel
-        self.serverSession = serverSession
-        self.done = done
-    }
-}
-
-enum PendingInteractionKind: String, Codable, Equatable {
-    case askUser
-    case approval
-    case planReview
-    case ulwTurnsReached
-    case onboard
-}
-
-struct PendingInteraction: Identifiable, Codable, Equatable {
-    let id: String
-    let conversationID: String
-    let kind: PendingInteractionKind
-    var title: String
-    var message: String
-    var options: [String]
-    var tool: String?
-    var argumentsText: String?
-
-    init(
-        id: String = UUID().uuidString,
-        conversationID: String,
-        kind: PendingInteractionKind,
-        title: String,
-        message: String,
-        options: [String] = [],
-        tool: String? = nil,
-        argumentsText: String? = nil
-    ) {
-        self.id = id
-        self.conversationID = conversationID
-        self.kind = kind
-        self.title = title
-        self.message = message
-        self.options = options
-        self.tool = tool
-        self.argumentsText = argumentsText
-    }
 }
