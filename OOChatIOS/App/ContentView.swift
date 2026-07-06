@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject var viewModel: ChatViewModel
+    @Environment(\.scenePhase) private var scenePhase
     @State private var selectedTab: AppTab = .agents
 
     var body: some View {
@@ -17,6 +18,12 @@ struct ContentView: View {
             SettingsView(viewModel: viewModel)
                 .tabItem { Label("Settings", systemImage: "gearshape") }
                 .tag(AppTab.settings)
+        }
+        .onAppear {
+            viewModel.handleScenePhase(scenePhase)
+        }
+        .onChange(of: scenePhase) {
+            viewModel.handleScenePhase(scenePhase)
         }
     }
 }
@@ -223,6 +230,7 @@ struct ChatScreen: View {
                         }
                     }
                 }
+                PendingInteractionPanel(viewModel: viewModel)
                 Composer(viewModel: viewModel)
             } else {
                 ContentUnavailableView("No Conversation", systemImage: "bubble.left")
@@ -289,7 +297,7 @@ struct Composer: View {
                     .textFieldStyle(.roundedBorder)
                     .lineLimit(1...4)
                     .disabled(viewModel.isProcessing)
-                Button(viewModel.isProcessing ? "..." : "Send") {
+                Button(sendLabel) {
                     viewModel.sendPrompt()
                 }
                 .buttonStyle(.borderedProminent)
@@ -305,6 +313,81 @@ struct Composer: View {
             get: { viewModel.activeMode },
             set: { viewModel.setMode($0) }
         )
+    }
+
+    private var sendLabel: String {
+        if viewModel.isProcessing {
+            return "..."
+        }
+        if viewModel.pendingInteraction != nil {
+            return "Reply"
+        }
+        return "Send"
+    }
+}
+
+struct PendingInteractionPanel: View {
+    @ObservedObject var viewModel: ChatViewModel
+
+    var body: some View {
+        if let interaction = viewModel.pendingInteraction,
+           interaction.conversationID == viewModel.activeConversation?.id {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(interaction.title)
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                    Text(interaction.kind.rawValue)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Text(interaction.message)
+                    .font(.footnote)
+                    .foregroundStyle(.primary)
+
+                if let tool = interaction.tool {
+                    Text(tool)
+                        .font(.caption.weight(.semibold))
+                }
+
+                if let argumentsText = interaction.argumentsText {
+                    ScrollView(.horizontal) {
+                        Text(argumentsText)
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if interaction.kind == .approval {
+                    HStack(spacing: 8) {
+                        Button("Approve") {
+                            viewModel.respondToApproval(approved: true)
+                        }
+                        .buttonStyle(.borderedProminent)
+
+                        Button("Session") {
+                            viewModel.respondToApproval(approved: true, scope: "session")
+                        }
+                        .buttonStyle(.bordered)
+
+                        Button("Reject") {
+                            viewModel.respondToApproval(approved: false)
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                } else if !interaction.options.isEmpty {
+                    Text(interaction.options.joined(separator: " / "))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(10)
+            .background(Color(.secondarySystemBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+        }
     }
 }
 
