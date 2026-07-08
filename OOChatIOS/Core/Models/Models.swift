@@ -107,6 +107,28 @@ struct Conversation: Identifiable, Codable, Equatable {
         ]
     }
 
+    init(
+        id: String,
+        title: String,
+        agentID: String?,
+        agentAddress: String,
+        mode: ChatMode,
+        createdAt: Date,
+        updatedAt: Date,
+        messages: [ChatMessage],
+        serverSession: [String: JSONValue]?
+    ) {
+        self.id = id
+        self.title = title
+        self.agentID = agentID
+        self.agentAddress = agentAddress
+        self.mode = mode
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.messages = messages
+        self.serverSession = serverSession
+    }
+
     private enum CodingKeys: String, CodingKey {
         case id
         case title

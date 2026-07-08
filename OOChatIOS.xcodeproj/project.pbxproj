@@ -16,9 +16,12 @@
 		100000000000000000000107 /* IdentityStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000007 /* IdentityStore.swift */; };
 		100000000000000000000108 /* ConversationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000008 /* ConversationStore.swift */; };
 		100000000000000000000111 /* ConversationRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000015 /* ConversationRepository.swift */; };
+		100000000000000000000113 /* StoredModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000017 /* StoredModels.swift */; };
+		100000000000000000000114 /* SwiftDataConversationRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000018 /* SwiftDataConversationRepository.swift */; };
 		100000000000000000000109 /* HostedAgentClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000009 /* HostedAgentClient.swift */; };
 		100000000000000000000110 /* MockHostedAgentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000013 /* MockHostedAgentTests.swift */; };
 		100000000000000000000112 /* ConversationStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000016 /* ConversationStoreTests.swift */; };
+		100000000000000000000115 /* SwiftDataConversationRepositoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000019 /* SwiftDataConversationRepositoryTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -41,12 +44,15 @@
 		100000000000000000000007 /* IdentityStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentityStore.swift; sourceTree = "<group>"; };
 		100000000000000000000008 /* ConversationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationStore.swift; sourceTree = "<group>"; };
 		100000000000000000000015 /* ConversationRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationRepository.swift; sourceTree = "<group>"; };
+		100000000000000000000017 /* StoredModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoredModels.swift; sourceTree = "<group>"; };
+		100000000000000000000018 /* SwiftDataConversationRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwiftDataConversationRepository.swift; sourceTree = "<group>"; };
 		100000000000000000000009 /* HostedAgentClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostedAgentClient.swift; sourceTree = "<group>"; };
 		100000000000000000000010 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		100000000000000000000011 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 		100000000000000000000012 /* OOChatIOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OOChatIOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		100000000000000000000013 /* MockHostedAgentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockHostedAgentTests.swift; sourceTree = "<group>"; };
 		100000000000000000000016 /* ConversationStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationStoreTests.swift; sourceTree = "<group>"; };
+		100000000000000000000019 /* SwiftDataConversationRepositoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwiftDataConversationRepositoryTests.swift; sourceTree = "<group>"; };
 		100000000000000000000014 /* OOChatIOSTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OOChatIOSTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -165,6 +171,8 @@
 			children = (
 				100000000000000000000015 /* ConversationRepository.swift */,
 				100000000000000000000008 /* ConversationStore.swift */,
+				100000000000000000000017 /* StoredModels.swift */,
+				100000000000000000000018 /* SwiftDataConversationRepository.swift */,
 			);
 			path = Persistence;
 			sourceTree = "<group>";
@@ -190,6 +198,7 @@
 			children = (
 				100000000000000000000013 /* MockHostedAgentTests.swift */,
 				100000000000000000000016 /* ConversationStoreTests.swift */,
+				100000000000000000000019 /* SwiftDataConversationRepositoryTests.swift */,
 			);
 			path = OOChatIOSTests;
 			sourceTree = "<group>";
@@ -301,6 +310,8 @@
 				100000000000000000000107 /* IdentityStore.swift in Sources */,
 				100000000000000000000108 /* ConversationStore.swift in Sources */,
 				100000000000000000000111 /* ConversationRepository.swift in Sources */,
+				100000000000000000000113 /* StoredModels.swift in Sources */,
+				100000000000000000000114 /* SwiftDataConversationRepository.swift in Sources */,
 				100000000000000000000109 /* HostedAgentClient.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -311,6 +322,7 @@
 			files = (
 				100000000000000000000110 /* MockHostedAgentTests.swift in Sources */,
 				100000000000000000000112 /* ConversationStoreTests.swift in Sources */,
+				100000000000000000000115 /* SwiftDataConversationRepositoryTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
