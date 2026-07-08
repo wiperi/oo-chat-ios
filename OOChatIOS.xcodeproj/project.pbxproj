@@ -18,6 +18,7 @@
 		100000000000000000000111 /* ConversationRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000015 /* ConversationRepository.swift */; };
 		100000000000000000000109 /* HostedAgentClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000009 /* HostedAgentClient.swift */; };
 		100000000000000000000110 /* MockHostedAgentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000013 /* MockHostedAgentTests.swift */; };
+		100000000000000000000112 /* ConversationStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000016 /* ConversationStoreTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -45,6 +46,7 @@
 		100000000000000000000011 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 		100000000000000000000012 /* OOChatIOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OOChatIOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		100000000000000000000013 /* MockHostedAgentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockHostedAgentTests.swift; sourceTree = "<group>"; };
+		100000000000000000000016 /* ConversationStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationStoreTests.swift; sourceTree = "<group>"; };
 		100000000000000000000014 /* OOChatIOSTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OOChatIOSTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -187,6 +189,7 @@
 			isa = PBXGroup;
 			children = (
 				100000000000000000000013 /* MockHostedAgentTests.swift */,
+				100000000000000000000016 /* ConversationStoreTests.swift */,
 			);
 			path = OOChatIOSTests;
 			sourceTree = "<group>";
@@ -307,6 +310,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				100000000000000000000110 /* MockHostedAgentTests.swift in Sources */,
+				100000000000000000000112 /* ConversationStoreTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
