@@ -25,10 +25,14 @@ final class ConversationStore: ConversationRepository {
             return .empty
         }
 
-        return migrateLegacyConversations(
+        let migrated = migrateLegacyConversations(
             conversations,
             activeConversationID: defaults.string(forKey: legacyActiveConversationKey)
         )
+        save(migrated)
+        defaults.removeObject(forKey: legacyConversationsKey)
+        defaults.removeObject(forKey: legacyActiveConversationKey)
+        return migrated
     }
 
     func save(_ snapshot: ChatSnapshot) {

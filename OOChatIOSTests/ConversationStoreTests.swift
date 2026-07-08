@@ -5,6 +5,7 @@ final class ConversationStoreTests: XCTestCase {
     private var suiteName: String!
     private var defaults: UserDefaults!
 
+    private let snapshotKey = "connectonion.native-ios.chatSnapshot.v2"
     private let legacyConversationsKey = "connectonion.native-ios.conversations"
     private let legacyActiveConversationKey = "connectonion.native-ios.activeConversation"
 
@@ -104,6 +105,19 @@ final class ConversationStoreTests: XCTestCase {
 
         XCTAssertEqual(loaded.agents.count, 1)
         XCTAssertEqual(loaded.conversations.map(\.id), [valid.id])
+    }
+
+    func testLegacyMigrationIsPersistedAndStableAcrossLoads() {
+        let conversation = makeConversation(agentID: nil, address: "0xabc", title: "legacy", updatedAt: seconds(1000))
+        seedLegacy([conversation], active: conversation.id)
+
+        let firstLaunch = ConversationStore(defaults: defaults).load()
+        let secondLaunch = ConversationStore(defaults: defaults).load()
+
+        XCTAssertEqual(firstLaunch.agents.map(\.id), secondLaunch.agents.map(\.id))
+        XCTAssertNil(defaults.data(forKey: legacyConversationsKey))
+        XCTAssertNil(defaults.string(forKey: legacyActiveConversationKey))
+        XCTAssertNotNil(defaults.data(forKey: snapshotKey))
     }
 
     private func seconds(_ value: TimeInterval) -> Date {
