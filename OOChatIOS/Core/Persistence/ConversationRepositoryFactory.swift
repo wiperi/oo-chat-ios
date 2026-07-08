@@ -20,11 +20,19 @@ enum ConversationStoreMigration {
         defaults: UserDefaults
     ) {
         guard !defaults.bool(forKey: migratedKey) else { return }
-        defer { defaults.set(true, forKey: migratedKey) }
 
-        guard swiftData.load() == .empty else { return }
+        guard swiftData.load() == .empty else {
+            defaults.set(true, forKey: migratedKey)
+            return
+        }
         let legacySnapshot = legacy.load()
-        guard legacySnapshot != .empty else { return }
+        guard legacySnapshot != .empty else {
+            defaults.set(true, forKey: migratedKey)
+            return
+        }
+
         swiftData.save(legacySnapshot)
+        guard swiftData.load() != .empty else { return }
+        defaults.set(true, forKey: migratedKey)
     }
 }

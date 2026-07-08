@@ -63,6 +63,53 @@ final class ConversationStoreMigrationTests: XCTestCase {
         XCTAssertEqual(swiftData.load(), .empty)
     }
 
+    func testMigrationPreservesAgentsAndMessages() throws {
+        let legacy = ConversationStore(defaults: defaults)
+        let agent = AgentConnection(id: "a1", address: "0xabc")
+        var conversation = makeConversation(title: "with messages")
+        conversation.messages = [
+            ChatMessage(role: .user, content: "hi"),
+            ChatMessage(role: .agent, content: "hello"),
+        ]
+        legacy.save(ChatSnapshot(agents: [agent], conversations: [conversation], activeAgentID: nil, activeConversationID: nil))
+        let swiftData = try SwiftDataConversationRepository(inMemory: true, defaults: defaults)
+
+        ConversationStoreMigration.migrateIfNeeded(from: legacy, to: swiftData, defaults: defaults)
+        let loaded = swiftData.load()
+
+        XCTAssertEqual(loaded.agents.map(\.id), ["a1"])
+        XCTAssertEqual(loaded.conversations.first?.messages.map(\.content), ["hi", "hello"])
+    }
+
+    func testMigrationPreservesActivePointers() throws {
+        let legacy = ConversationStore(defaults: defaults)
+        let agent = AgentConnection(id: "a1", address: "0xabc")
+        let conversation = makeConversation(title: "active")
+        legacy.save(ChatSnapshot(agents: [agent], conversations: [conversation], activeAgentID: "a1", activeConversationID: conversation.id))
+        let swiftData = try SwiftDataConversationRepository(inMemory: true, defaults: defaults)
+
+        ConversationStoreMigration.migrateIfNeeded(from: legacy, to: swiftData, defaults: defaults)
+        let loaded = swiftData.load()
+
+        XCTAssertEqual(loaded.activeAgentID, "a1")
+        XCTAssertEqual(loaded.activeConversationID, conversation.id)
+    }
+
+    func testMigrationNotMarkedDoneWhenCopyDoesNotPersist() {
+        let legacy = ConversationStore(defaults: defaults)
+        legacy.save(ChatSnapshot(agents: [], conversations: [makeConversation(title: "data")], activeAgentID: nil, activeConversationID: nil))
+        let failing = DroppingRepository()
+
+        ConversationStoreMigration.migrateIfNeeded(from: legacy, to: failing, defaults: defaults)
+
+        XCTAssertFalse(defaults.bool(forKey: ConversationStoreMigration.migratedKey))
+    }
+
+    private final class DroppingRepository: ConversationRepository {
+        func load() -> ChatSnapshot { .empty }
+        func save(_ snapshot: ChatSnapshot) {}
+    }
+
     private func makeConversation(title: String) -> Conversation {
         var conversation = Conversation(agentID: "a1", agentAddress: "0xabc")
         conversation.title = title

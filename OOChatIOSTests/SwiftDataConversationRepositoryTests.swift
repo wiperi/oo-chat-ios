@@ -187,6 +187,91 @@ final class SwiftDataConversationRepositoryTests: XCTestCase {
         XCTAssertEqual(contentHits, [byContent.id])
     }
 
+    func testMultipleAgentsRoundTrip() throws {
+        let repository = try makeRepository()
+        let a = AgentConnection(id: "a1", address: "0xaaa", createdAt: seconds(1000), updatedAt: seconds(1000))
+        let b = AgentConnection(id: "a2", address: "0xbbb", createdAt: seconds(2000), updatedAt: seconds(2000))
+        repository.upsertAgent(a)
+        repository.upsertAgent(b)
+
+        XCTAssertEqual(Set(repository.load().agents.map(\.id)), ["a1", "a2"])
+    }
+
+    func testUpsertAgentUpdatesExistingInPlace() throws {
+        let repository = try makeRepository()
+        var agent = AgentConnection(id: "a1", address: "0xaaa", name: "First", createdAt: seconds(1000), updatedAt: seconds(1000))
+        repository.upsertAgent(agent)
+        agent.name = "Renamed"
+        repository.upsertAgent(agent)
+
+        let loaded = repository.load().agents
+        XCTAssertEqual(loaded.count, 1)
+        XCTAssertEqual(loaded.first?.name, "Renamed")
+    }
+
+    func testDeletingNonexistentIDsIsANoOp() throws {
+        let repository = try makeRepository()
+        repository.deleteConversation(id: "missing")
+        repository.deleteAgent(id: "missing")
+
+        XCTAssertEqual(repository.load(), .empty)
+    }
+
+    func testMessagesAreReturnedInCreatedAtOrder() throws {
+        let repository = try makeRepository()
+        var conversation = makeConversation(agentID: "a1", address: "0xaaa", title: "c", updatedAt: seconds(1000))
+        let later = ChatMessage(role: .user, content: "later", createdAt: seconds(2000))
+        let earlier = ChatMessage(role: .agent, content: "earlier", createdAt: seconds(1000))
+        conversation.messages = [later, earlier]
+        repository.upsertConversation(conversation)
+
+        let loaded = repository.load().conversations.first
+        XCTAssertEqual(loaded?.messages.map(\.content), ["earlier", "later"])
+    }
+
+    func testNilServerSessionRoundTripsAsNil() throws {
+        let repository = try makeRepository()
+        var conversation = makeConversation(agentID: "a1", address: "0xaaa", title: "c", updatedAt: seconds(1000))
+        conversation.serverSession = nil
+        repository.upsertConversation(conversation)
+
+        XCTAssertNil(repository.load().conversations.first?.serverSession)
+    }
+
+    func testEmptyMessagesRoundTrip() throws {
+        let repository = try makeRepository()
+        var conversation = makeConversation(agentID: "a1", address: "0xaaa", title: "c", updatedAt: seconds(1000))
+        conversation.messages = []
+        repository.upsertConversation(conversation)
+
+        XCTAssertEqual(repository.load().conversations.first?.messages.count, 0)
+    }
+
+    func testAllModesRoundTrip() throws {
+        let repository = try makeRepository()
+        for mode in ChatMode.allCases {
+            var conversation = makeConversation(agentID: "a1", address: "0xaaa", title: mode.rawValue, updatedAt: seconds(1000))
+            conversation.mode = mode
+            repository.upsertConversation(conversation)
+            let loaded = repository.load().conversations.first { $0.id == conversation.id }
+            XCTAssertEqual(loaded?.mode, mode)
+        }
+    }
+
+    func testAllRolesRoundTrip() throws {
+        let repository = try makeRepository()
+        var conversation = makeConversation(agentID: "a1", address: "0xaaa", title: "c", updatedAt: seconds(1000))
+        conversation.messages = [
+            ChatMessage(role: .user, content: "u", createdAt: seconds(1000)),
+            ChatMessage(role: .agent, content: "a", createdAt: seconds(1001)),
+            ChatMessage(role: .thinking, content: "t", createdAt: seconds(1002)),
+            ChatMessage(role: .error, content: "e", createdAt: seconds(1003)),
+        ]
+        repository.upsertConversation(conversation)
+
+        XCTAssertEqual(repository.load().conversations.first?.messages.map(\.role), [.user, .agent, .thinking, .error])
+    }
+
     private func seconds(_ value: TimeInterval) -> Date {
         Date(timeIntervalSince1970: value)
     }
