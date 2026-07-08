@@ -33,8 +33,54 @@ final class SwiftDataConversationRepository: ConversationRepository {
         syncAgents(snapshot.agents, in: context)
         syncConversations(snapshot.conversations, in: context)
         try? context.save()
-        setActive(snapshot.activeAgentID, forKey: activeAgentKey)
-        setActive(snapshot.activeConversationID, forKey: activeConversationKey)
+        saveActive(agentID: snapshot.activeAgentID, conversationID: snapshot.activeConversationID)
+    }
+
+    func upsertConversation(_ conversation: Conversation) {
+        let context = ModelContext(container)
+        let id = conversation.id
+        let existing = (try? context.fetch(FetchDescriptor<StoredConversation>(predicate: #Predicate { $0.id == id })))?.first
+        if let stored = existing {
+            apply(conversation, to: stored, in: context)
+        } else {
+            context.insert(toStoredConversation(conversation))
+        }
+        try? context.save()
+    }
+
+    func deleteConversation(id: String) {
+        let context = ModelContext(container)
+        let stored = (try? context.fetch(FetchDescriptor<StoredConversation>(predicate: #Predicate { $0.id == id })))?.first
+        guard let stored else { return }
+        context.delete(stored)
+        try? context.save()
+    }
+
+    func upsertAgent(_ agent: AgentConnection) {
+        let context = ModelContext(container)
+        let id = agent.id
+        let existing = (try? context.fetch(FetchDescriptor<StoredAgent>(predicate: #Predicate { $0.id == id })))?.first
+        if let stored = existing {
+            apply(agent, to: stored)
+        } else {
+            context.insert(toStoredAgent(agent))
+        }
+        try? context.save()
+    }
+
+    func deleteAgent(id: String) {
+        let context = ModelContext(container)
+        if let stored = (try? context.fetch(FetchDescriptor<StoredAgent>(predicate: #Predicate { $0.id == id })))?.first {
+            context.delete(stored)
+        }
+        let conversations = (try? context.fetch(FetchDescriptor<StoredConversation>())) ?? []
+        conversations.filter { $0.agentID == id }.forEach { context.delete($0) }
+        try? context.save()
+    }
+
+    func saveActive(agentID: String?, conversationID: String?) {
+        setActive(agentID, forKey: activeAgentKey)
+        setActive(conversationID, forKey: activeConversationKey)
     }
 
     private func syncAgents(_ agents: [AgentConnection], in context: ModelContext) {
@@ -46,20 +92,9 @@ final class SwiftDataConversationRepository: ConversationRepository {
         }
         for agent in agents {
             if let stored = byID[agent.id] {
-                stored.name = agent.name
-                stored.address = agent.address
-                stored.createdAt = agent.createdAt
-                stored.updatedAt = agent.updatedAt
+                apply(agent, to: stored)
             } else {
-                context.insert(
-                    StoredAgent(
-                        id: agent.id,
-                        name: agent.name,
-                        address: agent.address,
-                        createdAt: agent.createdAt,
-                        updatedAt: agent.updatedAt
-                    )
-                )
+                context.insert(toStoredAgent(agent))
             }
         }
     }
@@ -73,19 +108,30 @@ final class SwiftDataConversationRepository: ConversationRepository {
         }
         for conversation in conversations {
             if let stored = byID[conversation.id] {
-                stored.title = conversation.title
-                stored.agentID = conversation.agentID
-                stored.agentAddress = conversation.agentAddress
-                stored.modeRaw = conversation.mode.rawValue
-                stored.createdAt = conversation.createdAt
-                stored.updatedAt = conversation.updatedAt
-                stored.serverSessionData = encodeSession(conversation.serverSession)
-                stored.messages.forEach { context.delete($0) }
-                stored.messages = conversation.messages.map(toStoredMessage)
+                apply(conversation, to: stored, in: context)
             } else {
                 context.insert(toStoredConversation(conversation))
             }
         }
+    }
+
+    private func apply(_ agent: AgentConnection, to stored: StoredAgent) {
+        stored.name = agent.name
+        stored.address = agent.address
+        stored.createdAt = agent.createdAt
+        stored.updatedAt = agent.updatedAt
+    }
+
+    private func apply(_ conversation: Conversation, to stored: StoredConversation, in context: ModelContext) {
+        stored.title = conversation.title
+        stored.agentID = conversation.agentID
+        stored.agentAddress = conversation.agentAddress
+        stored.modeRaw = conversation.mode.rawValue
+        stored.createdAt = conversation.createdAt
+        stored.updatedAt = conversation.updatedAt
+        stored.serverSessionData = encodeSession(conversation.serverSession)
+        stored.messages.forEach { context.delete($0) }
+        stored.messages = conversation.messages.map(toStoredMessage)
     }
 
     private func setActive(_ id: String?, forKey key: String) {
@@ -128,6 +174,16 @@ final class SwiftDataConversationRepository: ConversationRepository {
             role: ChatRole(rawValue: stored.roleRaw) ?? .agent,
             content: stored.content,
             createdAt: stored.createdAt
+        )
+    }
+
+    private func toStoredAgent(_ agent: AgentConnection) -> StoredAgent {
+        StoredAgent(
+            id: agent.id,
+            name: agent.name,
+            address: agent.address,
+            createdAt: agent.createdAt,
+            updatedAt: agent.updatedAt
         )
     }
 

@@ -90,6 +90,72 @@ final class SwiftDataConversationRepositoryTests: XCTestCase {
         XCTAssertEqual(loaded.conversations.first?.messages.last?.content, "hi")
     }
 
+    func testUpsertConversationInsertsThenUpdatesOneRow() throws {
+        let repository = try makeRepository()
+        var conversation = makeConversation(agentID: "a1", address: "0xaaa", title: "before", updatedAt: seconds(1000))
+        repository.upsertConversation(conversation)
+
+        conversation.title = "after"
+        repository.upsertConversation(conversation)
+        let loaded = repository.load()
+
+        XCTAssertEqual(loaded.conversations.count, 1)
+        XCTAssertEqual(loaded.conversations.first?.title, "after")
+    }
+
+    func testDeleteConversationRemovesOnlyThatConversation() throws {
+        let repository = try makeRepository()
+        let keep = makeConversation(agentID: "a1", address: "0xaaa", title: "keep", updatedAt: seconds(2000))
+        let drop = makeConversation(agentID: "a1", address: "0xaaa", title: "drop", updatedAt: seconds(1000))
+        repository.upsertConversation(keep)
+        repository.upsertConversation(drop)
+
+        repository.deleteConversation(id: drop.id)
+        let loaded = repository.load()
+
+        XCTAssertEqual(loaded.conversations.map(\.id), [keep.id])
+    }
+
+    func testDeleteAgentAlsoRemovesItsConversations() throws {
+        let repository = try makeRepository()
+        let agent = AgentConnection(address: "0xaaa")
+        repository.upsertAgent(agent)
+        let conversation = makeConversation(agentID: agent.id, address: agent.address, title: "c", updatedAt: seconds(1000))
+        repository.upsertConversation(conversation)
+
+        repository.deleteAgent(id: agent.id)
+        let loaded = repository.load()
+
+        XCTAssertTrue(loaded.agents.isEmpty)
+        XCTAssertTrue(loaded.conversations.isEmpty)
+    }
+
+    func testSaveActivePersistsPointers() throws {
+        let repository = try makeRepository()
+
+        repository.saveActive(agentID: "a1", conversationID: "c1")
+
+        let loaded = repository.load()
+        XCTAssertEqual(loaded.activeAgentID, "a1")
+        XCTAssertEqual(loaded.activeConversationID, "c1")
+    }
+
+    func testSearchMatchesTitleAndMessageContent() throws {
+        let repository = try makeRepository()
+        var byTitle = makeConversation(agentID: "a1", address: "0xaaa", title: "Groceries", updatedAt: seconds(3000))
+        byTitle.messages = [ChatMessage(role: .user, content: "unrelated")]
+        var byContent = makeConversation(agentID: "a1", address: "0xaaa", title: "Random", updatedAt: seconds(2000))
+        byContent.messages = [ChatMessage(role: .user, content: "buy milk and eggs")]
+        let noMatch = makeConversation(agentID: "a1", address: "0xaaa", title: "Nope", updatedAt: seconds(1000))
+        [byTitle, byContent, noMatch].forEach(repository.upsertConversation)
+
+        let titleHits = Set(repository.search("grocer").map(\.id))
+        let contentHits = Set(repository.search("milk").map(\.id))
+
+        XCTAssertEqual(titleHits, [byTitle.id])
+        XCTAssertEqual(contentHits, [byContent.id])
+    }
+
     private func seconds(_ value: TimeInterval) -> Date {
         Date(timeIntervalSince1970: value)
     }

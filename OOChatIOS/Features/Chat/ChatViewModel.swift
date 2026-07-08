@@ -110,6 +110,7 @@ final class ChatViewModel: ObservableObject {
         activeConversationID = conversation.id
         agentAddressDraft = agent.address
         connectionState = .disconnected
+        store.upsertConversation(conversation)
         persist()
         return conversation
     }
@@ -123,6 +124,7 @@ final class ChatViewModel: ObservableObject {
                 activeConversationID = nil
             }
         }
+        store.deleteConversation(id: conversation.id)
         persist()
     }
 
@@ -142,6 +144,8 @@ final class ChatViewModel: ObservableObject {
                 self.activeConversationID = nil
             }
         }
+        deletedConversationIDs.forEach { store.deleteConversation(id: $0) }
+        store.deleteAgent(id: agent.id)
         persist()
     }
 
@@ -279,6 +283,7 @@ final class ChatViewModel: ObservableObject {
         agents.insert(next, at: 0)
         activeAgentID = next.id
         agentAddressDraft = next.address
+        store.upsertAgent(next)
         persist()
         return next
     }
@@ -300,6 +305,7 @@ final class ChatViewModel: ObservableObject {
         conversation.agentAddress = agent.address
         conversations.insert(conversation, at: 0)
         activeConversationID = conversation.id
+        store.upsertConversation(conversation)
         persist()
     }
 
@@ -310,10 +316,14 @@ final class ChatViewModel: ObservableObject {
             next.agentID = agent.id
             next.agentAddress = agent.address
             touchAgent(id: agent.id)
+            if let touched = self.agent(withID: agent.id) {
+                store.upsertAgent(touched)
+            }
         }
         conversations.removeAll { $0.id == next.id }
         conversations.insert(next, at: 0)
         activeConversationID = next.id
+        store.upsertConversation(next)
         persist()
     }
 
@@ -358,12 +368,7 @@ final class ChatViewModel: ObservableObject {
     }
 
     private func persist() {
-        store.save(ChatSnapshot(
-            agents: agents,
-            conversations: conversations,
-            activeAgentID: activeAgentID,
-            activeConversationID: activeConversationID
-        ))
+        store.saveActive(agentID: activeAgentID, conversationID: activeConversationID)
     }
 
     private func titleFromPrompt(_ text: String) -> String {

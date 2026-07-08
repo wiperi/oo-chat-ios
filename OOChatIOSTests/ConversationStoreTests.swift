@@ -143,6 +143,28 @@ final class ConversationStoreTests: XCTestCase {
         XCTAssertEqual(defaults.data(forKey: corruptSnapshotKey), corrupt)
     }
 
+    func testGranularUpsertAndDeleteThroughDefaultImplementation() {
+        let store = ConversationStore(defaults: defaults)
+        let keep = makeConversation(agentID: "a1", address: "0xaaa", title: "keep", updatedAt: seconds(2000))
+        let drop = makeConversation(agentID: "a1", address: "0xaaa", title: "drop", updatedAt: seconds(1000))
+        store.upsertConversation(keep)
+        store.upsertConversation(drop)
+
+        store.deleteConversation(id: drop.id)
+
+        XCTAssertEqual(store.load().conversations.map(\.id), [keep.id])
+    }
+
+    func testSearchThroughDefaultImplementationMatchesTitleAndContent() {
+        let store = ConversationStore(defaults: defaults)
+        var byContent = makeConversation(agentID: "a1", address: "0xaaa", title: "Random", updatedAt: seconds(1000))
+        byContent.messages = [ChatMessage(role: .user, content: "buy milk")]
+        store.upsertConversation(byContent)
+
+        XCTAssertEqual(store.search("milk").map(\.id), [byContent.id])
+        XCTAssertTrue(store.search("nothingmatches").isEmpty)
+    }
+
     private func seconds(_ value: TimeInterval) -> Date {
         Date(timeIntervalSince1970: value)
     }
