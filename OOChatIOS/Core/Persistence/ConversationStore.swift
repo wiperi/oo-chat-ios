@@ -82,14 +82,15 @@ final class ConversationStore: ConversationRepository {
             migratedConversations.append(conversation)
         }
 
-        let activeAgentID = activeConversationID.flatMap { activeConversationID in
-            migratedConversations.first { $0.id == activeConversationID }?.agentID
-        } ?? agents.first?.id
+        let activeConversation = activeConversationID.flatMap { id in
+            migratedConversations.first { $0.id == id }
+        }
+        let activeAgentID = activeConversation?.agentID ?? agents.first?.id
         return sorted(ChatSnapshot(
             agents: agents,
             conversations: migratedConversations,
             activeAgentID: activeAgentID,
-            activeConversationID: activeConversationID
+            activeConversationID: activeConversation?.id
         ))
     }
 }

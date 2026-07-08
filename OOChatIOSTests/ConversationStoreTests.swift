@@ -96,6 +96,17 @@ final class ConversationStoreTests: XCTestCase {
         XCTAssertEqual(loaded.conversations.count, 2)
     }
 
+    func testLegacyActiveConversationIsClearedWhenItsConversationIsSkipped() {
+        let valid = makeConversation(agentID: nil, address: "0xvalid", title: "valid", updatedAt: seconds(1000))
+        let orphan = makeConversation(agentID: nil, address: "   ", title: "orphan", updatedAt: seconds(1000))
+        seedLegacy([valid, orphan], active: orphan.id)
+        let store = ConversationStore(defaults: defaults)
+
+        let loaded = store.load()
+
+        XCTAssertNil(loaded.activeConversationID)
+    }
+
     func testLegacyConversationWithEmptyAddressIsSkipped() {
         let valid = makeConversation(agentID: nil, address: "0xvalid", title: "valid", updatedAt: seconds(1000))
         let orphan = makeConversation(agentID: nil, address: "   ", title: "orphan", updatedAt: seconds(1000))
