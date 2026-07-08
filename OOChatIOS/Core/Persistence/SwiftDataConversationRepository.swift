@@ -130,8 +130,18 @@ final class SwiftDataConversationRepository: ConversationRepository {
         stored.createdAt = conversation.createdAt
         stored.updatedAt = conversation.updatedAt
         stored.serverSessionData = encodeSession(conversation.serverSession)
-        stored.messages.forEach { context.delete($0) }
-        stored.messages = conversation.messages.map(toStoredMessage)
+        syncMessages(conversation.messages, of: stored, in: context)
+    }
+
+    private func syncMessages(_ messages: [ChatMessage], of stored: StoredConversation, in context: ModelContext) {
+        let keep = Set(messages.map(\.id))
+        for message in stored.messages where !keep.contains(message.id) {
+            context.delete(message)
+        }
+        let existing = Set(stored.messages.map(\.id))
+        for message in messages where !existing.contains(message.id) {
+            stored.messages.append(toStoredMessage(message))
+        }
     }
 
     private func setActive(_ id: String?, forKey key: String) {

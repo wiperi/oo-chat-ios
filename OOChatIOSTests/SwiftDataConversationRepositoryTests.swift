@@ -130,6 +130,37 @@ final class SwiftDataConversationRepositoryTests: XCTestCase {
         XCTAssertTrue(loaded.conversations.isEmpty)
     }
 
+    func testAppendingMessageKeepsExistingMessagesAndAddsOne() throws {
+        let repository = try makeRepository()
+        var conversation = makeConversation(agentID: "a1", address: "0xaaa", title: "c", updatedAt: seconds(1000))
+        let first = ChatMessage(role: .user, content: "one")
+        conversation.messages = [first]
+        repository.upsertConversation(conversation)
+
+        let second = ChatMessage(role: .agent, content: "two")
+        conversation.messages = [first, second]
+        repository.upsertConversation(conversation)
+        let loaded = repository.load().conversations.first
+
+        XCTAssertEqual(loaded?.messages.map(\.id), [first.id, second.id])
+        XCTAssertEqual(loaded?.messages.map(\.content), ["one", "two"])
+    }
+
+    func testRemovingMessageDeletesOnlyThatMessage() throws {
+        let repository = try makeRepository()
+        var conversation = makeConversation(agentID: "a1", address: "0xaaa", title: "c", updatedAt: seconds(1000))
+        let keep = ChatMessage(role: .user, content: "keep")
+        let thinking = ChatMessage(role: .thinking, content: "...")
+        conversation.messages = [keep, thinking]
+        repository.upsertConversation(conversation)
+
+        conversation.messages = [keep]
+        repository.upsertConversation(conversation)
+        let loaded = repository.load().conversations.first
+
+        XCTAssertEqual(loaded?.messages.map(\.id), [keep.id])
+    }
+
     func testSaveActivePersistsPointers() throws {
         let repository = try makeRepository()
 
