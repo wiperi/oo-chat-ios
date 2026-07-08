@@ -15,6 +15,7 @@
 		100000000000000000000106 /* Hex.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000006 /* Hex.swift */; };
 		100000000000000000000107 /* IdentityStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000007 /* IdentityStore.swift */; };
 		100000000000000000000108 /* ConversationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000008 /* ConversationStore.swift */; };
+		100000000000000000000111 /* ConversationRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000015 /* ConversationRepository.swift */; };
 		100000000000000000000109 /* HostedAgentClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000009 /* HostedAgentClient.swift */; };
 		100000000000000000000110 /* MockHostedAgentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000013 /* MockHostedAgentTests.swift */; };
 /* End PBXBuildFile section */
@@ -38,6 +39,7 @@
 		100000000000000000000006 /* Hex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Hex.swift; sourceTree = "<group>"; };
 		100000000000000000000007 /* IdentityStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentityStore.swift; sourceTree = "<group>"; };
 		100000000000000000000008 /* ConversationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationStore.swift; sourceTree = "<group>"; };
+		100000000000000000000015 /* ConversationRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationRepository.swift; sourceTree = "<group>"; };
 		100000000000000000000009 /* HostedAgentClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostedAgentClient.swift; sourceTree = "<group>"; };
 		100000000000000000000010 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		100000000000000000000011 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
@@ -159,6 +161,7 @@
 		100000000000000000000311 /* Persistence */ = {
 			isa = PBXGroup;
 			children = (
+				100000000000000000000015 /* ConversationRepository.swift */,
 				100000000000000000000008 /* ConversationStore.swift */,
 			);
 			path = Persistence;
@@ -294,6 +297,7 @@
 				100000000000000000000106 /* Hex.swift in Sources */,
 				100000000000000000000107 /* IdentityStore.swift in Sources */,
 				100000000000000000000108 /* ConversationStore.swift in Sources */,
+				100000000000000000000111 /* ConversationRepository.swift in Sources */,
 				100000000000000000000109 /* HostedAgentClient.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

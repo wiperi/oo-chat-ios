@@ -1,37 +1,39 @@
 import Foundation
 
-final class ConversationStore {
+final class ConversationStore: ConversationRepository {
     private let snapshotKey = "connectonion.native-ios.chatSnapshot.v2"
     private let legacyConversationsKey = "connectonion.native-ios.conversations"
     private let legacyActiveConversationKey = "connectonion.native-ios.activeConversation"
+    private let defaults: UserDefaults
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
-    init() {
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         encoder.dateEncodingStrategy = .iso8601
         decoder.dateDecodingStrategy = .iso8601
     }
 
     func load() -> ChatSnapshot {
-        if let data = UserDefaults.standard.data(forKey: snapshotKey),
+        if let data = defaults.data(forKey: snapshotKey),
            let snapshot = try? decoder.decode(ChatSnapshot.self, from: data) {
             return sorted(snapshot)
         }
 
-        guard let data = UserDefaults.standard.data(forKey: legacyConversationsKey),
+        guard let data = defaults.data(forKey: legacyConversationsKey),
               let conversations = try? decoder.decode([Conversation].self, from: data) else {
             return .empty
         }
 
         return migrateLegacyConversations(
             conversations,
-            activeConversationID: UserDefaults.standard.string(forKey: legacyActiveConversationKey)
+            activeConversationID: defaults.string(forKey: legacyActiveConversationKey)
         )
     }
 
     func save(_ snapshot: ChatSnapshot) {
         if let data = try? encoder.encode(sorted(snapshot)) {
-            UserDefaults.standard.set(data, forKey: snapshotKey)
+            defaults.set(data, forKey: snapshotKey)
         }
     }
 

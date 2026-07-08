@@ -16,7 +16,7 @@ final class ChatViewModel: ObservableObject {
     @Published var agentAddressDraft = ""
     @Published var prompt = ""
 
-    private let store = ConversationStore()
+    private let store: ConversationRepository
     private let identityStore = IdentityStore()
     private lazy var client = HostedAgentClient(identityStore: identityStore)
 
@@ -41,7 +41,8 @@ final class ChatViewModel: ObservableObject {
         activeConversation?.mode ?? .safe
     }
 
-    init() {
+    init(store: ConversationRepository = ConversationStore()) {
+        self.store = store
         let snapshot = store.load()
         self.agents = snapshot.agents
         self.conversations = snapshot.conversations
