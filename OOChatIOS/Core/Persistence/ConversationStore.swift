@@ -39,7 +39,7 @@ final class ConversationStore: ConversationRepository {
     }
 
     func save(_ snapshot: ChatSnapshot) {
-        if let data = try? encoder.encode(sorted(snapshot)) {
+        if let data = try? encoder.encode(snapshot) {
             defaults.set(data, forKey: snapshotKey)
         }
     }
