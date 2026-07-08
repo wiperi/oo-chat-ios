@@ -2,6 +2,7 @@ import Foundation
 
 final class ConversationStore: ConversationRepository {
     private let snapshotKey = "connectonion.native-ios.chatSnapshot.v2"
+    private let corruptSnapshotKey = "connectonion.native-ios.chatSnapshot.v2.corrupt"
     private let legacyConversationsKey = "connectonion.native-ios.conversations"
     private let legacyActiveConversationKey = "connectonion.native-ios.activeConversation"
     private let defaults: UserDefaults
@@ -15,9 +16,11 @@ final class ConversationStore: ConversationRepository {
     }
 
     func load() -> ChatSnapshot {
-        if let data = defaults.data(forKey: snapshotKey),
-           let snapshot = try? decoder.decode(ChatSnapshot.self, from: data) {
-            return sorted(snapshot)
+        if let data = defaults.data(forKey: snapshotKey) {
+            if let snapshot = try? decoder.decode(ChatSnapshot.self, from: data) {
+                return sorted(snapshot)
+            }
+            defaults.set(data, forKey: corruptSnapshotKey)
         }
 
         guard let data = defaults.data(forKey: legacyConversationsKey),

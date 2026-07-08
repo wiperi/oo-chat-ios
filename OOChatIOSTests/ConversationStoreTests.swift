@@ -6,6 +6,7 @@ final class ConversationStoreTests: XCTestCase {
     private var defaults: UserDefaults!
 
     private let snapshotKey = "connectonion.native-ios.chatSnapshot.v2"
+    private let corruptSnapshotKey = "connectonion.native-ios.chatSnapshot.v2.corrupt"
     private let legacyConversationsKey = "connectonion.native-ios.conversations"
     private let legacyActiveConversationKey = "connectonion.native-ios.activeConversation"
 
@@ -118,6 +119,17 @@ final class ConversationStoreTests: XCTestCase {
         XCTAssertNil(defaults.data(forKey: legacyConversationsKey))
         XCTAssertNil(defaults.string(forKey: legacyActiveConversationKey))
         XCTAssertNotNil(defaults.data(forKey: snapshotKey))
+    }
+
+    func testCorruptSnapshotIsBackedUpInsteadOfSilentlyLost() {
+        let corrupt = Data("not valid json".utf8)
+        defaults.set(corrupt, forKey: snapshotKey)
+        let store = ConversationStore(defaults: defaults)
+
+        let loaded = store.load()
+
+        XCTAssertEqual(loaded, .empty)
+        XCTAssertEqual(defaults.data(forKey: corruptSnapshotKey), corrupt)
     }
 
     private func seconds(_ value: TimeInterval) -> Date {
