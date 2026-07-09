@@ -60,7 +60,7 @@ struct ChatScreen: View {
                     } else {
                         ForEach(viewModel.agents) { agent in
                             Button {
-                                viewModel.selectAgent(agent)
+                                viewModel.switchToAgentForChat(agent)
                             } label: {
                                 HStack {
                                     Text(agent.name)
@@ -76,7 +76,7 @@ struct ChatScreen: View {
                 } label: {
                     Image(systemName: "sidebar.left")
                 }
-                .disabled(viewModel.agents.isEmpty)
+                .disabled(viewModel.agents.isEmpty || viewModel.isProcessing)
                 .accessibilityLabel("Switch Agent")
             }
         }

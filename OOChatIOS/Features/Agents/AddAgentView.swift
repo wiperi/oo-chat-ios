@@ -1,95 +1,89 @@
 import SwiftUI
-// The screen of connect and add agent.
-struct AddAgentView: View {
-    @ObservedObject var viewModel: ChatViewModel
-    let onConnected: (AgentConnection) -> Void
+
+struct AgentFormDraft: Identifiable {
+    let id = UUID()
+    let agentID: String?
+    var name: String
+    var address: String
+    var token: String
+
+    init(agent: AgentConnection? = nil) {
+        self.agentID = agent?.id
+        self.name = agent?.name ?? ""
+        self.address = agent?.address ?? ""
+        self.token = agent?.token ?? ""
+    }
+
+    var title: String {
+        agentID == nil ? "Add Agent" : "Edit Agent"
+    }
+}
+
+struct AgentFormView: View {
+    @State private var draft: AgentFormDraft
+    @State private var validationMessage: String?
+    let onSave: (AgentFormDraft) -> Bool
+    let onCancel: () -> Void
+
+    init(draft: AgentFormDraft, onSave: @escaping (AgentFormDraft) -> Bool, onCancel: @escaping () -> Void) {
+        _draft = State(initialValue: draft)
+        self.onSave = onSave
+        self.onCancel = onCancel
+    }
 
     var body: some View {
-        List {
-            Section {
-                Text("Paste an OpenOnion agent address to start chatting.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-            .listRowBackground(Color.clear)
-
-            Section {
-                VStack(alignment: .leading, spacing: 16) {
-                    Text("AGENT ADDRESS")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)          
-                    // Input agent address.
-                    TextField(
-                        "0xb974... or paste agent address",
-                        text: $viewModel.agentAddressDraft,
-                        axis: .vertical
-                    )
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .font(.system(.body, design: .monospaced))
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 14)
-                    .background(Color(.secondarySystemGroupedBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                    Text("No endpoint URL for oo-chat workflow.")
+        NavigationStack {
+            Form {
+                Section("Agent") {
+                    TextField("Name", text: $draft.name)
+                        .textInputAutocapitalization(.words)
+                    TextField("Agent address", text: $draft.address, axis: .vertical)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .font(.system(.body, design: .monospaced))
+                        .onChange(of: draft.address) {
+                            validationMessage = nil
+                        }
+                    if let validationMessage {
+                        Text(validationMessage)
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                    }
+                    SecureField("Token (stored only)", text: $draft.token)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    Text("Saved with this configuration; not used for ConnectOnion connection.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
-                .padding(.vertical, 4)
+                .listRowBackground(Color(.secondarySystemGroupedBackground))
             }
-
-            Section {
-                Button {
-                    Task {
-                        if let agent = await viewModel.connectToAgent() {
-                            onConnected(agent)
+            .scrollContentBackground(.hidden)
+            .background(Color(.systemGroupedBackground))
+            .navigationTitle(draft.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        onCancel()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        guard HostedAgentClient.isHostedAgentAddress(
+                            draft.address.trimmingCharacters(in: .whitespacesAndNewlines)
+                        ) else {
+                            validationMessage = "Enter a hosted agent address in 0x-prefixed Ed25519 format."
+                            return
+                        }
+                        if !onSave(draft) {
+                            validationMessage = "Unable to save this agent configuration."
                         }
                     }
-                } label: {
-                    Text("Connect")
-                        .fontWeight(.semibold)
-                        .frame(maxWidth: .infinity)
-                        .overlay(alignment: .leading) {
-                            if viewModel.isConnecting {
-                                ProgressView()
-                                    .tint(.white)
-                                    .padding(.leading, 16)
-                            }
-                        }
-                }
-                .buttonStyle(.borderedProminent)
-                .buttonBorderShape(.roundedRectangle(radius: 14))
-                .controlSize(.large)
-                .disabled(
-                    viewModel.isConnecting ||
-                        viewModel.agentAddressDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                )
-            }
-            .listRowBackground(Color.clear)
-            .listRowInsets(EdgeInsets())
-        }
-        .listStyle(.insetGrouped)
-        .listSectionSpacing(12)
-        .contentMargins(.top, 8, for: .scrollContent)
-        .navigationTitle("Add Agent")
-        .navigationBarTitleDisplayMode(.inline)
-        .alert("Connection Failed", isPresented: connectionFailedBinding) {
-            Button("OK", role: .cancel) {
-                viewModel.connectionFailureMessage = nil
-            }
-        } message: {
-            Text(viewModel.connectionFailureMessage ?? "")
-        }
-    }
-
-    private var connectionFailedBinding: Binding<Bool> {
-        Binding(
-            get: { viewModel.connectionFailureMessage != nil },
-            set: { isPresented in
-                if !isPresented {
-                    viewModel.connectionFailureMessage = nil
+                    .fontWeight(.semibold)
+                    .disabled(draft.address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
-        )
+        }
     }
 }

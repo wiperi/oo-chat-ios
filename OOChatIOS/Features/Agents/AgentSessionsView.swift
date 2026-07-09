@@ -33,10 +33,39 @@ struct AgentSessionsView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(agent.name)
                                 .font(.headline)
+                            Text("Endpoint")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
                             Text(short(agent.address))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                            if !agent.token.isEmpty {
+                                Label("Token stored", systemImage: "key.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
+                    }
+
+                    Section("Connection") {
+                        Button {
+                            viewModel.selectAgent(agent)
+                            Task {
+                                if await viewModel.connectToAgent() != nil {
+                                    switchToChat()
+                                }
+                            }
+                        } label: {
+                            HStack {
+                                if viewModel.isConnecting {
+                                    ProgressView()
+                                }
+                                Label("Connect", systemImage: "bolt.horizontal.circle")
+                                    .fontWeight(.semibold)
+                            }
+                        }
+                        .foregroundStyle(AppTheme.primary)
+                        .disabled(viewModel.isConnecting)
                     }
 
                     Section {
@@ -134,6 +163,11 @@ struct AgentRow: View {
             Text("\(short(agent.address)) - \(sessionCount) sessions")
                 .foregroundStyle(.secondary)
                 .font(.caption)
+            if !agent.token.isEmpty {
+                Label("Token stored", systemImage: "key.fill")
+                    .foregroundStyle(.secondary)
+                    .font(.caption)
+            }
         }
     }
 }
