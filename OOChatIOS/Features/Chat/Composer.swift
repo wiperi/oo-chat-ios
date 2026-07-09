@@ -5,45 +5,113 @@ struct Composer: View {
     @FocusState private var isPromptFocused: Bool
 
     var body: some View {
-        VStack(spacing: 8) {
-            Picker("Mode", selection: modeBinding) {
-                ForEach(ChatMode.allCases) { mode in
-                    Text(mode.label).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-            .disabled(viewModel.activeConversation == nil || viewModel.isProcessing)
+        VStack(spacing: 10) {
+            TextField("Message the agent", text: $viewModel.prompt, axis: .vertical)
+                .lineLimit(1...4)
+                .focused($isPromptFocused)
+                .disabled(viewModel.isProcessing)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+                .background(
+                    Color(.secondarySystemBackground),
+                    in: RoundedRectangle(cornerRadius: 20, style: .continuous)
+                )
 
-            HStack(alignment: .bottom, spacing: 10) {
-                TextField("Message the agent", text: $viewModel.prompt, axis: .vertical)
-                    .textFieldStyle(.roundedBorder)
-                    .lineLimit(1...4)
-                    .focused($isPromptFocused)
-                    .disabled(viewModel.isProcessing)
-                Button(viewModel.isProcessing ? "..." : "Send") {
-                    viewModel.sendPrompt()
-                    isPromptFocused = false
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(viewModel.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isProcessing)
+            HStack(alignment: .center, spacing: 10) {
+                modeMenu
+                Spacer()
+                sendButton
             }
         }
         .padding()
         .background(.bar)
-        .toolbar {
-            ToolbarItemGroup(placement: .keyboard) {
-                Spacer()
-                Button("Done") {
-                    isPromptFocused = false
+    }
+
+    private var modeMenu: some View {
+        Menu {
+            ForEach(ChatMode.allCases) { mode in
+                Toggle(isOn: isSelectedBinding(for: mode)) {
+                    Text(mode.label)
+                    Text(mode.detail)
+                    Image(systemName: mode.icon)
                 }
             }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: viewModel.activeMode.icon)
+                Text(viewModel.activeMode.label)
+                Image(systemName: "chevron.up.chevron.down")
+                    .imageScale(.small)
+            }
+            .font(.footnote.weight(.medium))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(Color(.secondarySystemBackground), in: Capsule())
+        }
+        .disabled(viewModel.activeConversation == nil || viewModel.isProcessing)
+        .accessibilityLabel("Chat mode: \(viewModel.activeMode.label)")
+    }
+
+    private var sendButton: some View {
+        Button {
+            viewModel.sendPrompt()
+            isPromptFocused = false
+        } label: {
+            Group {
+                if viewModel.isProcessing {
+                    ProgressView()
+                        .tint(.white)
+                } else {
+                    Image(systemName: "arrow.up")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.white)
+                }
+            }
+            .frame(width: 36, height: 36)
+            .background(AppTheme.primary, in: Circle())
+        }
+        .disabled(viewModel.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isProcessing)
+        .accessibilityLabel("Send message")
+    }
+
+    private func isSelectedBinding(for mode: ChatMode) -> Binding<Bool> {
+        Binding(
+            get: { viewModel.activeMode == mode },
+            set: { isOn in
+                if isOn {
+                    viewModel.setMode(mode)
+                }
+            }
+        )
+    }
+}
+
+// Presentation details for each mode, kept out of the model layer.
+private extension ChatMode {
+    var icon: String {
+        switch self {
+        case .safe:
+            return "shield"
+        case .plan:
+            return "list.bullet.clipboard"
+        case .accept:
+            return "checkmark.circle"
+        case .ulw:
+            return "bolt.fill"
         }
     }
 
-    private var modeBinding: Binding<ChatMode> {
-        Binding(
-            get: { viewModel.activeMode },
-            set: { viewModel.setMode($0) }
-        )
+    var detail: String {
+        switch self {
+        case .safe:
+            return "Asks before making changes"
+        case .plan:
+            return "Plans before acting"
+        case .accept:
+            return "Auto-accepts edits"
+        case .ulw:
+            return "Runs autonomously, up to 100 turns"
+        }
     }
 }

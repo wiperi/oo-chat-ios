@@ -18,7 +18,7 @@ struct ChatScreen: View {
             if let conversation = viewModel.activeConversation {
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 12) {
+                        LazyVStack(alignment: .leading, spacing: 20) {
                             ForEach(conversation.messages) { message in
                                 MessageBubble(message: message) {
                                     viewModel.retryMessage(message)
@@ -26,7 +26,8 @@ struct ChatScreen: View {
                                 .id(message.id)
                             }
                         }
-                        .padding()
+                        .padding(.horizontal)
+                        .padding(.vertical, 16)
                     }
                     .scrollDismissesKeyboard(.interactively)
                     .onChange(of: conversation.messages.count) {
