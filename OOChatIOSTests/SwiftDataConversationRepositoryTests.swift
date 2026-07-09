@@ -1,6 +1,7 @@
 import XCTest
 @testable import OOChatIOS
 
+@MainActor
 final class SwiftDataConversationRepositoryTests: XCTestCase {
     private var suiteName: String!
     private var defaults: UserDefaults!
@@ -28,18 +29,14 @@ final class SwiftDataConversationRepositoryTests: XCTestCase {
         XCTAssertEqual(repository.load(), .empty)
     }
 
-    func testSaveThenLoadRestoresAgentsConversationsAndActiveIDs() throws {
+    func testUpsertsThenLoadRestoresAgentsConversationsAndActiveIDs() throws {
         let repository = try makeRepository()
         let agent = AgentConnection(address: "0xabc", createdAt: seconds(1000), updatedAt: seconds(1000))
         let conversation = makeConversation(agentID: agent.id, address: agent.address, title: "Hello", updatedAt: seconds(1000))
-        let snapshot = ChatSnapshot(
-            agents: [agent],
-            conversations: [conversation],
-            activeAgentID: agent.id,
-            activeConversationID: conversation.id
-        )
 
-        repository.save(snapshot)
+        repository.upsertAgent(agent)
+        repository.upsertConversation(conversation)
+        repository.saveActive(agentID: agent.id, conversationID: conversation.id)
         let loaded = repository.load()
 
         XCTAssertEqual(loaded.agents.map(\.id), [agent.id])
@@ -50,44 +47,17 @@ final class SwiftDataConversationRepositoryTests: XCTestCase {
         XCTAssertEqual(loaded.activeConversationID, conversation.id)
     }
 
-    func testSavePreservesConversationModeAndServerSession() throws {
+    func testUpsertPreservesConversationModeAndServerSession() throws {
         let repository = try makeRepository()
         var conversation = makeConversation(agentID: "a1", address: "0xabc", title: "t", updatedAt: seconds(1000))
         conversation.mode = .ulw
         conversation.serverSession = ["session_id": .string("s1"), "ulw_turns": .number(100)]
-        repository.save(ChatSnapshot(agents: [], conversations: [conversation], activeAgentID: nil, activeConversationID: nil))
+        repository.upsertConversation(conversation)
 
         let loaded = repository.load().conversations.first
 
         XCTAssertEqual(loaded?.mode, .ulw)
         XCTAssertEqual(loaded?.serverSession?["session_id"]?.stringValue, "s1")
-    }
-
-    func testSaveRemovesDeletedConversations() throws {
-        let repository = try makeRepository()
-        let keep = makeConversation(agentID: "a1", address: "0xaaa", title: "keep", updatedAt: seconds(2000))
-        let drop = makeConversation(agentID: "a1", address: "0xaaa", title: "drop", updatedAt: seconds(1000))
-        repository.save(ChatSnapshot(agents: [], conversations: [keep, drop], activeAgentID: nil, activeConversationID: nil))
-
-        repository.save(ChatSnapshot(agents: [], conversations: [keep], activeAgentID: nil, activeConversationID: nil))
-        let loaded = repository.load()
-
-        XCTAssertEqual(loaded.conversations.map(\.id), [keep.id])
-    }
-
-    func testSaveUpdatesExistingConversationInPlace() throws {
-        let repository = try makeRepository()
-        var conversation = makeConversation(agentID: "a1", address: "0xaaa", title: "before", updatedAt: seconds(1000))
-        repository.save(ChatSnapshot(agents: [], conversations: [conversation], activeAgentID: nil, activeConversationID: nil))
-
-        conversation.title = "after"
-        conversation.messages.append(ChatMessage(role: .user, content: "hi"))
-        repository.save(ChatSnapshot(agents: [], conversations: [conversation], activeAgentID: nil, activeConversationID: nil))
-        let loaded = repository.load()
-
-        XCTAssertEqual(loaded.conversations.count, 1)
-        XCTAssertEqual(loaded.conversations.first?.title, "after")
-        XCTAssertEqual(loaded.conversations.first?.messages.last?.content, "hi")
     }
 
     func testUpsertConversationInsertsThenUpdatesOneRow() throws {
@@ -122,6 +92,24 @@ final class SwiftDataConversationRepositoryTests: XCTestCase {
         repository.upsertAgent(agent)
         let conversation = makeConversation(agentID: agent.id, address: agent.address, title: "c", updatedAt: seconds(1000))
         repository.upsertConversation(conversation)
+
+        repository.deleteAgent(id: agent.id)
+        let loaded = repository.load()
+
+        XCTAssertTrue(loaded.agents.isEmpty)
+        XCTAssertTrue(loaded.conversations.isEmpty)
+    }
+
+    func testDeleteAgentAlsoRemovesLegacyConversationsLinkedByAddressOnly() throws {
+        let repository = try makeRepository()
+        let agent = AgentConnection(address: "0xaaa")
+        repository.upsertAgent(agent)
+        // Legacy conversation: matches the agent only by address, no agentID.
+        var legacy = makeConversation(agentID: nil, address: agent.address, title: "legacy", updatedAt: seconds(1000))
+        legacy.agentID = nil
+        let linked = makeConversation(agentID: agent.id, address: agent.address, title: "linked", updatedAt: seconds(2000))
+        repository.upsertConversation(legacy)
+        repository.upsertConversation(linked)
 
         repository.deleteAgent(id: agent.id)
         let loaded = repository.load()
@@ -185,6 +173,82 @@ final class SwiftDataConversationRepositoryTests: XCTestCase {
 
         XCTAssertEqual(titleHits, [byTitle.id])
         XCTAssertEqual(contentHits, [byContent.id])
+    }
+
+    func testSearchWithEmptyOrWhitespaceQueryReturnsAllConversations() throws {
+        let repository = try makeRepository()
+        let first = makeConversation(agentID: "a1", address: "0xaaa", title: "one", updatedAt: seconds(2000))
+        let second = makeConversation(agentID: "a1", address: "0xaaa", title: "two", updatedAt: seconds(1000))
+        [first, second].forEach(repository.upsertConversation)
+
+        XCTAssertEqual(Set(repository.search("").map(\.id)), [first.id, second.id])
+        XCTAssertEqual(Set(repository.search("   \n").map(\.id)), [first.id, second.id])
+    }
+
+    func testSearchResultsAreSortedByUpdatedAtDescendingAndDeduplicated() throws {
+        let repository = try makeRepository()
+        // Matches by BOTH title and message content — must appear exactly once.
+        var both = makeConversation(agentID: "a1", address: "0xaaa", title: "apple pie", updatedAt: seconds(1000))
+        both.messages = [ChatMessage(role: .user, content: "apple crumble recipe")]
+        var newer = makeConversation(agentID: "a1", address: "0xaaa", title: "shopping", updatedAt: seconds(3000))
+        newer.messages = [ChatMessage(role: .user, content: "buy apples")]
+        let middle = makeConversation(agentID: "a1", address: "0xaaa", title: "apple support call", updatedAt: seconds(2000))
+        [both, newer, middle].forEach(repository.upsertConversation)
+
+        let hits = repository.search("apple")
+
+        XCTAssertEqual(hits.map(\.id), [newer.id, middle.id, both.id])
+    }
+
+    func testSearchIsCaseAndDiacriticInsensitive() throws {
+        let repository = try makeRepository()
+        var conversation = makeConversation(agentID: "a1", address: "0xaaa", title: "Café notes", updatedAt: seconds(1000))
+        conversation.messages = [ChatMessage(role: .user, content: "agenda for the storage design review")]
+        repository.upsertConversation(conversation)
+
+        XCTAssertEqual(repository.search("cafe").map(\.id), [conversation.id])
+        XCTAssertEqual(repository.search("CAFÉ").map(\.id), [conversation.id])
+        XCTAssertEqual(repository.search("Storage Design").map(\.id), [conversation.id])
+    }
+
+    func testSaveActiveNilClearsStoredPointers() throws {
+        let repository = try makeRepository()
+        repository.saveActive(agentID: "a1", conversationID: "c1")
+
+        repository.saveActive(agentID: nil, conversationID: nil)
+        let loaded = repository.load()
+
+        XCTAssertNil(loaded.activeAgentID)
+        XCTAssertNil(loaded.activeConversationID)
+    }
+
+    func testDiskStoreSurvivesRepositoryRelaunch() throws {
+        let storeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("test-\(UUID().uuidString).store")
+        defer { try? FileManager.default.removeItem(at: storeURL) }
+
+        let agent = AgentConnection(address: "0xabc")
+        var conversation = makeConversation(agentID: agent.id, address: agent.address, title: "persisted", updatedAt: seconds(1000))
+        conversation.messages = [ChatMessage(role: .user, content: "survives relaunch")]
+
+        // First "launch": write, then release the repository (and its container).
+        do {
+            let repository = try SwiftDataConversationRepository(storeURL: storeURL, defaults: defaults)
+            repository.upsertAgent(agent)
+            repository.upsertConversation(conversation)
+            repository.saveActive(agentID: agent.id, conversationID: conversation.id)
+        }
+
+        // Second "launch": a fresh repository on the same file must read everything back.
+        let relaunched = try SwiftDataConversationRepository(storeURL: storeURL, defaults: defaults)
+        let loaded = relaunched.load()
+
+        XCTAssertEqual(loaded.agents.map(\.id), [agent.id])
+        XCTAssertEqual(loaded.conversations.map(\.id), [conversation.id])
+        XCTAssertEqual(loaded.conversations.first?.messages.map(\.content), conversation.messages.map(\.content))
+        XCTAssertEqual(loaded.activeAgentID, agent.id)
+        XCTAssertEqual(loaded.activeConversationID, conversation.id)
+        XCTAssertEqual(relaunched.search("relaunch").map(\.id), [conversation.id])
     }
 
     func testMultipleAgentsRoundTrip() throws {

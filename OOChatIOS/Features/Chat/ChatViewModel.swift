@@ -41,7 +41,8 @@ final class ChatViewModel: ObservableObject {
         activeConversation?.mode ?? .safe
     }
 
-    init(store: ConversationRepository = ConversationRepositoryFactory.make()) {
+    init(store: ConversationRepository? = nil) {
+        let store = store ?? ConversationRepositoryFactory.make()
         self.store = store
         let snapshot = store.load()
         self.agents = snapshot.agents

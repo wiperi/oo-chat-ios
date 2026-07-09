@@ -1,23 +1,31 @@
 import Foundation
 import SwiftData
 
+@MainActor
 final class SwiftDataConversationRepository: ConversationRepository {
     private let container: ModelContainer
+    private let context: ModelContext
     private let defaults: UserDefaults
     private let activeAgentKey = "connectonion.native-ios.swiftdata.activeAgent"
     private let activeConversationKey = "connectonion.native-ios.swiftdata.activeConversation"
 
-    init(inMemory: Bool = false, defaults: UserDefaults = .standard) throws {
+
+    init(inMemory: Bool = false, storeURL: URL? = nil, defaults: UserDefaults = .standard) throws {
         self.defaults = defaults
-        let configuration = ModelConfiguration(isStoredInMemoryOnly: inMemory)
+        let configuration: ModelConfiguration
+        if let storeURL {
+            configuration = ModelConfiguration(url: storeURL)
+        } else {
+            configuration = ModelConfiguration(isStoredInMemoryOnly: inMemory)
+        }
         container = try ModelContainer(
             for: StoredAgent.self, StoredConversation.self, StoredMessage.self,
             configurations: configuration
         )
+        context = ModelContext(container)
     }
 
     func load() -> ChatSnapshot {
-        let context = ModelContext(container)
         let agents = (try? context.fetch(FetchDescriptor<StoredAgent>())) ?? []
         let conversations = (try? context.fetch(FetchDescriptor<StoredConversation>())) ?? []
         return ChatSnapshot(
@@ -28,54 +36,52 @@ final class SwiftDataConversationRepository: ConversationRepository {
         )
     }
 
-    func save(_ snapshot: ChatSnapshot) {
-        let context = ModelContext(container)
-        syncAgents(snapshot.agents, in: context)
-        syncConversations(snapshot.conversations, in: context)
-        try? context.save()
-        saveActive(agentID: snapshot.activeAgentID, conversationID: snapshot.activeConversationID)
-    }
-
     func upsertConversation(_ conversation: Conversation) {
-        let context = ModelContext(container)
-        let id = conversation.id
-        let existing = (try? context.fetch(FetchDescriptor<StoredConversation>(predicate: #Predicate { $0.id == id })))?.first
-        if let stored = existing {
-            apply(conversation, to: stored, in: context)
+        if let stored = storedConversation(id: conversation.id) {
+            apply(conversation, to: stored)
         } else {
             context.insert(toStoredConversation(conversation))
         }
-        try? context.save()
+        save()
     }
 
     func deleteConversation(id: String) {
-        let context = ModelContext(container)
-        let stored = (try? context.fetch(FetchDescriptor<StoredConversation>(predicate: #Predicate { $0.id == id })))?.first
-        guard let stored else { return }
+        guard let stored = storedConversation(id: id) else { return }
         context.delete(stored)
-        try? context.save()
+        save()
     }
 
     func upsertAgent(_ agent: AgentConnection) {
-        let context = ModelContext(container)
-        let id = agent.id
-        let existing = (try? context.fetch(FetchDescriptor<StoredAgent>(predicate: #Predicate { $0.id == id })))?.first
-        if let stored = existing {
+        if let stored = storedAgent(id: agent.id) {
             apply(agent, to: stored)
         } else {
             context.insert(toStoredAgent(agent))
         }
-        try? context.save()
+        save()
     }
 
     func deleteAgent(id: String) {
-        let context = ModelContext(container)
-        if let stored = (try? context.fetch(FetchDescriptor<StoredAgent>(predicate: #Predicate { $0.id == id })))?.first {
+        // Capture the address before deleting so the cascade also catches legacy
+        // conversations linked only by `agentAddress` (older data may lack `agentID`).
+        let stored = storedAgent(id: id)
+        if let stored {
             context.delete(stored)
         }
-        let conversations = (try? context.fetch(FetchDescriptor<StoredConversation>())) ?? []
-        conversations.filter { $0.agentID == id }.forEach { context.delete($0) }
-        try? context.save()
+        var orphaned: [String: StoredConversation] = [:]
+        for conversation in (try? context.fetch(FetchDescriptor<StoredConversation>(
+            predicate: #Predicate { $0.agentID == id }
+        ))) ?? [] {
+            orphaned[conversation.id] = conversation
+        }
+        if let address = stored?.address {
+            for conversation in (try? context.fetch(FetchDescriptor<StoredConversation>(
+                predicate: #Predicate { $0.agentAddress == address }
+            ))) ?? [] {
+                orphaned[conversation.id] = conversation
+            }
+        }
+        orphaned.values.forEach(context.delete)
+        save()
     }
 
     func saveActive(agentID: String?, conversationID: String?) {
@@ -83,64 +89,49 @@ final class SwiftDataConversationRepository: ConversationRepository {
         setActive(conversationID, forKey: activeConversationKey)
     }
 
-    private func syncAgents(_ agents: [AgentConnection], in context: ModelContext) {
-        let existing = (try? context.fetch(FetchDescriptor<StoredAgent>())) ?? []
-        let byID = Dictionary(existing.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let keep = Set(agents.map(\.id))
-        for stored in existing where !keep.contains(stored.id) {
-            context.delete(stored)
+    /// Case- and diacritic-insensitive search over conversation titles and message content,
+    /// run as two indexed `#Predicate` fetches and unioned by conversation.
+    func search(_ query: String) -> [Conversation] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else {
+            return load().conversations
         }
-        for agent in agents {
-            if let stored = byID[agent.id] {
-                apply(agent, to: stored)
-            } else {
-                context.insert(toStoredAgent(agent))
+        var matched: [String: StoredConversation] = [:]
+        let titleHits = (try? context.fetch(FetchDescriptor<StoredConversation>(
+            predicate: #Predicate { $0.title.localizedStandardContains(needle) }
+        ))) ?? []
+        for conversation in titleHits {
+            matched[conversation.id] = conversation
+        }
+        let messageHits = (try? context.fetch(FetchDescriptor<StoredMessage>(
+            predicate: #Predicate { $0.content.localizedStandardContains(needle) }
+        ))) ?? []
+        for message in messageHits {
+            if let conversation = message.conversation {
+                matched[conversation.id] = conversation
             }
         }
+        return matched.values.map(toConversation).sorted { $0.updatedAt > $1.updatedAt }
     }
 
-    private func syncConversations(_ conversations: [Conversation], in context: ModelContext) {
-        let existing = (try? context.fetch(FetchDescriptor<StoredConversation>())) ?? []
-        let byID = Dictionary(existing.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let keep = Set(conversations.map(\.id))
-        for stored in existing where !keep.contains(stored.id) {
-            context.delete(stored)
-        }
-        for conversation in conversations {
-            if let stored = byID[conversation.id] {
-                apply(conversation, to: stored, in: context)
-            } else {
-                context.insert(toStoredConversation(conversation))
-            }
-        }
+
+
+    private func storedAgent(id: String) -> StoredAgent? {
+        (try? context.fetch(FetchDescriptor<StoredAgent>(predicate: #Predicate { $0.id == id })))?.first
     }
 
-    private func apply(_ agent: AgentConnection, to stored: StoredAgent) {
-        stored.name = agent.name
-        stored.address = agent.address
-        stored.createdAt = agent.createdAt
-        stored.updatedAt = agent.updatedAt
+    private func storedConversation(id: String) -> StoredConversation? {
+        (try? context.fetch(FetchDescriptor<StoredConversation>(predicate: #Predicate { $0.id == id })))?.first
     }
 
-    private func apply(_ conversation: Conversation, to stored: StoredConversation, in context: ModelContext) {
-        stored.title = conversation.title
-        stored.agentID = conversation.agentID
-        stored.agentAddress = conversation.agentAddress
-        stored.modeRaw = conversation.mode.rawValue
-        stored.createdAt = conversation.createdAt
-        stored.updatedAt = conversation.updatedAt
-        stored.serverSessionData = encodeSession(conversation.serverSession)
-        syncMessages(conversation.messages, of: stored, in: context)
-    }
-
-    private func syncMessages(_ messages: [ChatMessage], of stored: StoredConversation, in context: ModelContext) {
-        let keep = Set(messages.map(\.id))
-        for message in stored.messages where !keep.contains(message.id) {
-            context.delete(message)
-        }
-        let existing = Set(stored.messages.map(\.id))
-        for message in messages where !existing.contains(message.id) {
-            stored.messages.append(toStoredMessage(message))
+    private func save() {
+        do {
+            try context.save()
+        } catch {
+            // Surface the failure loudly in debug, and roll back so the shared context's
+            // uncommitted changes don't get silently flushed by the next operation's save.
+            assertionFailure("SwiftData save failed: \(error)")
+            context.rollback()
         }
     }
 
@@ -151,6 +142,39 @@ final class SwiftDataConversationRepository: ConversationRepository {
             defaults.removeObject(forKey: key)
         }
     }
+
+
+
+    private func apply(_ agent: AgentConnection, to stored: StoredAgent) {
+        stored.name = agent.name
+        stored.address = agent.address
+        stored.createdAt = agent.createdAt
+        stored.updatedAt = agent.updatedAt
+    }
+
+    private func apply(_ conversation: Conversation, to stored: StoredConversation) {
+        stored.title = conversation.title
+        stored.agentID = conversation.agentID
+        stored.agentAddress = conversation.agentAddress
+        stored.modeRaw = conversation.mode.rawValue
+        stored.createdAt = conversation.createdAt
+        stored.updatedAt = conversation.updatedAt
+        stored.serverSessionData = encodeSession(conversation.serverSession)
+        syncMessages(conversation.messages, of: stored)
+    }
+
+    private func syncMessages(_ messages: [ChatMessage], of stored: StoredConversation) {
+        let keep = Set(messages.map(\.id))
+        for message in stored.messages where !keep.contains(message.id) {
+            context.delete(message)
+        }
+        let existing = Set(stored.messages.map(\.id))
+        for message in messages where !existing.contains(message.id) {
+            stored.messages.append(toStoredMessage(message))
+        }
+    }
+
+
 
     private func toAgent(_ stored: StoredAgent) -> AgentConnection {
         AgentConnection(

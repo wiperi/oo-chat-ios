@@ -28,7 +28,8 @@ final class StoredConversation {
     var createdAt: Date
     var updatedAt: Date
     var serverSessionData: Data?
-    @Relationship(deleteRule: .cascade) var messages: [StoredMessage]
+    @Relationship(deleteRule: .cascade, inverse: \StoredMessage.conversation)
+    var messages: [StoredMessage]
 
     init(
         id: String,
@@ -59,6 +60,7 @@ final class StoredMessage {
     var roleRaw: String
     var content: String
     var createdAt: Date
+    var conversation: StoredConversation?
 
     init(id: String, roleRaw: String, content: String, createdAt: Date) {
         self.id = id
