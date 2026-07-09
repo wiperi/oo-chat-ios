@@ -41,6 +41,7 @@ struct AgentConnection: Identifiable, Codable, Equatable {
     let id: String
     var name: String
     var address: String
+    var token: String
     var createdAt: Date
     var updatedAt: Date
 
@@ -48,14 +49,45 @@ struct AgentConnection: Identifiable, Codable, Equatable {
         id: String = UUID().uuidString,
         address: String,
         name: String? = nil,
+        token: String = "",
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
         self.id = id
         self.address = address
         self.name = name ?? Self.defaultName(for: address)
+        self.token = token
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case address
+        case token
+        case createdAt
+        case updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        address = try container.decode(String.self, forKey: .address)
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? Self.defaultName(for: address)
+        token = try container.decodeIfPresent(String.self, forKey: .token) ?? ""
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(address, forKey: .address)
+        try container.encode(token, forKey: .token)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(updatedAt, forKey: .updatedAt)
     }
 
     static func defaultName(for address: String) -> String {

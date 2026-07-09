@@ -6,13 +6,15 @@ final class StoredAgent {
     @Attribute(.unique) var id: String
     var name: String
     var address: String
+    var token: String = ""
     var createdAt: Date
     var updatedAt: Date
 
-    init(id: String, name: String, address: String, createdAt: Date, updatedAt: Date) {
+    init(id: String, name: String, address: String, token: String, createdAt: Date, updatedAt: Date) {
         self.id = id
         self.name = name
         self.address = address
+        self.token = token
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }

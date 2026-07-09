@@ -61,26 +61,15 @@ final class SwiftDataConversationRepository: ConversationRepository {
     }
 
     func deleteAgent(id: String) {
-        // Capture the address before deleting so the cascade also catches legacy
-        // conversations linked only by `agentAddress` (older data may lack `agentID`).
-        let stored = storedAgent(id: id)
-        if let stored {
+        // Cascade by agentID only. Multiple agents can share one address (distinct tokens),
+        // so an address-based cascade would wrongly delete a sibling agent's conversations.
+        if let stored = storedAgent(id: id) {
             context.delete(stored)
         }
-        var orphaned: [String: StoredConversation] = [:]
-        for conversation in (try? context.fetch(FetchDescriptor<StoredConversation>(
+        let owned = (try? context.fetch(FetchDescriptor<StoredConversation>(
             predicate: #Predicate { $0.agentID == id }
-        ))) ?? [] {
-            orphaned[conversation.id] = conversation
-        }
-        if let address = stored?.address {
-            for conversation in (try? context.fetch(FetchDescriptor<StoredConversation>(
-                predicate: #Predicate { $0.agentAddress == address }
-            ))) ?? [] {
-                orphaned[conversation.id] = conversation
-            }
-        }
-        orphaned.values.forEach(context.delete)
+        ))) ?? []
+        owned.forEach(context.delete)
         save()
     }
 
@@ -148,6 +137,7 @@ final class SwiftDataConversationRepository: ConversationRepository {
     private func apply(_ agent: AgentConnection, to stored: StoredAgent) {
         stored.name = agent.name
         stored.address = agent.address
+        stored.token = agent.token
         stored.createdAt = agent.createdAt
         stored.updatedAt = agent.updatedAt
     }
@@ -181,6 +171,7 @@ final class SwiftDataConversationRepository: ConversationRepository {
             id: stored.id,
             address: stored.address,
             name: stored.name,
+            token: stored.token,
             createdAt: stored.createdAt,
             updatedAt: stored.updatedAt
         )
@@ -216,6 +207,7 @@ final class SwiftDataConversationRepository: ConversationRepository {
             id: agent.id,
             name: agent.name,
             address: agent.address,
+            token: agent.token,
             createdAt: agent.createdAt,
             updatedAt: agent.updatedAt
         )

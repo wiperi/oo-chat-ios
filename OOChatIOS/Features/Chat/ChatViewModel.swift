@@ -17,7 +17,7 @@ final class ChatViewModel: ObservableObject {
     @Published var prompt = ""
 
     private let store: ConversationRepository
-    private let identityStore = IdentityStore()
+    private let identityStore: IdentityStore
     private lazy var client = HostedAgentClient(identityStore: identityStore)
 
     var activeAgent: AgentConnection? {
@@ -41,9 +41,10 @@ final class ChatViewModel: ObservableObject {
         activeConversation?.mode ?? .safe
     }
 
-    init(store: ConversationRepository? = nil) {
+    init(store: ConversationRepository? = nil, identityStore: IdentityStore = IdentityStore()) {
         let store = store ?? ConversationRepositoryFactory.make()
         self.store = store
+        self.identityStore = identityStore
         let snapshot = store.load()
         self.agents = snapshot.agents
         self.conversations = snapshot.conversations
@@ -116,6 +117,65 @@ final class ChatViewModel: ObservableObject {
         return conversation
     }
 
+    @discardableResult
+    func saveAgent(id: String? = nil, name: String, address: String, token: String) -> AgentConnection? {
+        let trimmedAddress = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard HostedAgentClient.isHostedAgentAddress(trimmedAddress) else {
+            errorMessage = "Enter a hosted agent endpoint in 0x-prefixed Ed25519 format."
+            return nil
+        }
+        let existing = id.flatMap(agent(withID:))
+        let now = Date()
+        let shouldResetSessions = existing.map {
+            $0.address != trimmedAddress || $0.token != trimmedToken
+        } ?? false
+        var next = AgentConnection(
+            id: existing?.id ?? UUID().uuidString,
+            address: trimmedAddress,
+            name: trimmedName.isEmpty ? nil : trimmedName,
+            token: trimmedToken,
+            createdAt: existing?.createdAt ?? now,
+            updatedAt: now
+        )
+        next.updatedAt = now
+
+        if let existing {
+            for index in conversations.indices where conversationBelongsToAgent(conversations[index], existing) {
+                conversations[index].agentID = next.id
+                conversations[index].agentAddress = next.address
+                if shouldResetSessions {
+                    conversations[index].serverSession = nil
+                }
+                conversations[index].updatedAt = now
+                store.upsertConversation(conversations[index])
+            }
+        }
+
+        agents.removeAll { $0.id == next.id }
+        agents.insert(next, at: 0)
+        activeAgentID = next.id
+        agentAddressDraft = next.address
+        errorMessage = nil
+        store.upsertAgent(next)
+        persist()
+        return next
+    }
+
+    func switchToAgentForChat(_ agent: AgentConnection) {
+        activeAgentID = agent.id
+        agentAddressDraft = agent.address
+        connectionState = .disconnected
+        if let conversation = conversations(for: agent).first {
+            activeConversationID = conversation.id
+            persist()
+        } else {
+            _ = createConversation(for: agent)
+        }
+    }
+
     func deleteConversation(_ conversation: Conversation) {
         conversations.removeAll { $0.id == conversation.id }
         if activeConversationID == conversation.id {
@@ -176,7 +236,12 @@ final class ChatViewModel: ObservableObject {
         errorMessage = nil
         connectionFailureMessage = nil
 
-        let agent = agents.first { $0.address == address } ?? AgentConnection(address: address)
+        let agent: AgentConnection
+        if let activeAgent, activeAgent.address == address {
+            agent = activeAgent
+        } else {
+            agent = agents.first { $0.address == address } ?? AgentConnection(address: address)
+        }
         var conversation = conversations(for: agent).first ?? Conversation(agentID: agent.id, agentAddress: address)
 
         do {
@@ -343,11 +408,17 @@ final class ChatViewModel: ObservableObject {
         if let agentID = conversation.agentID, let agent = agent(withID: agentID) {
             return agent
         }
+        if conversation.agentID != nil {
+            return nil
+        }
         return agents.first { $0.address == conversation.agentAddress }
     }
 
     private func conversationBelongsToAgent(_ conversation: Conversation, _ agent: AgentConnection) -> Bool {
-        conversation.agentID == agent.id || conversation.agentAddress == agent.address
+        if let agentID = conversation.agentID {
+            return agentID == agent.id
+        }
+        return conversation.agentAddress == agent.address
     }
 
     private func session(_ session: [String: JSONValue]?, applying mode: ChatMode, conversationID: String) -> [String: JSONValue] {

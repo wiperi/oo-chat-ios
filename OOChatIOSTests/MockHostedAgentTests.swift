@@ -2,6 +2,9 @@ import XCTest
 @testable import OOChatIOS
 
 final class MockHostedAgentTests: XCTestCase {
+    private let endpointA = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    private let endpointB = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
     private struct MockHostedAgent {
         let replyText: String
 
@@ -27,5 +30,95 @@ final class MockHostedAgentTests: XCTestCase {
         XCTAssertEqual(conversation.messages.count, 1)
         XCTAssertEqual(conversation.messages.first?.role, .agent)
         XCTAssertEqual(conversation.messages.first?.content, Conversation.defaultInitialMessage)
+    }
+
+    func testAgentConnectionDecodesLegacyPayloadWithoutToken() throws {
+        let json = """
+        {
+          "id": "agent-1",
+          "name": "Legacy",
+          "address": "\(endpointA)",
+          "createdAt": "2026-07-09T01:00:00Z",
+          "updatedAt": "2026-07-09T01:00:00Z"
+        }
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+
+        let agent = try decoder.decode(AgentConnection.self, from: Data(json.utf8))
+
+        XCTAssertEqual(agent.name, "Legacy")
+        XCTAssertEqual(agent.address, endpointA)
+        XCTAssertEqual(agent.token, "")
+    }
+
+    @MainActor
+    func testSaveAgentUpdatesTokenEndpointAndClearsSessions() {
+        let viewModel = makeViewModel()
+        let agent = viewModel.saveAgent(name: "Primary", address: endpointA, token: "old-token")
+        XCTAssertNotNil(agent)
+        let conversation = viewModel.createConversation(for: agent!)
+        let conversationIndex = viewModel.conversations.firstIndex { $0.id == conversation.id }
+        XCTAssertNotNil(conversationIndex)
+        viewModel.conversations[conversationIndex!].serverSession = ["session_id": .string("old")]
+
+        let updated = viewModel.saveAgent(id: agent!.id, name: "Renamed", address: endpointB, token: "new-token")
+
+        XCTAssertEqual(updated?.id, agent?.id)
+        XCTAssertEqual(updated?.name, "Renamed")
+        XCTAssertEqual(updated?.address, endpointB)
+        XCTAssertEqual(updated?.token, "new-token")
+        XCTAssertEqual(viewModel.conversations.first?.agentID, agent?.id)
+        XCTAssertEqual(viewModel.conversations.first?.agentAddress, endpointB)
+        XCTAssertNil(viewModel.conversations.first?.serverSession)
+    }
+
+    @MainActor
+    func testDuplicateEndpointsRemainDistinctConfigurations() {
+        let viewModel = makeViewModel()
+
+        let first = viewModel.saveAgent(name: "First", address: endpointA, token: "token-one")
+        let second = viewModel.saveAgent(name: "Second", address: endpointA, token: "token-two")
+
+        XCTAssertNotEqual(first?.id, second?.id)
+        XCTAssertEqual(viewModel.agents.count, 2)
+        XCTAssertEqual(Set(viewModel.agents.map(\.token)), ["token-one", "token-two"])
+    }
+
+    @MainActor
+    func testDeletingAgentRemovesCredentialsAndConversations() {
+        let viewModel = makeViewModel()
+        let first = viewModel.saveAgent(name: "First", address: endpointA, token: "token-one")!
+        let second = viewModel.saveAgent(name: "Second", address: endpointB, token: "token-two")!
+        let deletedConversation = viewModel.createConversation(for: first)
+        let remainingConversation = viewModel.createConversation(for: second)
+
+        viewModel.deleteAgent(first)
+
+        XCTAssertFalse(viewModel.agents.contains { $0.id == first.id || $0.token == "token-one" })
+        XCTAssertFalse(viewModel.conversations.contains { $0.id == deletedConversation.id })
+        XCTAssertTrue(viewModel.conversations.contains { $0.id == remainingConversation.id })
+        XCTAssertEqual(viewModel.activeAgentID, second.id)
+    }
+
+    @MainActor
+    func testSwitchToAgentForChatCreatesConversationWhenMissing() {
+        let viewModel = makeViewModel()
+        let agent = viewModel.saveAgent(name: "Primary", address: endpointA, token: "")!
+
+        viewModel.switchToAgentForChat(agent)
+
+        XCTAssertEqual(viewModel.activeAgentID, agent.id)
+        XCTAssertEqual(viewModel.activeConversation?.agentID, agent.id)
+        XCTAssertEqual(viewModel.activeConversation?.agentAddress, endpointA)
+    }
+
+    @MainActor
+    private func makeViewModel() -> ChatViewModel {
+        let suiteName = "OOChatIOSTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        let store = try! SwiftDataConversationRepository(inMemory: true, defaults: defaults)
+        return ChatViewModel(store: store)
     }
 }

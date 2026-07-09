@@ -100,22 +100,32 @@ final class SwiftDataConversationRepositoryTests: XCTestCase {
         XCTAssertTrue(loaded.conversations.isEmpty)
     }
 
-    func testDeleteAgentAlsoRemovesLegacyConversationsLinkedByAddressOnly() throws {
+    func testDeleteAgentKeepsSiblingAgentSharingSameAddress() throws {
         let repository = try makeRepository()
-        let agent = AgentConnection(address: "0xaaa")
-        repository.upsertAgent(agent)
-        // Legacy conversation: matches the agent only by address, no agentID.
-        var legacy = makeConversation(agentID: nil, address: agent.address, title: "legacy", updatedAt: seconds(1000))
-        legacy.agentID = nil
-        let linked = makeConversation(agentID: agent.id, address: agent.address, title: "linked", updatedAt: seconds(2000))
-        repository.upsertConversation(legacy)
-        repository.upsertConversation(linked)
+        // Two distinct agents on the same address (different tokens/configs).
+        let a = AgentConnection(id: "a1", address: "0xaaa")
+        let b = AgentConnection(id: "a2", address: "0xaaa")
+        repository.upsertAgent(a)
+        repository.upsertAgent(b)
+        let convA = makeConversation(agentID: a.id, address: "0xaaa", title: "belongs to a", updatedAt: seconds(1000))
+        let convB = makeConversation(agentID: b.id, address: "0xaaa", title: "belongs to b", updatedAt: seconds(2000))
+        repository.upsertConversation(convA)
+        repository.upsertConversation(convB)
 
-        repository.deleteAgent(id: agent.id)
+        repository.deleteAgent(id: a.id)
         let loaded = repository.load()
 
-        XCTAssertTrue(loaded.agents.isEmpty)
-        XCTAssertTrue(loaded.conversations.isEmpty)
+        // Only agent a and its conversation go; the sibling on the same address survives.
+        XCTAssertEqual(loaded.agents.map(\.id), [b.id])
+        XCTAssertEqual(loaded.conversations.map(\.id), [convB.id])
+    }
+
+    func testAgentTokenRoundTrips() throws {
+        let repository = try makeRepository()
+        let agent = AgentConnection(id: "a1", address: "0xaaa", name: "Primary", token: "secret-token")
+        repository.upsertAgent(agent)
+
+        XCTAssertEqual(repository.load().agents.first?.token, "secret-token")
     }
 
     func testAppendingMessageKeepsExistingMessagesAndAddsOne() throws {
