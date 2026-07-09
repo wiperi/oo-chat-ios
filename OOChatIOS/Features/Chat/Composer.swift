@@ -1,7 +1,8 @@
 import SwiftUI
-
+// Handle the chat input, mode selection and send button.
 struct Composer: View {
     @ObservedObject var viewModel: ChatViewModel
+    @FocusState private var isPromptFocused: Bool
 
     var body: some View {
         VStack(spacing: 8) {
@@ -17,9 +18,11 @@ struct Composer: View {
                 TextField("Message the agent", text: $viewModel.prompt, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
                     .lineLimit(1...4)
+                    .focused($isPromptFocused)
                     .disabled(viewModel.isProcessing)
                 Button(viewModel.isProcessing ? "..." : "Send") {
                     viewModel.sendPrompt()
+                    isPromptFocused = false
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(viewModel.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isProcessing)
@@ -27,6 +30,14 @@ struct Composer: View {
         }
         .padding()
         .background(.bar)
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") {
+                    isPromptFocused = false
+                }
+            }
+        }
     }
 
     private var modeBinding: Binding<ChatMode> {
