@@ -98,17 +98,57 @@ struct AgentConnection: Identifiable, Codable, Equatable {
     }
 }
 
+enum MessageDeliveryState: String, Codable, Equatable {
+    case sent
+    case queued
+    case failed
+}
+
 struct ChatMessage: Identifiable, Codable, Equatable {
     let id: String
     var role: ChatRole
     var content: String
     var createdAt: Date
+    var deliveryState: MessageDeliveryState
 
-    init(id: String = UUID().uuidString, role: ChatRole, content: String, createdAt: Date = Date()) {
+    init(
+        id: String = UUID().uuidString,
+        role: ChatRole,
+        content: String,
+        createdAt: Date = Date(),
+        deliveryState: MessageDeliveryState = .sent
+    ) {
         self.id = id
         self.role = role
         self.content = content
         self.createdAt = createdAt
+        self.deliveryState = deliveryState
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case role
+        case content
+        case createdAt
+        case deliveryState
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        role = try container.decode(ChatRole.self, forKey: .role)
+        content = try container.decode(String.self, forKey: .content)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        deliveryState = try container.decodeIfPresent(MessageDeliveryState.self, forKey: .deliveryState) ?? .sent
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(role, forKey: .role)
+        try container.encode(content, forKey: .content)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(deliveryState, forKey: .deliveryState)
     }
 }
 

@@ -71,11 +71,6 @@ struct AgentsView: View {
                 .padding(.bottom, 24)
                 .accessibilityLabel("Add Agent")
             }
-            .overlay(alignment: .bottom) {
-                ErrorBanner(message: viewModel.errorMessage) {
-                    viewModel.dismissError()
-                }
-            }
         }
     }
 }

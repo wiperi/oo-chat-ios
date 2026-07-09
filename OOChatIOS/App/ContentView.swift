@@ -19,6 +19,20 @@ struct ContentView: View {
                 .tabItem { Label("Settings", systemImage: "gearshape") }
                 .tag(AppTab.settings)
         }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            VStack(spacing: 1) {
+                if viewModel.shouldShowOfflineBanner {
+                    OfflineBanner {
+                        viewModel.retryConnectivity()
+                    } onDismiss: {
+                        viewModel.dismissOfflineBanner()
+                    }
+                }
+                ErrorBanner(message: viewModel.errorMessage) {
+                    viewModel.dismissError()
+                }
+            }
+        }
         .tint(AppTheme.primary)
         .preferredColorScheme(AppAppearance(rawValue: appAppearance)?.colorScheme ?? .light)
         .onAppear {

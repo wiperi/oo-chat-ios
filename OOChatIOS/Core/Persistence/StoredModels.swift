@@ -62,12 +62,14 @@ final class StoredMessage {
     var roleRaw: String
     var content: String
     var createdAt: Date
+    var deliveryStateRaw: String = "sent"
     var conversation: StoredConversation?
 
-    init(id: String, roleRaw: String, content: String, createdAt: Date) {
+    init(id: String, roleRaw: String, content: String, createdAt: Date, deliveryStateRaw: String = "sent") {
         self.id = id
         self.roleRaw = roleRaw
         self.content = content
         self.createdAt = createdAt
+        self.deliveryStateRaw = deliveryStateRaw
     }
 }

@@ -2,19 +2,48 @@ import SwiftUI
 
 struct MessageBubble: View {
     let message: ChatMessage
+    var onRetry: (() -> Void)? = nil
 
     var body: some View {
         HStack {
             if message.role == .user {
                 Spacer(minLength: 36)
             }
-            Text(message.content)
-                .padding(12)
-                .background(background)
-                .foregroundStyle(foreground)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
+            VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 4) {
+                Text(message.content)
+                    .padding(12)
+                    .background(background)
+                    .foregroundStyle(foreground)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                deliveryStatus
+            }
             if message.role != .user {
                 Spacer(minLength: 36)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var deliveryStatus: some View {
+        if message.role == .user {
+            switch message.deliveryState {
+            case .sent:
+                EmptyView()
+            case .queued:
+                Label("Queued", systemImage: "clock")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            case .failed:
+                HStack(spacing: 8) {
+                    Label("Failed", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                    Button("Retry") {
+                        onRetry?()
+                    }
+                    .font(.caption2.weight(.semibold))
+                    .accessibilityLabel("Retry sending message")
+                }
             }
         }
     }

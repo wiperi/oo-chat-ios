@@ -80,11 +80,6 @@ struct AddAgentView: View {
         } message: {
             Text(viewModel.connectionFailureMessage ?? "")
         }
-        .overlay(alignment: .bottom) {
-            ErrorBanner(message: viewModel.errorMessage) {
-                viewModel.dismissError()
-            }
-        }
     }
 
     private var connectionFailedBinding: Binding<Bool> {

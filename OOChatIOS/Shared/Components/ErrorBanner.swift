@@ -6,9 +6,9 @@ struct ErrorBanner: View {
 
     var body: some View {
         if let message {
-            HStack(alignment: .top, spacing: 10) {
-                Text(message)
-                    .font(.footnote)
+            HStack(spacing: 10) {
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .font(.footnote.weight(.semibold))
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Button {
                     onDismiss()
@@ -19,12 +19,11 @@ struct ErrorBanner: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Close error")
             }
-            .padding(10)
-            .background(.red.opacity(0.14))
-            .foregroundStyle(.red)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .padding(.horizontal)
-            .padding(.bottom, 8)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(Color(red: 198.0 / 255.0, green: 55.0 / 255.0, blue: 75.0 / 255.0))
+            .foregroundStyle(.white)
+            .accessibilityIdentifier("errorBanner")
         }
     }
 }

@@ -15,10 +15,25 @@ final class ChatViewModel: ObservableObject {
     @Published var connectionFailureMessage: String?
     @Published var agentAddressDraft = ""
     @Published var prompt = ""
+    @Published private(set) var isOffline = false
+    @Published private(set) var isOfflineBannerDismissed = false
+
+    var shouldShowOfflineBanner: Bool {
+        isOffline && !isOfflineBannerDismissed
+    }
+
+    private(set) var sendTask: Task<Void, Never>?
+    private(set) var recoveryTask: Task<Void, Never>?
+    private(set) var probeTask: Task<Void, Never>?
+
+    /// Seconds between silent reachability probes while offline. Overridable in tests.
+    var probeInterval: TimeInterval = 5
 
     private let store: ConversationRepository
     private let identityStore: IdentityStore
-    private lazy var client = HostedAgentClient(identityStore: identityStore)
+    private let networkMonitor: NetworkPathMonitoring
+    private let injectedClient: HostedAgentTransport?
+    private lazy var client: HostedAgentTransport = injectedClient ?? HostedAgentClient(identityStore: identityStore)
 
     var activeAgent: AgentConnection? {
         if let activeAgentID, let agent = agent(withID: activeAgentID) {
@@ -41,10 +56,17 @@ final class ChatViewModel: ObservableObject {
         activeConversation?.mode ?? .safe
     }
 
-    init(store: ConversationRepository? = nil, identityStore: IdentityStore = IdentityStore()) {
+    init(
+        store: ConversationRepository? = nil,
+        identityStore: IdentityStore = IdentityStore(),
+        client: HostedAgentTransport? = nil,
+        networkMonitor: NetworkPathMonitoring? = nil
+    ) {
         let store = store ?? ConversationRepositoryFactory.make()
         self.store = store
         self.identityStore = identityStore
+        self.injectedClient = client
+        self.networkMonitor = networkMonitor ?? NetworkMonitor()
         let snapshot = store.load()
         self.agents = snapshot.agents
         self.conversations = snapshot.conversations
@@ -61,6 +83,15 @@ final class ChatViewModel: ObservableObject {
         } catch {
             self.errorMessage = error.localizedDescription
         }
+        self.networkMonitor.onUpdate = { [weak self] isOnline in
+            self?.handleNetworkChange(isOnline: isOnline)
+        }
+        self.networkMonitor.start()
+    }
+
+    deinit {
+        networkMonitor.cancel()
+        probeTask?.cancel()
     }
 
     func agent(withID id: String) -> AgentConnection? {
@@ -124,7 +155,7 @@ final class ChatViewModel: ObservableObject {
         let trimmedToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard HostedAgentClient.isHostedAgentAddress(trimmedAddress) else {
-            errorMessage = "Enter a hosted agent endpoint in 0x-prefixed Ed25519 format."
+            errorMessage = "That doesn't look like an agent address. It should start with 0x followed by 64 characters."
             return nil
         }
         let existing = id.flatMap(agent(withID:))
@@ -222,9 +253,15 @@ final class ChatViewModel: ObservableObject {
     func connectToAgent() async -> AgentConnection? {
         let address = agentAddressDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard HostedAgentClient.isHostedAgentAddress(address) else {
-            let message = "Enter a hosted agent address in 0x-prefixed Ed25519 format."
+            let message = "That doesn't look like an agent address. It should start with 0x followed by 64 characters."
             errorMessage = message
             connectionFailureMessage = message
+            return nil
+        }
+        guard !isOffline else {
+            let message = "You appear to be offline. Check your connection and try again."
+            errorMessage = message
+            connectionFailureMessage = "Connection failed. \(message)"
             return nil
         }
         guard !isConnecting else {
@@ -271,44 +308,211 @@ final class ChatViewModel: ObservableObject {
         }
         guard let agent = agent(for: conversation),
               HostedAgentClient.isHostedAgentAddress(agent.address) else {
-            errorMessage = "Use a hosted agent address before sending a message."
+            errorMessage = "Connect to an agent before sending a message."
             return
         }
 
         prompt = ""
         errorMessage = nil
-        isProcessing = true
-        connectionState = .reconnecting
         conversation.agentID = agent.id
         conversation.agentAddress = agent.address
         conversation.title = conversation.title == "New mobile session" ? titleFromPrompt(text) : conversation.title
-        conversation.messages.append(ChatMessage(role: .user, content: text))
-        conversation.messages.append(ChatMessage(role: .thinking, content: "Waiting for hosted agent..."))
+        let message = ChatMessage(role: .user, content: text, deliveryState: .queued)
+        conversation.messages.append(message)
         upsert(conversation)
 
-        Task {
+        guard !isOffline else {
+            // Stays queued; flushQueuedMessages() sends it when the network returns.
+            return
+        }
+
+        isProcessing = true
+        connectionState = .reconnecting
+        sendTask = Task {
             defer {
                 self.isProcessing = false
             }
-            do {
-                let result = try await client.sendPrompt(agentAddress: agent.address, conversation: conversation, prompt: text)
-                var updated = self.conversation(withID: conversation.id) ?? conversation
-                updated.messages.removeAll { $0.role == .thinking }
-                if let session = result.serverSession {
-                    updated.serverSession = self.session(session, applying: updated.mode, conversationID: updated.id)
+            await self.deliver(messageID: message.id, conversationID: conversation.id)
+        }
+    }
+
+    func retryMessage(_ message: ChatMessage) {
+        guard message.role == .user, message.deliveryState == .failed else {
+            return
+        }
+        guard var conversation = conversations.first(where: { candidate in
+            candidate.messages.contains { $0.id == message.id }
+        }) else {
+            return
+        }
+        if let index = conversation.messages.firstIndex(where: { $0.id == message.id }) {
+            conversation.messages[index].deliveryState = .queued
+        }
+        errorMessage = nil
+        upsert(conversation)
+
+        guard !isOffline, !isProcessing else {
+            return
+        }
+        isProcessing = true
+        connectionState = .reconnecting
+        sendTask = Task {
+            defer {
+                self.isProcessing = false
+            }
+            await self.deliver(messageID: message.id, conversationID: conversation.id)
+        }
+    }
+    
+    func flushQueuedMessages() async {
+        await sendTask?.value
+        guard !isOffline, !isProcessing else {
+            return
+        }
+        let queued = conversations
+            .flatMap { conversation in
+                conversation.messages
+                    .filter { $0.role == .user && $0.deliveryState == .queued }
+                    .map { (conversationID: conversation.id, message: $0) }
+            }
+            .sorted { $0.message.createdAt < $1.message.createdAt }
+        guard !queued.isEmpty else {
+            return
+        }
+        isProcessing = true
+        defer {
+            isProcessing = false
+        }
+        for item in queued {
+            guard !isOffline else {
+                break
+            }
+            await deliver(messageID: item.message.id, conversationID: item.conversationID)
+        }
+    }
+
+    private func deliver(messageID: String, conversationID: String) async {
+        guard let conversation = self.conversation(withID: conversationID),
+              let message = conversation.messages.first(where: { $0.id == messageID }),
+              message.role == .user,
+              let agent = agent(for: conversation),
+              HostedAgentClient.isHostedAgentAddress(agent.address) else {
+            return
+        }
+        connectionState = .reconnecting
+        var pending = conversation
+        pending.messages.append(ChatMessage(role: .thinking, content: "Waiting for hosted agent..."))
+        upsert(pending)
+
+        do {
+            let result = try await client.sendPrompt(agentAddress: agent.address, conversation: pending, prompt: message.content)
+            var updated = self.conversation(withID: conversationID) ?? pending
+            updated.messages.removeAll { $0.role == .thinking }
+            if let index = updated.messages.firstIndex(where: { $0.id == messageID }) {
+                updated.messages[index].deliveryState = .sent
+            }
+            if let session = result.serverSession {
+                updated.serverSession = self.session(session, applying: updated.mode, conversationID: updated.id)
+            }
+            updated.messages.append(ChatMessage(role: .agent, content: result.output ?? ""))
+            updated.updatedAt = Date()
+            connectionState = .connected
+            upsert(updated)
+        } catch {
+            var updated = self.conversation(withID: conversationID) ?? pending
+            updated.messages.removeAll { $0.role == .thinking }
+            if let index = updated.messages.firstIndex(where: { $0.id == messageID }) {
+                updated.messages[index].deliveryState = .failed
+            }
+            updated.updatedAt = Date()
+            errorMessage = error.localizedDescription
+            connectionState = .disconnected
+            upsert(updated)
+        }
+    }
+
+    private func handleNetworkChange(isOnline: Bool) {
+        let wasOffline = isOffline
+        isOffline = !isOnline
+        guard isOnline else {
+            if !wasOffline {
+                // Fresh drop: surface the banner again even if it was dismissed earlier.
+                isOfflineBannerDismissed = false
+            }
+            connectionState = .disconnected
+            startRecoveryProbing()
+            return
+        }
+        probeTask?.cancel()
+        guard wasOffline else {
+            return
+        }
+        recoveryTask = Task {
+            await self.reconnect()
+            await self.flushQueuedMessages()
+        }
+    }
+
+    /// The path monitor can lag well behind the actual network (especially on the
+    /// simulator), so while offline we also probe the agent directly on a timer and
+    /// recover as soon as a probe gets through — no monitor update or user tap needed.
+    private func startRecoveryProbing() {
+        probeTask?.cancel()
+        probeTask = Task {
+            while !Task.isCancelled && self.isOffline {
+                try? await Task.sleep(nanoseconds: UInt64(self.probeInterval * 1_000_000_000))
+                guard !Task.isCancelled, self.isOffline else {
+                    return
                 }
-                updated.messages.append(ChatMessage(role: .agent, content: result.output ?? ""))
-                updated.updatedAt = Date()
-                self.connectionState = .connected
-                self.upsert(updated)
-            } catch {
+                if await self.probeReconnect() {
+                    self.isOffline = false
+                    self.connectionState = .connected
+                    await self.flushQueuedMessages()
+                    return
+                }
+            }
+        }
+    }
+
+    /// Quiet reachability check. Unlike reconnect(), a failed probe leaves all UI state
+    /// untouched so background retries don't flash error banners every few seconds.
+    private func probeReconnect() async -> Bool {
+        guard let conversation = activeConversation,
+              let agent = agent(for: conversation),
+              HostedAgentClient.isHostedAgentAddress(agent.address) else {
+            return false
+        }
+        do {
+            let result = try await client.connect(agentAddress: agent.address, conversation: conversation)
+            if let session = result.serverSession {
                 var updated = self.conversation(withID: conversation.id) ?? conversation
-                updated.messages.removeAll { $0.role == .thinking }
-                updated.messages.append(ChatMessage(role: .error, content: error.localizedDescription))
-                updated.updatedAt = Date()
-                self.errorMessage = error.localizedDescription
-                self.connectionState = .disconnected
+                updated.agentID = agent.id
+                updated.agentAddress = agent.address
+                updated.serverSession = self.session(session, applying: updated.mode, conversationID: updated.id)
                 self.upsert(updated)
+            }
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    func dismissOfflineBanner() {
+        isOfflineBannerDismissed = true
+    }
+
+    /// Manual recovery for when the path monitor is slow to notice the network is back
+    /// (common on the simulator): attempt a real reconnect, and if it succeeds treat
+    /// the app as online again and flush the queue without waiting for the monitor.
+    func retryConnectivity() {
+        guard isOffline else {
+            return
+        }
+        recoveryTask = Task {
+            await self.reconnect()
+            if self.connectionState == .connected {
+                self.isOffline = false
+                await self.flushQueuedMessages()
             }
         }
     }

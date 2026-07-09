@@ -20,8 +20,10 @@ struct ChatScreen: View {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 12) {
                             ForEach(conversation.messages) { message in
-                                MessageBubble(message: message)
-                                    .id(message.id)
+                                MessageBubble(message: message) {
+                                    viewModel.retryMessage(message)
+                                }
+                                .id(message.id)
                             }
                         }
                         .padding()
@@ -76,11 +78,6 @@ struct ChatScreen: View {
                 }
                 .disabled(viewModel.agents.isEmpty)
                 .accessibilityLabel("Switch Agent")
-            }
-        }
-        .overlay(alignment: .bottom) {
-            ErrorBanner(message: viewModel.errorMessage) {
-                viewModel.dismissError()
             }
         }
     }

@@ -11,22 +11,29 @@ enum HostedAgentClientError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidAddress:
-            return "Enter a hosted agent address in 0x-prefixed Ed25519 format."
+            return "That doesn't look like an agent address. It should start with 0x followed by 64 characters."
         case .invalidURL(let url):
-            return "Invalid URL: \(url)"
+            return "Couldn't reach the agent at \(url)."
         case .badFrame:
-            return "Received an invalid hosted-agent frame."
+            return "The agent sent an unexpected reply. Try again."
         case .server(let message):
             return message
         case .closed:
-            return "Connection closed before the agent replied."
+            return "The connection closed before the agent replied. Try again."
         case .timeout:
-            return "The hosted agent did not reply before the timeout."
+            return "The agent didn't reply in time. Try again."
         }
     }
 }
 
-final class HostedAgentClient {
+/// Wire-level operations the view model needs from the hosted-agent client,
+/// as a protocol so tests can substitute a scripted transport.
+protocol HostedAgentTransport {
+    func connect(agentAddress: String, conversation: Conversation) async throws -> HostedAgentResult
+    func sendPrompt(agentAddress: String, conversation: Conversation, prompt: String) async throws -> HostedAgentResult
+}
+
+final class HostedAgentClient: HostedAgentTransport {
     private let identityStore: IdentityStore
     private let session: URLSession
     private let relayURL = "wss://oo.openonion.ai"

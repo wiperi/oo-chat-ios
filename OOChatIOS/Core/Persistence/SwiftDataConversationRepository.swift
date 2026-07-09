@@ -158,9 +158,18 @@ final class SwiftDataConversationRepository: ConversationRepository {
         for message in stored.messages where !keep.contains(message.id) {
             context.delete(message)
         }
-        let existing = Set(stored.messages.map(\.id))
-        for message in messages where !existing.contains(message.id) {
-            stored.messages.append(toStoredMessage(message))
+        var existing: [String: StoredMessage] = [:]
+        for message in stored.messages {
+            existing[message.id] = message
+        }
+        for message in messages {
+            if let storedMessage = existing[message.id] {
+                // msg stays in place
+                storedMessage.deliveryStateRaw = message.deliveryState.rawValue
+                storedMessage.content = message.content
+            } else {
+                stored.messages.append(toStoredMessage(message))
+            }
         }
     }
 
@@ -198,7 +207,8 @@ final class SwiftDataConversationRepository: ConversationRepository {
             id: stored.id,
             role: ChatRole(rawValue: stored.roleRaw) ?? .agent,
             content: stored.content,
-            createdAt: stored.createdAt
+            createdAt: stored.createdAt,
+            deliveryState: MessageDeliveryState(rawValue: stored.deliveryStateRaw) ?? .sent
         )
     }
 
@@ -232,7 +242,8 @@ final class SwiftDataConversationRepository: ConversationRepository {
             id: message.id,
             roleRaw: message.role.rawValue,
             content: message.content,
-            createdAt: message.createdAt
+            createdAt: message.createdAt,
+            deliveryStateRaw: message.deliveryState.rawValue
         )
     }
 
