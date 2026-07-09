@@ -241,6 +241,32 @@ final class ChatViewModel: ObservableObject {
         persist()
     }
 
+    /// Renames a conversation in place. Empty/whitespace titles and no-op renames are
+    /// ignored. A rename is a metadata edit, not activity, so it deliberately does not
+    /// reorder the list, bump `updatedAt`, or change the active conversation — only the
+    /// title and its persisted row change.
+    func renameConversation(_ conversation: Conversation, to title: String) {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let index = conversations.firstIndex(where: { $0.id == conversation.id }),
+              conversations[index].title != trimmed else {
+            return
+        }
+        conversations[index].title = trimmed
+        store.upsertConversation(conversations[index])
+    }
+
+    /// Filters conversations by title and message content via the store's indexed query,
+    /// optionally scoped to a single agent. An empty/whitespace query returns all
+    /// conversations (most-recent-first), matching the repository contract.
+    func searchConversations(_ query: String, for agent: AgentConnection? = nil) -> [Conversation] {
+        let results = store.search(query)
+        guard let agent else {
+            return results
+        }
+        return results.filter { conversationBelongsToAgent($0, agent) }
+    }
+
     func setMode(_ mode: ChatMode) {
         guard var conversation = activeConversation else {
             return

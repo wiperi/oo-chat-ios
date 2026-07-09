@@ -5,6 +5,11 @@ struct AgentSessionsView: View {
     let agentID: String
     let switchToChat: () -> Void
 
+    @State private var searchText = ""
+    @State private var renameTarget: Conversation?
+    @State private var renameText = ""
+    @State private var deleteTarget: Conversation?
+
     private var agent: AgentConnection? {
         viewModel.agent(withID: agentID)
     }
@@ -13,7 +18,11 @@ struct AgentSessionsView: View {
         guard let agent else {
             return []
         }
-        return viewModel.conversations(for: agent)
+        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return viewModel.conversations(for: agent)
+        }
+        return viewModel.searchConversations(trimmed, for: agent)
     }
 
     var body: some View {
@@ -41,7 +50,7 @@ struct AgentSessionsView: View {
 
                     Section("Chat Sessions") {
                         if sessions.isEmpty {
-                            Text("No chat sessions")
+                            Text(searchText.isEmpty ? "No chat sessions" : "No matching chats")
                                 .foregroundStyle(.secondary)
                         } else {
                             ForEach(sessions) { conversation in
@@ -51,21 +60,66 @@ struct AgentSessionsView: View {
                                 } label: {
                                     ConversationRow(conversation: conversation)
                                 }
-                            }
-                            .onDelete { offsets in
-                                offsets.map { sessions[$0] }.forEach(viewModel.deleteConversation)
+                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                    Button {
+                                        renameText = conversation.title
+                                        renameTarget = conversation
+                                    } label: {
+                                        Label("Rename", systemImage: "pencil")
+                                    }
+                                    .tint(.blue)
+                                    Button(role: .destructive) {
+                                        deleteTarget = conversation
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
+                                    }
+                                }
                             }
                         }
                     }
                 }
+                .searchable(
+                    text: $searchText,
+                    placement: .navigationBarDrawer(displayMode: .always),
+                    prompt: "Search chats"
+                )
                 .navigationTitle(agent.name)
                 .onAppear {
                     viewModel.selectAgent(agent)
+                }
+                .alert("Rename Chat", isPresented: isRenaming) {
+                    TextField("Title", text: $renameText)
+                    Button("Cancel", role: .cancel) { renameTarget = nil }
+                    Button("Save") {
+                        if let target = renameTarget {
+                            viewModel.renameConversation(target, to: renameText)
+                        }
+                        renameTarget = nil
+                    }
+                } message: {
+                    Text("Enter a new name for this chat.")
+                }
+                .alert("Delete Chat", isPresented: isDeleting, presenting: deleteTarget) { conversation in
+                    Button("Delete", role: .destructive) {
+                        viewModel.deleteConversation(conversation)
+                        deleteTarget = nil
+                    }
+                    Button("Cancel", role: .cancel) { deleteTarget = nil }
+                } message: { conversation in
+                    Text("\"\(conversation.title)\" will be permanently deleted.")
                 }
             } else {
                 ContentUnavailableView("Agent Not Found", systemImage: "network.slash")
             }
         }
+    }
+
+    private var isRenaming: Binding<Bool> {
+        Binding(get: { renameTarget != nil }, set: { if !$0 { renameTarget = nil } })
+    }
+
+    private var isDeleting: Binding<Bool> {
+        Binding(get: { deleteTarget != nil }, set: { if !$0 { deleteTarget = nil } })
     }
 }
 

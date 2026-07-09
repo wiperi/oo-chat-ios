@@ -166,6 +166,99 @@ final class AgentsFeatureTests: XCTestCase {
         XCTAssertTrue(repo.upsertedAgents.isEmpty)
     }
 
+    // Rename updates the title in place and persists that single row.
+    func testRenameConversationUpdatesTitleAndPersists() {
+        let agent = makeAgent(id: "agent1", address: "0xaaa", updatedAt: seconds(1000))
+        let conversation = makeConversation(id: "con1", agent: agent, updatedAt: seconds(1000))
+        let repo = SpyConversationRepository(
+            snapshot: ChatSnapshot(
+                agents: [agent],
+                conversations: [conversation],
+                activeAgentID: agent.id,
+                activeConversationID: conversation.id
+            )
+        )
+        let view = ChatViewModel(store: repo)
+
+        view.renameConversation(conversation, to: "  Renamed  ")
+
+        XCTAssertEqual(view.conversations.first?.title, "Renamed")
+        XCTAssertEqual(repo.upsertedConversations.last?.id, conversation.id)
+        XCTAssertEqual(repo.upsertedConversations.last?.title, "Renamed")
+    }
+
+    // Rename does not reorder the list, change updatedAt, or switch the active conversation.
+    func testRenameConversationIsMetadataOnlyEdit() {
+        let agent = makeAgent(id: "agent1", address: "0xaaa", updatedAt: seconds(3000))
+        let older = makeConversation(id: "older", agent: agent, updatedAt: seconds(1000))
+        let newer = makeConversation(id: "newer", agent: agent, updatedAt: seconds(2000))
+        let repo = SpyConversationRepository(
+            snapshot: ChatSnapshot(
+                agents: [agent],
+                conversations: [newer, older],
+                activeAgentID: agent.id,
+                activeConversationID: newer.id
+            )
+        )
+        let view = ChatViewModel(store: repo)
+
+        view.renameConversation(older, to: "Fresh title")
+
+        XCTAssertEqual(view.conversations.map(\.id), [newer.id, older.id])
+        XCTAssertEqual(view.conversations.last?.updatedAt, seconds(1000))
+        XCTAssertEqual(view.activeConversationID, newer.id)
+    }
+
+    // Empty/whitespace titles and no-op renames neither mutate nor persist.
+    func testRenameConversationIgnoresBlankAndNoopTitles() {
+        let agent = makeAgent(id: "agent1", address: "0xaaa", updatedAt: seconds(1000))
+        let conversation = makeConversation(id: "con1", agent: agent, updatedAt: seconds(1000))
+        let repo = SpyConversationRepository(
+            snapshot: ChatSnapshot(
+                agents: [agent],
+                conversations: [conversation],
+                activeAgentID: agent.id,
+                activeConversationID: conversation.id
+            )
+        )
+        let view = ChatViewModel(store: repo)
+
+        view.renameConversation(conversation, to: "   \n")
+        view.renameConversation(conversation, to: "con1") // same as makeConversation title
+
+        XCTAssertEqual(view.conversations.first?.title, "con1")
+        XCTAssertTrue(repo.upsertedConversations.isEmpty)
+    }
+
+    // Search forwards the query to the store and returns its results unfiltered.
+    func testSearchConversationsForwardsToStore() {
+        let agent = makeAgent(id: "agent1", address: "0xaaa", updatedAt: seconds(1000))
+        let hit = makeConversation(id: "hit", agent: agent, updatedAt: seconds(1000))
+        let repo = SpyConversationRepository(snapshot: .empty)
+        repo.searchResults = [hit]
+        let view = ChatViewModel(store: repo)
+
+        let results = view.searchConversations("milk")
+
+        XCTAssertEqual(results.map(\.id), [hit.id])
+        XCTAssertEqual(repo.searchQueries, ["milk"])
+    }
+
+    // Scoping a search to an agent keeps only that agent's matches.
+    func testSearchConversationsScopedToAgentFiltersOthers() {
+        let mine = makeAgent(id: "agent1", address: "0xaaa", updatedAt: seconds(1000))
+        let other = makeAgent(id: "agent2", address: "0xbbb", updatedAt: seconds(1000))
+        let mineHit = makeConversation(id: "mine", agent: mine, updatedAt: seconds(2000))
+        let otherHit = makeConversation(id: "other", agent: other, updatedAt: seconds(1000))
+        let repo = SpyConversationRepository(snapshot: .empty)
+        repo.searchResults = [mineHit, otherHit]
+        let view = ChatViewModel(store: repo)
+
+        let results = view.searchConversations("note", for: mine)
+
+        XCTAssertEqual(results.map(\.id), [mineHit.id])
+    }
+
     private func makeAgent(id: String, address: String, updatedAt: Date) -> AgentConnection {
         AgentConnection(
             id: id,
@@ -211,6 +304,8 @@ private final class SpyConversationRepository: ConversationRepository {
     private(set) var upsertedAgents: [AgentConnection] = []
     private(set) var deletedAgentIDs: [String] = []
     private(set) var savedActiveCalls: [SavedActive] = []
+    private(set) var searchQueries: [String] = []
+    var searchResults: [Conversation] = []
 
     init(snapshot: ChatSnapshot) {
         self.snapshot = snapshot
@@ -243,6 +338,7 @@ private final class SpyConversationRepository: ConversationRepository {
     }
 
     func search(_ query: String) -> [Conversation] {
-        []
+        searchQueries.append(query)
+        return searchResults
     }
 }
