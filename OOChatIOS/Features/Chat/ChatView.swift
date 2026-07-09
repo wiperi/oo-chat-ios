@@ -26,6 +26,7 @@ struct ChatScreen: View {
                         }
                         .padding()
                     }
+                    .scrollDismissesKeyboard(.interactively)
                     .onChange(of: conversation.messages.count) {
                         if let last = conversation.messages.last {
                             proxy.scrollTo(last.id, anchor: .bottom)
@@ -40,6 +41,16 @@ struct ChatScreen: View {
         .navigationTitle(viewModel.activeConversation?.title ?? "Chat")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                VStack(spacing: 2) {
+                    Text(viewModel.activeConversation?.title ?? "Chat")
+                        .font(.headline)
+                        .lineLimit(1)
+
+                    StatusPill(state: viewModel.connectionState)
+                }
+            }
+
             ToolbarItem(placement: .topBarLeading) {
                 Menu {
                     if viewModel.agents.isEmpty {
@@ -65,10 +76,6 @@ struct ChatScreen: View {
                 }
                 .disabled(viewModel.agents.isEmpty)
                 .accessibilityLabel("Switch Agent")
-            }
-
-            ToolbarItem(placement: .topBarTrailing) {
-                StatusPill(state: viewModel.connectionState)
             }
         }
         .overlay(alignment: .bottom) {
