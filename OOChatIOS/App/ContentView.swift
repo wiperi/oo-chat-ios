@@ -1,5 +1,5 @@
 import SwiftUI
-
+// In charge of organizing three main screens.
 struct ContentView: View {
     @StateObject var viewModel: ChatViewModel
     @State private var selectedTab: AppTab = .agents

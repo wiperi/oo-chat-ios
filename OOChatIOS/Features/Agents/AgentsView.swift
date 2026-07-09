@@ -1,6 +1,7 @@
 import SwiftUI
 
 enum AgentRoute: Hashable {
+    case addAgent
     case sessions(String)
 }
 
@@ -12,32 +13,6 @@ struct AgentsView: View {
     var body: some View {
         NavigationStack(path: $path) {
             List {
-                Section("Connect agent") {
-                    TextField("0x...", text: $viewModel.agentAddressDraft, axis: .vertical)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .font(.system(.body, design: .monospaced))
-                    Button {
-                        Task {
-                            if let agent = await viewModel.connectToAgent() {
-                                path = [.sessions(agent.id)]
-                            }
-                        }
-                    } label: {
-                        HStack {
-                            if viewModel.isConnecting {
-                                ProgressView()
-                            }
-                            Text("Connect to Agent")
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(
-                        viewModel.isConnecting ||
-                            viewModel.agentAddressDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    )
-                }
-
                 Section("Agents") {
                     if viewModel.agents.isEmpty {
                         Text("No agents connected")
@@ -57,9 +32,14 @@ struct AgentsView: View {
                     }
                 }
             }
-            .navigationTitle("ConnectOnion")
+            .listSectionSpacing(16)
+            .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: AgentRoute.self) { route in
                 switch route {
+                case .addAgent:
+                    AddAgentView(viewModel: viewModel) { agent in
+                        path = [.sessions(agent.id)]
+                    }
                 case .sessions(let agentID):
                     AgentSessionsView(
                         viewModel: viewModel,
@@ -68,12 +48,28 @@ struct AgentsView: View {
                     )
                 }
             }
-            .alert("Connection Failed", isPresented: connectionFailedBinding) {
-                Button("OK", role: .cancel) {
-                    viewModel.connectionFailureMessage = nil
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("ConnectOnion")
+                        .font(.largeTitle.bold())
+                        .foregroundStyle(AppTheme.primary)
+                        .offset(y: 6)
                 }
-            } message: {
-                Text(viewModel.connectionFailureMessage ?? "")
+            }
+            .overlay(alignment: .bottomTrailing) {
+                Button {
+                    viewModel.agentAddressDraft = ""
+                    path.append(.addAgent)
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.title2.weight(.medium))
+                        .foregroundStyle(.white)
+                        .frame(width: 56, height: 56)
+                }
+                .buttonStyle(FloatingAddButtonStyle())
+                .padding(.trailing, 24)
+                .padding(.bottom, 24)
+                .accessibilityLabel("Add Agent")
             }
             .overlay(alignment: .bottom) {
                 ErrorBanner(message: viewModel.errorMessage) {
@@ -82,15 +78,23 @@ struct AgentsView: View {
             }
         }
     }
+}
 
-    private var connectionFailedBinding: Binding<Bool> {
-        Binding(
-            get: { viewModel.connectionFailureMessage != nil },
-            set: { isPresented in
-                if !isPresented {
-                    viewModel.connectionFailureMessage = nil
-                }
-            }
-        )
+private struct FloatingAddButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(AppTheme.primary, in: Circle())
+            .contentShape(Circle())
+            .scaleEffect(configuration.isPressed ? 0.90 : 1)
+            .opacity(configuration.isPressed ? 0.86 : 1)
+            .shadow(
+                color: AppTheme.primary.opacity(configuration.isPressed ? 0.16 : 0.28),
+                radius: configuration.isPressed ? 4 : 12,
+                y: configuration.isPressed ? 2 : 6
+            )
+            .animation(
+                .spring(response: 0.22, dampingFraction: 0.65),
+                value: configuration.isPressed
+            )
     }
 }

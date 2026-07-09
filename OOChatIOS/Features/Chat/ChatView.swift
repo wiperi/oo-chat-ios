@@ -38,7 +38,35 @@ struct ChatScreen: View {
             }
         }
         .navigationTitle(viewModel.activeConversation?.title ?? "Chat")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Menu {
+                    if viewModel.agents.isEmpty {
+                        Text("No Agents")
+                    } else {
+                        ForEach(viewModel.agents) { agent in
+                            Button {
+                                viewModel.selectAgent(agent)
+                            } label: {
+                                HStack {
+                                    Text(agent.name)
+                                    if viewModel.activeAgentID == agent.id {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .symbolRenderingMode(.palette)
+                                            .foregroundStyle(.white, AppTheme.primary)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "sidebar.left")
+                }
+                .disabled(viewModel.agents.isEmpty)
+                .accessibilityLabel("Switch Agent")
+            }
+
             ToolbarItem(placement: .topBarTrailing) {
                 StatusPill(state: viewModel.connectionState)
             }
