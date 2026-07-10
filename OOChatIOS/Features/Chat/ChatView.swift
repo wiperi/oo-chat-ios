@@ -12,6 +12,7 @@ struct ChatView: View {
 
 struct ChatScreen: View {
     @ObservedObject var viewModel: ChatViewModel
+    private let bottomAnchorID = "chat.bottomAnchor"
 
     var body: some View {
         VStack(spacing: 0) {
@@ -25,15 +26,20 @@ struct ChatScreen: View {
                                 }
                                 .id(message.id)
                             }
+
+                            Color.clear
+                                .frame(height: 1)
+                                .id(bottomAnchorID)
                         }
                         .padding(.horizontal)
                         .padding(.vertical, 16)
                     }
                     .scrollDismissesKeyboard(.interactively)
-                    .onChange(of: conversation.messages.count) {
-                        if let last = conversation.messages.last {
-                            proxy.scrollTo(last.id, anchor: .bottom)
-                        }
+                    .onAppear {
+                        scrollToBottom(proxy, animated: false)
+                    }
+                    .onChange(of: scrollSignature(for: conversation)) {
+                        scrollToBottom(proxy)
                     }
                     .safeAreaInset(edge: .bottom, spacing: 0) {
                         Composer(viewModel: viewModel)
@@ -81,6 +87,35 @@ struct ChatScreen: View {
                 }
                 .disabled(viewModel.agents.isEmpty || viewModel.isProcessing)
                 .accessibilityLabel("Switch Agent")
+            }
+        }
+        .toolbarBackground(Color(.systemBackground), for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+    }
+
+    private func scrollSignature(for conversation: Conversation) -> String {
+        guard let message = conversation.messages.last else {
+            return conversation.id
+        }
+
+        return [
+            conversation.id,
+            String(conversation.messages.count),
+            message.id,
+            message.content,
+            message.deliveryState.rawValue,
+            message.toolState?.rawValue ?? ""
+        ].joined(separator: "|")
+    }
+
+    private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool = true) {
+        DispatchQueue.main.async {
+            if animated {
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo(bottomAnchorID, anchor: .bottom)
+                }
+            } else {
+                proxy.scrollTo(bottomAnchorID, anchor: .bottom)
             }
         }
     }
