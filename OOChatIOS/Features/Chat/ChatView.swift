@@ -35,8 +35,10 @@ struct ChatScreen: View {
                             proxy.scrollTo(last.id, anchor: .bottom)
                         }
                     }
+                    .safeAreaInset(edge: .bottom, spacing: 0) {
+                        Composer(viewModel: viewModel)
+                    }
                 }
-                Composer(viewModel: viewModel)
             } else {
                 ContentUnavailableView("No Conversation", systemImage: "bubble.left")
             }

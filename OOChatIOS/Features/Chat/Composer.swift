@@ -3,19 +3,15 @@ import SwiftUI
 struct Composer: View {
     @ObservedObject var viewModel: ChatViewModel
     @FocusState private var isPromptFocused: Bool
+    @State private var showModeMenu = false
+    @State private var sheetHeight: CGFloat = 400
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 12) {
             TextField("Message the agent", text: $viewModel.prompt, axis: .vertical)
                 .lineLimit(1...4)
                 .focused($isPromptFocused)
                 .disabled(viewModel.isProcessing)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 9)
-                .background(
-                    Color(.secondarySystemBackground),
-                    in: RoundedRectangle(cornerRadius: 20, style: .continuous)
-                )
 
             HStack(alignment: .center, spacing: 10) {
                 modeMenu
@@ -23,19 +19,16 @@ struct Composer: View {
                 sendButton
             }
         }
-        .padding()
-        .background(.bar)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .glassBackground(in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .padding(.horizontal, 12)
+        .padding(.bottom, 6)
     }
 
     private var modeMenu: some View {
-        Menu {
-            ForEach(ChatMode.allCases) { mode in
-                Toggle(isOn: isSelectedBinding(for: mode)) {
-                    Text(mode.label)
-                    Text(mode.detail)
-                    Image(systemName: mode.icon)
-                }
-            }
+        Button {
+            showModeMenu = true
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: viewModel.activeMode.icon)
@@ -47,10 +40,80 @@ struct Composer: View {
             .foregroundStyle(.secondary)
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
-            .background(Color(.secondarySystemBackground), in: Capsule())
+            .background(Color(.tertiarySystemFill), in: Capsule())
         }
+        .buttonStyle(.plain)
         .disabled(viewModel.activeConversation == nil || viewModel.isProcessing)
         .accessibilityLabel("Chat mode: \(viewModel.activeMode.label)")
+        .sheet(isPresented: $showModeMenu) {
+            modeSheet
+                .presentationDetents([.height(sheetHeight)])
+                .presentationDragIndicator(.visible)
+        }
+    }
+
+    private var modeSheet: some View {
+        VStack(spacing: 0) {
+            Text("Response Mode")
+                .font(.headline)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20)
+                .padding(.top, 20)
+                .padding(.bottom, 4)
+
+            ForEach(ChatMode.allCases) { mode in
+                Button {
+                    viewModel.setMode(mode)
+                    showModeMenu = false
+                } label: {
+                    modeRow(for: mode)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.top, 12)
+        .padding(.bottom, 12)
+        .background {
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear { sheetHeight = proxy.size.height }
+                    .onChange(of: proxy.size.height) { _, newValue in
+                        sheetHeight = newValue
+                    }
+            }
+        }
+    }
+
+    private func modeRow(for mode: ChatMode) -> some View {
+        HStack(spacing: 14) {
+            Image(systemName: mode.icon)
+                .font(.system(size: 18))
+                .foregroundStyle(AppTheme.primary)
+                .frame(width: 40, height: 40)
+                .background(
+                    AppTheme.primary.opacity(0.12),
+                    in: RoundedRectangle(cornerRadius: 11, style: .continuous)
+                )
+            VStack(alignment: .leading, spacing: 3) {
+                Text(mode.label)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.primary)
+                Text(mode.detail)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            if viewModel.activeMode == mode {
+                Image(systemName: "checkmark")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(AppTheme.primary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        .contentShape(Rectangle())
     }
 
     private var sendButton: some View {
@@ -69,22 +132,12 @@ struct Composer: View {
                 }
             }
             .frame(width: 36, height: 36)
-            .background(AppTheme.primary, in: Circle())
+            .glassBackground(in: Circle(), interactive: true, tint: AppTheme.primary)
         }
         .disabled(viewModel.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isProcessing)
         .accessibilityLabel("Send message")
     }
 
-    private func isSelectedBinding(for mode: ChatMode) -> Binding<Bool> {
-        Binding(
-            get: { viewModel.activeMode == mode },
-            set: { isOn in
-                if isOn {
-                    viewModel.setMode(mode)
-                }
-            }
-        )
-    }
 }
 
 // Presentation details for each mode, kept out of the model layer.
