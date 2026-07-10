@@ -83,6 +83,107 @@ enum HostedAgentEvent: Equatable {
     }
 }
 
+extension ToolApprovalRequest {
+    static func from(_ frame: [String: JSONValue]) -> ToolApprovalRequest? {
+        guard frame["type"]?.stringValue?.lowercased() == "approval_needed",
+              let tool = frame["tool"]?.stringValue,
+              !tool.isEmpty else {
+            return nil
+        }
+
+        let argumentsValue = frame["arguments"] ?? frame["args"]
+        let arguments: [String: JSONValue]
+        switch argumentsValue {
+        case .none:
+            arguments = [:]
+        case .some(.object(let value)):
+            arguments = value
+        default:
+            return nil
+        }
+
+        let identifier = frame["approval_id"]?.stringValue
+            ?? frame["request_id"]?.stringValue
+            ?? frame["id"]?.stringValue
+            ?? UUID().uuidString
+        let batchRemaining = batchItems(from: frame["batch_remaining"])
+
+        return ToolApprovalRequest(
+            id: identifier,
+            tool: tool,
+            arguments: arguments,
+            description: frame["description"]?.stringValue,
+            batchRemaining: batchRemaining
+        )
+    }
+
+    private static func batchItems(from value: JSONValue?) -> [ToolApprovalBatchItem] {
+        guard case .array(let values)? = value else {
+            return []
+        }
+        return values.compactMap { item in
+            guard case .object(let object) = item,
+                  let tool = object["tool"]?.stringValue,
+                  !tool.isEmpty else {
+                return nil
+            }
+            let rawArguments = object["arguments"] ?? object["args"] ?? .object([:])
+            return ToolApprovalBatchItem(
+                tool: tool,
+                rawArguments: decodedBatchArguments(rawArguments)
+            )
+        }
+    }
+
+    private static func decodedBatchArguments(_ value: JSONValue) -> JSONValue {
+        guard case .string(let text) = value,
+              let data = text.data(using: .utf8),
+              let decoded = try? JSONDecoder().decode(JSONValue.self, from: data) else {
+            return value
+        }
+        return decoded
+    }
+}
+
+extension ApprovalDecision {
+    var responseFrame: [String: JSONValue] {
+        responseFrame(to: nil)
+    }
+
+    func responseFrame(to recipient: String?) -> [String: JSONValue] {
+        var frame: [String: JSONValue] = [
+            "type": .string("APPROVAL_RESPONSE"),
+            "scope": .string("once"),
+        ]
+
+        switch self {
+        case .allowOnce:
+            frame["approved"] = .bool(true)
+        case .allowSession:
+            frame["approved"] = .bool(true)
+            frame["scope"] = .string("session")
+        case .rejectSoft(let feedback):
+            frame["approved"] = .bool(false)
+            frame["mode"] = .string("reject_soft")
+            if let feedback, !feedback.isEmpty {
+                frame["feedback"] = .string(feedback)
+            }
+        case .rejectHard(let feedback):
+            frame["approved"] = .bool(false)
+            frame["mode"] = .string("reject_hard")
+            if let feedback, !feedback.isEmpty {
+                frame["feedback"] = .string(feedback)
+            }
+        }
+
+        if let recipient, !recipient.isEmpty {
+            frame["to"] = .string(recipient)
+        }
+
+        return frame
+    }
+}
+
 /// Wire-level operations the view model needs from the hosted-agent client,
 /// as a protocol so tests can substitute a scripted transport.
 protocol HostedAgentTransport {
@@ -91,7 +192,8 @@ protocol HostedAgentTransport {
         agentAddress: String,
         conversation: Conversation,
         prompt: String,
-        onEvent: (@MainActor (HostedAgentEvent) -> Void)?
+        onEvent: (@MainActor (HostedAgentEvent) -> Void)?,
+        onApprovalRequest: (@MainActor (ToolApprovalRequest) async -> ApprovalDecision)?
     ) async throws -> HostedAgentResult
 }
 
@@ -143,7 +245,8 @@ final class HostedAgentClient: HostedAgentTransport {
         agentAddress: String,
         conversation: Conversation,
         prompt: String,
-        onEvent: (@MainActor (HostedAgentEvent) -> Void)?
+        onEvent: (@MainActor (HostedAgentEvent) -> Void)?,
+        onApprovalRequest: (@MainActor (ToolApprovalRequest) async -> ApprovalDecision)?
     ) async throws -> HostedAgentResult {
         guard Self.isHostedAgentAddress(agentAddress) else {
             throw HostedAgentClientError.invalidAddress
@@ -183,6 +286,20 @@ final class HostedAgentClient: HostedAgentTransport {
                 if let event = HostedAgentEvent.from(frame) {
                     await onEvent?(event)
                 }
+            case "approval_needed", "APPROVAL_NEEDED":
+                guard let request = ToolApprovalRequest.from(frame) else {
+                    throw HostedAgentClientError.badFrame
+                }
+                let decision = await onApprovalRequest?(request)
+                    ?? .rejectHard(feedback: "Approval unavailable.")
+                try await send(
+                    Self.approvalResponseFrame(
+                        decision: decision,
+                        agentAddress: agentAddress,
+                        endpoint: endpoint
+                    ),
+                    over: socket
+                )
             case "ERROR":
                 throw HostedAgentClientError.server(messageText(frame))
             case "ask_user":
@@ -191,6 +308,15 @@ final class HostedAgentClient: HostedAgentTransport {
                 continue
             }
         }
+    }
+
+    static func approvalResponseFrame(
+        decision: ApprovalDecision,
+        agentAddress: String,
+        endpoint: ResolvedEndpoint
+    ) -> [String: JSONValue] {
+        let recipient = endpoint.kind == .relay ? agentAddress : nil
+        return decision.responseFrame(to: recipient)
     }
 
     private func resolveEndpoint(agentAddress: String) async throws -> ResolvedEndpoint {

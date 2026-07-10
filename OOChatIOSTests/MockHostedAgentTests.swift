@@ -128,6 +128,144 @@ final class MockHostedAgentTests: XCTestCase {
         ]))
     }
 
+    func testApprovalFrameMapsToRequest() {
+        let request = ToolApprovalRequest.from([
+            "type": .string("approval_needed"),
+            "approval_id": .string("approval-1"),
+            "tool": .string("write"),
+            "arguments": .object([
+                "path": .string("prompt.md"),
+                "content": .string("You are a summarizer."),
+            ]),
+            "description": .string("Create the agent prompt"),
+            "batch_remaining": .array([
+                .object([
+                    "tool": .string("bash"),
+                    "arguments": .string(#"{"command":"swift test"}"#),
+                ]),
+                .object([
+                    "tool": .string("notify"),
+                    "arguments": .string("not-json"),
+                ]),
+            ]),
+        ])
+
+        XCTAssertEqual(
+            request,
+            ToolApprovalRequest(
+                id: "approval-1",
+                tool: "write",
+                arguments: [
+                    "path": .string("prompt.md"),
+                    "content": .string("You are a summarizer."),
+                ],
+                description: "Create the agent prompt",
+                batchRemaining: [
+                    ToolApprovalBatchItem(
+                        tool: "bash",
+                        arguments: ["command": .string("swift test")]
+                    ),
+                    ToolApprovalBatchItem(
+                        tool: "notify",
+                        rawArguments: .string("not-json")
+                    ),
+                ]
+            )
+        )
+    }
+
+    func testApprovalFrameAcceptsArgsAliasAndCreatesLocalIdentifier() {
+        let request = ToolApprovalRequest.from([
+            "type": .string("APPROVAL_NEEDED"),
+            "tool": .string("edit"),
+            "args": .object(["path": .string("README.md")]),
+        ])
+
+        XCTAssertEqual(request?.tool, "edit")
+        XCTAssertEqual(request?.arguments, ["path": .string("README.md")])
+        XCTAssertFalse(request?.id.isEmpty ?? true)
+    }
+
+    func testApprovalFrameRejectsMissingToolOrInvalidArguments() {
+        XCTAssertNil(ToolApprovalRequest.from([
+            "type": .string("approval_needed"),
+            "arguments": .object([:]),
+        ]))
+        XCTAssertNil(ToolApprovalRequest.from([
+            "type": .string("approval_needed"),
+            "tool": .string("write"),
+            "arguments": .string("prompt.md"),
+        ]))
+    }
+
+    func testApprovalDecisionsEncodeProtocolFrames() {
+        XCTAssertEqual(
+            ApprovalDecision.allowOnce.responseFrame,
+            [
+                "type": .string("APPROVAL_RESPONSE"),
+                "approved": .bool(true),
+                "scope": .string("once"),
+            ]
+        )
+        XCTAssertEqual(
+            ApprovalDecision.allowSession.responseFrame,
+            [
+                "type": .string("APPROVAL_RESPONSE"),
+                "approved": .bool(true),
+                "scope": .string("session"),
+            ]
+        )
+        XCTAssertEqual(
+            ApprovalDecision.rejectSoft(feedback: "Use a different file").responseFrame,
+            [
+                "type": .string("APPROVAL_RESPONSE"),
+                "approved": .bool(false),
+                "scope": .string("once"),
+                "mode": .string("reject_soft"),
+                "feedback": .string("Use a different file"),
+            ]
+        )
+        XCTAssertEqual(
+            ApprovalDecision.rejectHard(feedback: nil).responseFrame,
+            [
+                "type": .string("APPROVAL_RESPONSE"),
+                "approved": .bool(false),
+                "scope": .string("once"),
+                "mode": .string("reject_hard"),
+            ]
+        )
+
+        let relayEndpoint = ResolvedEndpoint(
+            wsURL: URL(string: "wss://relay.example/ws/input")!,
+            kind: .relay,
+            label: "relay"
+        )
+        let directEndpoint = ResolvedEndpoint(
+            wsURL: URL(string: "ws://127.0.0.1:8000/ws")!,
+            kind: .direct,
+            label: "local"
+        )
+
+        XCTAssertEqual(
+            HostedAgentClient.approvalResponseFrame(
+                decision: .allowOnce,
+                agentAddress: endpointA,
+                endpoint: relayEndpoint
+            ),
+            [
+                "type": .string("APPROVAL_RESPONSE"),
+                "approved": .bool(true),
+                "scope": .string("once"),
+                "to": .string(endpointA),
+            ]
+        )
+        XCTAssertNil(HostedAgentClient.approvalResponseFrame(
+            decision: .allowOnce,
+            agentAddress: endpointA,
+            endpoint: directEndpoint
+        )["to"])
+    }
+
     @MainActor
     func testSaveAgentUpdatesTokenEndpointAndClearsSessions() {
         let viewModel = makeViewModel()

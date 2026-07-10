@@ -29,10 +29,12 @@ final class MockAgentTransport: HostedAgentTransport {
     var connectBehavior: Behavior = .succeed(output: "")
     var sendBehavior: Behavior = .succeed(output: "mock reply")
     var streamedEvents: [HostedAgentEvent] = []
+    var approvalRequests: [ToolApprovalRequest] = []
     var onSend: (@MainActor () -> Void)?
 
     private(set) var connectedAddresses: [String] = []
     private(set) var sentPrompts: [String] = []
+    private(set) var approvalDecisions: [ApprovalDecision] = []
 
     func connect(agentAddress: String, conversation: Conversation) async throws -> HostedAgentResult {
         connectedAddresses.append(agentAddress)
@@ -52,11 +54,18 @@ final class MockAgentTransport: HostedAgentTransport {
         agentAddress: String,
         conversation: Conversation,
         prompt: String,
-        onEvent: (@MainActor (HostedAgentEvent) -> Void)?
+        onEvent: (@MainActor (HostedAgentEvent) -> Void)?,
+        onApprovalRequest: (@MainActor (ToolApprovalRequest) async -> ApprovalDecision)?
     ) async throws -> HostedAgentResult {
         sentPrompts.append(prompt)
         switch sendBehavior {
         case .succeed(let output):
+            for request in approvalRequests {
+                guard let onApprovalRequest else {
+                    throw HostedAgentClientError.badFrame
+                }
+                approvalDecisions.append(await onApprovalRequest(request))
+            }
             for event in streamedEvents {
                 await onEvent?(event)
             }
@@ -378,6 +387,192 @@ final class NetworkRecoveryTests: XCTestCase {
         XCTAssertEqual(messages.last?.content, "I found the project notes.")
     }
 
+    func testSafeModeWaitsForAllowOnce() async {
+        let (viewModel, transport, _) = makeEnvironment()
+        setUpAgentAndConversation(viewModel)
+        transport.approvalRequests = [approvalRequest(tool: "write")]
+
+        viewModel.prompt = "Create the prompt"
+        viewModel.sendPrompt()
+        await waitForPendingApproval(on: viewModel)
+
+        XCTAssertEqual(viewModel.pendingApproval?.request.tool, "write")
+        XCTAssertTrue(viewModel.isProcessing)
+
+        viewModel.allowPendingApprovalOnce(id: viewModel.pendingApproval!.id)
+        await viewModel.sendTask?.value
+
+        XCTAssertEqual(transport.approvalDecisions, [.allowOnce])
+        XCTAssertNil(viewModel.pendingApproval)
+        XCTAssertFalse(viewModel.isProcessing)
+    }
+
+    func testSafeModeCanTrustToolForSession() async {
+        let (viewModel, transport, _) = makeEnvironment()
+        setUpAgentAndConversation(viewModel)
+        transport.approvalRequests = [approvalRequest(tool: "bash")]
+
+        viewModel.prompt = "Run the checks"
+        viewModel.sendPrompt()
+        await waitForPendingApproval(on: viewModel)
+        viewModel.trustPendingApprovalForSession(id: viewModel.pendingApproval!.id)
+        await viewModel.sendTask?.value
+
+        XCTAssertEqual(transport.approvalDecisions, [.allowSession])
+        XCTAssertNil(viewModel.pendingApproval)
+    }
+
+    func testSafeModeRejectsToolAndContinues() async {
+        let (viewModel, transport, _) = makeEnvironment()
+        setUpAgentAndConversation(viewModel)
+        transport.approvalRequests = [approvalRequest(tool: "bash")]
+
+        viewModel.prompt = "Run a command"
+        viewModel.sendPrompt()
+        await waitForPendingApproval(on: viewModel)
+        viewModel.rejectPendingApproval(id: viewModel.pendingApproval!.id)
+        await viewModel.sendTask?.value
+
+        XCTAssertEqual(transport.approvalDecisions, [.rejectSoft(feedback: nil)])
+        XCTAssertTrue(viewModel.activeConversation?.messages.contains {
+            $0.role == .agent && $0.content == "mock reply"
+        } ?? false)
+    }
+
+    func testPendingApprovalCanOnlyResolveOnce() async {
+        let (viewModel, transport, _) = makeEnvironment()
+        setUpAgentAndConversation(viewModel)
+        transport.approvalRequests = [approvalRequest(tool: "write")]
+
+        viewModel.prompt = "Create a file"
+        viewModel.sendPrompt()
+        await waitForPendingApproval(on: viewModel)
+        let approvalID = viewModel.pendingApproval!.id
+        viewModel.allowPendingApprovalOnce(id: approvalID)
+        viewModel.rejectPendingApproval(id: approvalID)
+        await viewModel.sendTask?.value
+
+        XCTAssertEqual(transport.approvalDecisions, [.allowOnce])
+    }
+
+    func testApprovalGateRegistersBeforePresentation() async {
+        let gate = ApprovalContinuationGate()
+        var dismissed = false
+
+        let decision = await gate.wait(for: "approval") {
+            XCTAssertTrue(gate.resolve(id: "approval", with: .allowOnce))
+            return true
+        } dismiss: {
+            dismissed = true
+        }
+
+        XCTAssertEqual(decision, .allowOnce)
+        XCTAssertTrue(dismissed)
+    }
+
+    func testDeletingConversationCancelsPendingApproval() async {
+        let (viewModel, transport, _) = makeEnvironment()
+        setUpAgentAndConversation(viewModel)
+        transport.approvalRequests = [approvalRequest(tool: "write")]
+
+        viewModel.prompt = "Create a file"
+        viewModel.sendPrompt()
+        await waitForPendingApproval(on: viewModel)
+        let conversation = viewModel.activeConversation!
+        viewModel.deleteConversation(conversation)
+        await viewModel.sendTask?.value
+
+        XCTAssertNil(viewModel.pendingApproval)
+        XCTAssertNil(viewModel.conversation(withID: conversation.id))
+        XCTAssertEqual(
+            transport.approvalDecisions,
+            [.rejectHard(feedback: "Approval cancelled.")]
+        )
+    }
+
+    func testEveryModeWaitsForUserApproval() async {
+        for mode in ChatMode.allCases {
+            let (viewModel, transport, _) = makeEnvironment()
+            setUpAgentAndConversation(viewModel)
+            viewModel.setMode(mode)
+            transport.approvalRequests = [approvalRequest(tool: "credit_card_charge")]
+
+            viewModel.prompt = "Charge the card"
+            viewModel.sendPrompt()
+            await waitForPendingApproval(on: viewModel)
+
+            XCTAssertEqual(viewModel.pendingApproval?.request.tool, "credit_card_charge")
+            XCTAssertTrue(transport.approvalDecisions.isEmpty, "\(mode.label) resolved approval automatically")
+
+            viewModel.rejectPendingApproval(id: viewModel.pendingApproval!.id)
+            await viewModel.sendTask?.value
+            XCTAssertEqual(transport.approvalDecisions, [.rejectSoft(feedback: nil)])
+        }
+    }
+
+    func testDeletingAgentCancelsPendingApproval() async {
+        let (viewModel, transport, _) = makeEnvironment()
+        let agent = setUpAgentAndConversation(viewModel)
+        transport.approvalRequests = [approvalRequest(tool: "write")]
+
+        viewModel.prompt = "Create a file"
+        viewModel.sendPrompt()
+        await waitForPendingApproval(on: viewModel)
+        viewModel.deleteAgent(agent)
+        await viewModel.sendTask?.value
+
+        XCTAssertNil(viewModel.pendingApproval)
+        XCTAssertEqual(
+            transport.approvalDecisions,
+            [.rejectHard(feedback: "Approval cancelled.")]
+        )
+    }
+
+    func testCancellingSendTaskCancelsPendingApproval() async {
+        let (viewModel, transport, _) = makeEnvironment()
+        setUpAgentAndConversation(viewModel)
+        transport.approvalRequests = [approvalRequest(tool: "write")]
+
+        viewModel.prompt = "Create a file"
+        viewModel.sendPrompt()
+        await waitForPendingApproval(on: viewModel)
+        viewModel.sendTask?.cancel()
+        await viewModel.sendTask?.value
+
+        XCTAssertNil(viewModel.pendingApproval)
+        XCTAssertEqual(
+            transport.approvalDecisions,
+            [.rejectHard(feedback: "Approval cancelled.")]
+        )
+    }
+
+    func testViewModelTeardownCancelsPendingApproval() async {
+        let store = try! SwiftDataConversationRepository(inMemory: true, defaults: makeDefaults())
+        let transport = MockAgentTransport()
+        let monitor = MockNetworkMonitor()
+        var viewModel: ChatViewModel? = ChatViewModel(store: store, client: transport, networkMonitor: monitor)
+        weak let releasedViewModel = viewModel
+        setUpAgentAndConversation(viewModel!)
+        transport.approvalRequests = [approvalRequest(tool: "write")]
+
+        viewModel?.prompt = "Create a file"
+        viewModel?.sendPrompt()
+        await waitForPendingApproval(on: viewModel!)
+        viewModel = nil
+        for _ in 0..<100 where releasedViewModel != nil {
+            await Task.yield()
+        }
+        for _ in 0..<100 where transport.approvalDecisions.isEmpty {
+            await Task.yield()
+        }
+
+        XCTAssertNil(releasedViewModel)
+        XCTAssertEqual(
+            transport.approvalDecisions,
+            [.rejectHard(feedback: "Approval cancelled.")]
+        )
+    }
+
     // offline banner dismissal and manual retry
     func testOfflineBannerDismissalResetsOnNextDrop() {
         let (viewModel, _, monitor) = makeEnvironment()
@@ -485,6 +680,21 @@ final class NetworkRecoveryTests: XCTestCase {
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
         return defaults
+    }
+
+    private func approvalRequest(tool: String) -> ToolApprovalRequest {
+        ToolApprovalRequest(
+            id: "approval-\(tool)",
+            tool: tool,
+            arguments: ["path": .string("prompt.md")]
+        )
+    }
+
+    private func waitForPendingApproval(on viewModel: ChatViewModel) async {
+        for _ in 0..<100 where viewModel.pendingApproval == nil {
+            await Task.yield()
+        }
+        XCTAssertNotNil(viewModel.pendingApproval)
     }
 
     @discardableResult

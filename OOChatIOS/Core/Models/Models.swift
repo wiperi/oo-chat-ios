@@ -111,6 +111,59 @@ enum ToolCallState: String, Codable, Equatable {
     case failed
 }
 
+struct ToolApprovalBatchItem: Equatable {
+    let tool: String
+    let arguments: JSONValue
+
+    init(tool: String, arguments: [String: JSONValue] = [:]) {
+        self.tool = tool
+        self.arguments = .object(arguments)
+    }
+
+    init(tool: String, rawArguments: JSONValue) {
+        self.tool = tool
+        self.arguments = rawArguments
+    }
+}
+
+struct ToolApprovalRequest: Identifiable, Equatable {
+    let id: String
+    let tool: String
+    let arguments: [String: JSONValue]
+    let description: String?
+    let batchRemaining: [ToolApprovalBatchItem]
+
+    init(
+        id: String = UUID().uuidString,
+        tool: String,
+        arguments: [String: JSONValue],
+        description: String? = nil,
+        batchRemaining: [ToolApprovalBatchItem] = []
+    ) {
+        self.id = id
+        self.tool = tool
+        self.arguments = arguments
+        self.description = description
+        self.batchRemaining = batchRemaining
+    }
+}
+
+enum ApprovalDecision: Equatable {
+    case allowOnce
+    case allowSession
+    case rejectSoft(feedback: String?)
+    case rejectHard(feedback: String?)
+}
+
+struct PendingApproval: Identifiable, Equatable {
+    let conversationID: String
+    let request: ToolApprovalRequest
+
+    var id: String {
+        request.id
+    }
+}
+
 struct ChatMessage: Identifiable, Codable, Equatable {
     let id: String
     var role: ChatRole

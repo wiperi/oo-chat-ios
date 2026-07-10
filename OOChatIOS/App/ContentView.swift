@@ -40,6 +40,12 @@ struct ContentView: View {
                 appAppearance = AppAppearance.light.rawValue
             }
         }
+        .onChange(of: viewModel.pendingApproval?.id) {
+            guard viewModel.pendingApproval != nil else {
+                return
+            }
+            selectedTab = .chat
+        }
     }
 }
 

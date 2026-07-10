@@ -2,6 +2,82 @@ import Foundation
 import SwiftUI
 
 @MainActor
+final class WeakChatViewModelReference {
+    weak var value: ChatViewModel?
+
+    init(_ value: ChatViewModel) {
+        self.value = value
+    }
+}
+
+final class ApprovalContinuationGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuations: [String: CheckedContinuation<ApprovalDecision, Never>] = [:]
+    private var isClosed = false
+
+    @MainActor
+    func wait(
+        for id: String,
+        present: () -> Bool,
+        dismiss: () -> Void
+    ) async -> ApprovalDecision {
+        let decision = await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                lock.lock()
+                if Task.isCancelled || isClosed {
+                    lock.unlock()
+                    continuation.resume(returning: Self.cancellationDecision)
+                    return
+                }
+                let replaced = continuations.updateValue(continuation, forKey: id)
+                lock.unlock()
+                replaced?.resume(returning: Self.cancellationDecision)
+
+                guard present() else {
+                    resolve(id: id, with: Self.unavailableDecision)
+                    return
+                }
+            }
+        } onCancel: {
+            self.resolve(id: id, with: Self.cancellationDecision)
+        }
+        dismiss()
+        return decision
+    }
+
+    @discardableResult
+    func resolve(id: String, with decision: ApprovalDecision) -> Bool {
+        lock.lock()
+        let continuation = continuations.removeValue(forKey: id)
+        lock.unlock()
+        continuation?.resume(returning: decision)
+        return continuation != nil
+    }
+
+    func cancelAll() {
+        lock.lock()
+        isClosed = true
+        let pending = Array(continuations.values)
+        continuations.removeAll()
+        lock.unlock()
+        for continuation in pending {
+            continuation.resume(returning: Self.cancellationDecision)
+        }
+    }
+
+    deinit {
+        cancelAll()
+    }
+
+    private static let cancellationDecision = ApprovalDecision.rejectHard(
+        feedback: "Approval cancelled."
+    )
+    private static let unavailableDecision = ApprovalDecision.rejectHard(
+        feedback: "Approval unavailable."
+    )
+}
+
+@MainActor
 final class ChatViewModel: ObservableObject {
     @Published var identity: StoredIdentity?
     @Published var agents: [AgentConnection]
@@ -17,6 +93,7 @@ final class ChatViewModel: ObservableObject {
     @Published var prompt = ""
     @Published private(set) var isOffline = false
     @Published private(set) var isOfflineBannerDismissed = false
+    @Published private(set) var pendingApproval: PendingApproval?
 
     var shouldShowOfflineBanner: Bool {
         isOffline && !isOfflineBannerDismissed
@@ -25,6 +102,7 @@ final class ChatViewModel: ObservableObject {
     private(set) var sendTask: Task<Void, Never>?
     private(set) var recoveryTask: Task<Void, Never>?
     private(set) var probeTask: Task<Void, Never>?
+    private let approvalGate = ApprovalContinuationGate()
 
     /// Seconds between silent reachability probes while offline. Overridable in tests.
     var probeInterval: TimeInterval = 5
@@ -92,6 +170,9 @@ final class ChatViewModel: ObservableObject {
     deinit {
         networkMonitor.cancel()
         probeTask?.cancel()
+        recoveryTask?.cancel()
+        sendTask?.cancel()
+        approvalGate.cancelAll()
     }
 
     func agent(withID id: String) -> AgentConnection? {
@@ -208,6 +289,7 @@ final class ChatViewModel: ObservableObject {
     }
 
     func deleteConversation(_ conversation: Conversation) {
+        cancelPendingApproval(forConversationID: conversation.id, reason: "Approval cancelled.")
         conversations.removeAll { $0.id == conversation.id }
         if activeConversationID == conversation.id {
             if let activeAgent {
@@ -222,6 +304,9 @@ final class ChatViewModel: ObservableObject {
 
     func deleteAgent(_ agent: AgentConnection) {
         let deletedConversationIDs = Set(conversations(for: agent).map(\.id))
+        for conversationID in deletedConversationIDs {
+            cancelPendingApproval(forConversationID: conversationID, reason: "Approval cancelled.")
+        }
         agents.removeAll { $0.id == agent.id }
         conversations.removeAll { conversationBelongsToAgent($0, agent) }
 
@@ -354,12 +439,15 @@ final class ChatViewModel: ObservableObject {
 
         isProcessing = true
         connectionState = .reconnecting
-        sendTask = Task {
-            defer {
-                self.isProcessing = false
-            }
-            await self.deliver(messageID: message.id, conversationID: conversation.id)
+        guard let deliveryTask = makeDeliveryTask(
+            messageID: message.id,
+            conversationID: conversation.id,
+            clearsProcessingState: true
+        ) else {
+            isProcessing = false
+            return
         }
+        sendTask = deliveryTask
     }
 
     func retryMessage(_ message: ChatMessage) {
@@ -382,12 +470,15 @@ final class ChatViewModel: ObservableObject {
         }
         isProcessing = true
         connectionState = .reconnecting
-        sendTask = Task {
-            defer {
-                self.isProcessing = false
-            }
-            await self.deliver(messageID: message.id, conversationID: conversation.id)
+        guard let deliveryTask = makeDeliveryTask(
+            messageID: message.id,
+            conversationID: conversation.id,
+            clearsProcessingState: true
+        ) else {
+            isProcessing = false
+            return
         }
+        sendTask = deliveryTask
     }
     
     func flushQueuedMessages() async {
@@ -413,55 +504,141 @@ final class ChatViewModel: ObservableObject {
             guard !isOffline else {
                 break
             }
-            await deliver(messageID: item.message.id, conversationID: item.conversationID)
+            guard let deliveryTask = makeDeliveryTask(
+                messageID: item.message.id,
+                conversationID: item.conversationID,
+                clearsProcessingState: false
+            ) else {
+                continue
+            }
+            await deliveryTask.value
         }
     }
 
-    private func deliver(messageID: String, conversationID: String) async {
+    private func makeDeliveryTask(
+        messageID: String,
+        conversationID: String,
+        clearsProcessingState: Bool
+    ) -> Task<Void, Never>? {
         guard let conversation = self.conversation(withID: conversationID),
               let message = conversation.messages.first(where: { $0.id == messageID }),
               message.role == .user,
               let agent = agent(for: conversation),
               HostedAgentClient.isHostedAgentAddress(agent.address) else {
-            return
+            return nil
         }
         connectionState = .reconnecting
         var pending = conversation
         pending.messages.append(ChatMessage(role: .thinking, content: "Waiting for hosted agent..."))
         upsert(pending)
 
-        do {
-            let result = try await client.sendPrompt(
-                agentAddress: agent.address,
-                conversation: pending,
-                prompt: message.content,
-                onEvent: { [weak self] event in
-                    self?.apply(event, toConversationID: conversationID)
+        let transport = client
+        let approvalGate = approvalGate
+        let owner = WeakChatViewModelReference(self)
+        return Task { [transport, approvalGate, owner] in
+            defer {
+                if clearsProcessingState {
+                    owner.value?.isProcessing = false
                 }
-            )
-            var updated = self.conversation(withID: conversationID) ?? pending
-            updated.messages.removeAll { $0.role == .thinking }
-            if let index = updated.messages.firstIndex(where: { $0.id == messageID }) {
-                updated.messages[index].deliveryState = .sent
             }
-            if let session = result.serverSession {
-                updated.serverSession = self.session(session, applying: updated.mode, conversationID: updated.id)
+            do {
+                let result = try await transport.sendPrompt(
+                    agentAddress: agent.address,
+                    conversation: pending,
+                    prompt: message.content,
+                    onEvent: { [owner] event in
+                        owner.value?.apply(event, toConversationID: conversationID)
+                    },
+                    onApprovalRequest: { [approvalGate, owner] request in
+                        await approvalGate.wait(for: request.id) { [owner] in
+                            guard let viewModel = owner.value,
+                                  viewModel.conversation(withID: conversationID) != nil else {
+                                return false
+                            }
+                            if viewModel.activeConversationID != conversationID {
+                                viewModel.selectConversation(withID: conversationID)
+                            }
+                            viewModel.pendingApproval = PendingApproval(
+                                conversationID: conversationID,
+                                request: request
+                            )
+                            return true
+                        } dismiss: { [owner] in
+                            if owner.value?.pendingApproval?.id == request.id {
+                                owner.value?.pendingApproval = nil
+                            }
+                        }
+                    }
+                )
+                try Task.checkCancellation()
+                owner.value?.completeDelivery(
+                    result,
+                    messageID: messageID,
+                    conversationID: conversationID
+                )
+            } catch is CancellationError {
+                owner.value?.cancelDelivery(messageID: messageID, conversationID: conversationID)
+            } catch {
+                owner.value?.failDelivery(
+                    error,
+                    messageID: messageID,
+                    conversationID: conversationID
+                )
             }
-            updated.messages.append(ChatMessage(role: .agent, content: result.output ?? ""))
-            updated.updatedAt = Date()
-            connectionState = .connected
-            upsert(updated)
-        } catch {
-            var updated = self.conversation(withID: conversationID) ?? pending
-            updated.messages.removeAll { $0.role == .thinking }
-            if let index = updated.messages.firstIndex(where: { $0.id == messageID }) {
-                updated.messages[index].deliveryState = .failed
-            }
-            updated.updatedAt = Date()
-            errorMessage = error.localizedDescription
-            connectionState = .disconnected
-            upsert(updated)
         }
+    }
+
+    private func completeDelivery(
+        _ result: HostedAgentResult,
+        messageID: String,
+        conversationID: String
+    ) {
+        guard var updated = conversation(withID: conversationID) else {
+            return
+        }
+        updated.messages.removeAll { $0.role == .thinking }
+        if let index = updated.messages.firstIndex(where: { $0.id == messageID }) {
+            updated.messages[index].deliveryState = .sent
+        }
+        if let session = result.serverSession {
+            updated.serverSession = self.session(
+                session,
+                applying: updated.mode,
+                conversationID: updated.id
+            )
+        }
+        updated.messages.append(ChatMessage(role: .agent, content: result.output ?? ""))
+        connectionState = .connected
+        upsert(updated)
+    }
+
+    private func failDelivery(
+        _ error: Error,
+        messageID: String,
+        conversationID: String
+    ) {
+        guard var updated = conversation(withID: conversationID) else {
+            return
+        }
+        updated.messages.removeAll { $0.role == .thinking }
+        if let index = updated.messages.firstIndex(where: { $0.id == messageID }) {
+            updated.messages[index].deliveryState = .failed
+        }
+        errorMessage = error.localizedDescription
+        connectionState = .disconnected
+        upsert(updated)
+    }
+
+    private func cancelDelivery(messageID: String, conversationID: String) {
+        guard var updated = conversation(withID: conversationID) else {
+            return
+        }
+        updated.messages.removeAll { $0.role == .thinking }
+        if let index = updated.messages.firstIndex(where: { $0.id == messageID }) {
+            updated.messages[index].deliveryState = .failed
+        }
+        connectionState = .disconnected
+        upsert(updated)
     }
 
     private func handleNetworkChange(isOnline: Bool) {
@@ -525,6 +702,37 @@ final class ChatViewModel: ObservableObject {
         }
 
         upsert(conversation)
+    }
+
+    func allowPendingApprovalOnce(id: String) {
+        resolvePendingApproval(id: id, with: .allowOnce)
+    }
+
+    func trustPendingApprovalForSession(id: String) {
+        resolvePendingApproval(id: id, with: .allowSession)
+    }
+
+    func rejectPendingApproval(id: String) {
+        resolvePendingApproval(id: id, with: .rejectSoft(feedback: nil))
+    }
+
+    private func resolvePendingApproval(id: String, with decision: ApprovalDecision) {
+        guard pendingApproval?.id == id else {
+            return
+        }
+        pendingApproval = nil
+        approvalGate.resolve(id: id, with: decision)
+    }
+
+    private func cancelPendingApproval(forConversationID conversationID: String, reason: String) {
+        guard let pending = pendingApproval, pending.conversationID == conversationID else {
+            return
+        }
+        pendingApproval = nil
+        approvalGate.resolve(
+            id: pending.request.id,
+            with: .rejectHard(feedback: reason)
+        )
     }
 
     /// The path monitor can lag well behind the actual network (especially on the

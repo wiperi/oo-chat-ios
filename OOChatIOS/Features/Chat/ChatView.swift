@@ -27,6 +27,17 @@ struct ChatScreen: View {
                                 .id(message.id)
                             }
 
+                            if let approval = viewModel.pendingApproval {
+                                ApprovalCard(approval: approval) {
+                                    viewModel.allowPendingApprovalOnce(id: approval.id)
+                                } onTrustSession: {
+                                    viewModel.trustPendingApprovalForSession(id: approval.id)
+                                } onReject: {
+                                    viewModel.rejectPendingApproval(id: approval.id)
+                                }
+                                .id("pendingApproval")
+                                .transition(.opacity)
+                            }
                             Color.clear
                                 .frame(height: 1)
                                 .id(bottomAnchorID)
@@ -40,6 +51,13 @@ struct ChatScreen: View {
                     }
                     .onChange(of: scrollSignature(for: conversation)) {
                         scrollToBottom(proxy)
+                    }
+                    .onChange(of: viewModel.pendingApproval?.id) {
+                        if viewModel.pendingApproval != nil {
+                            withAnimation {
+                                proxy.scrollTo("pendingApproval", anchor: .bottom)
+                            }
+                        }
                     }
                     .safeAreaInset(edge: .bottom, spacing: 0) {
                         Composer(viewModel: viewModel)
