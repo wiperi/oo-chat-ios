@@ -10,6 +10,7 @@ enum ChatRole: String, Codable {
     case user
     case agent
     case thinking
+    case tool
     case error
 }
 
@@ -104,25 +105,40 @@ enum MessageDeliveryState: String, Codable, Equatable {
     case failed
 }
 
+enum ToolCallState: String, Codable, Equatable {
+    case running
+    case completed
+    case failed
+}
+
 struct ChatMessage: Identifiable, Codable, Equatable {
     let id: String
     var role: ChatRole
     var content: String
     var createdAt: Date
     var deliveryState: MessageDeliveryState
+    var toolName: String?
+    var toolArguments: [String: JSONValue]?
+    var toolState: ToolCallState?
 
     init(
         id: String = UUID().uuidString,
         role: ChatRole,
         content: String,
         createdAt: Date = Date(),
-        deliveryState: MessageDeliveryState = .sent
+        deliveryState: MessageDeliveryState = .sent,
+        toolName: String? = nil,
+        toolArguments: [String: JSONValue]? = nil,
+        toolState: ToolCallState? = nil
     ) {
         self.id = id
         self.role = role
         self.content = content
         self.createdAt = createdAt
         self.deliveryState = deliveryState
+        self.toolName = toolName
+        self.toolArguments = toolArguments
+        self.toolState = toolState
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -131,6 +147,9 @@ struct ChatMessage: Identifiable, Codable, Equatable {
         case content
         case createdAt
         case deliveryState
+        case toolName
+        case toolArguments
+        case toolState
     }
 
     init(from decoder: Decoder) throws {
@@ -140,6 +159,9 @@ struct ChatMessage: Identifiable, Codable, Equatable {
         content = try container.decode(String.self, forKey: .content)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         deliveryState = try container.decodeIfPresent(MessageDeliveryState.self, forKey: .deliveryState) ?? .sent
+        toolName = try container.decodeIfPresent(String.self, forKey: .toolName)
+        toolArguments = try container.decodeIfPresent([String: JSONValue].self, forKey: .toolArguments)
+        toolState = try container.decodeIfPresent(ToolCallState.self, forKey: .toolState)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -149,6 +171,9 @@ struct ChatMessage: Identifiable, Codable, Equatable {
         try container.encode(content, forKey: .content)
         try container.encode(createdAt, forKey: .createdAt)
         try container.encode(deliveryState, forKey: .deliveryState)
+        try container.encodeIfPresent(toolName, forKey: .toolName)
+        try container.encodeIfPresent(toolArguments, forKey: .toolArguments)
+        try container.encodeIfPresent(toolState, forKey: .toolState)
     }
 }
 

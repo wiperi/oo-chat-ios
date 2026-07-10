@@ -346,6 +346,26 @@ final class SwiftDataConversationRepositoryTests: XCTestCase {
         XCTAssertEqual(repository.load().conversations.first?.messages.map(\.role), [.user, .agent, .thinking, .error])
     }
 
+    func testToolCallMessageRoundTripsWithInputOutputAndState() throws {
+        let repository = try makeRepository()
+        var conversation = makeConversation(agentID: "a1", address: "0xaaa", title: "c", updatedAt: seconds(1000))
+        let tool = ChatMessage(
+            id: "tool-1",
+            role: .tool,
+            content: "README contents",
+            createdAt: seconds(1001),
+            toolName: "read_file",
+            toolArguments: ["path": .string("README.md")],
+            toolState: .completed
+        )
+        conversation.messages = [tool]
+        repository.upsertConversation(conversation)
+
+        let loaded = repository.load().conversations.first?.messages.first
+
+        XCTAssertEqual(loaded, tool)
+    }
+
     private func seconds(_ value: TimeInterval) -> Date {
         Date(timeIntervalSince1970: value)
     }

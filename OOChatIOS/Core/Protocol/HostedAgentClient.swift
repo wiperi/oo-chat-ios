@@ -26,11 +26,73 @@ enum HostedAgentClientError: LocalizedError {
     }
 }
 
+enum HostedAgentEvent: Equatable {
+    case toolCall(id: String, name: String, arguments: [String: JSONValue])
+    case toolResult(id: String, name: String?, output: String, state: ToolCallState)
+
+    static func from(_ frame: [String: JSONValue]) -> HostedAgentEvent? {
+        guard let type = frame["type"]?.stringValue,
+              let id = frame["tool_id"]?.stringValue ?? frame["id"]?.stringValue,
+              !id.isEmpty else {
+            return nil
+        }
+
+        switch type {
+        case "tool_call":
+            let name = frame["name"]?.stringValue ?? "tool"
+            let arguments: [String: JSONValue]
+            if case .object(let value)? = frame["args"] {
+                arguments = value
+            } else {
+                arguments = [:]
+            }
+            return .toolCall(id: id, name: name, arguments: arguments)
+        case "tool_result":
+            let state: ToolCallState = frame["status"]?.stringValue?.lowercased() == "error" ? .failed : .completed
+            return .toolResult(
+                id: id,
+                name: frame["name"]?.stringValue,
+                output: eventMessageText(frame),
+                state: state
+            )
+        default:
+            return nil
+        }
+    }
+
+    private static func eventMessageText(_ frame: [String: JSONValue]) -> String {
+        for key in ["result", "message", "error", "text", "content"] {
+            if let value = frame[key] {
+                if let text = value.stringValue {
+                    return text
+                }
+                return formattedJSON(value)
+            }
+        }
+        return "Hosted agent returned \(frame["type"]?.stringValue ?? "an event")."
+    }
+
+    private static func formattedJSON(_ value: JSONValue) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let data = try? encoder.encode(value),
+              let text = String(data: data, encoding: .utf8) else {
+            return ""
+        }
+        return text
+    }
+}
+
 /// Wire-level operations the view model needs from the hosted-agent client,
 /// as a protocol so tests can substitute a scripted transport.
 protocol HostedAgentTransport {
     func connect(agentAddress: String, conversation: Conversation) async throws -> HostedAgentResult
-    func sendPrompt(agentAddress: String, conversation: Conversation, prompt: String) async throws -> HostedAgentResult
+    func sendPrompt(
+        agentAddress: String,
+        conversation: Conversation,
+        prompt: String,
+        onEvent: (@MainActor (HostedAgentEvent) -> Void)?
+    ) async throws -> HostedAgentResult
 }
 
 final class HostedAgentClient: HostedAgentTransport {
@@ -77,7 +139,12 @@ final class HostedAgentClient: HostedAgentTransport {
         }
     }
 
-    func sendPrompt(agentAddress: String, conversation: Conversation, prompt: String) async throws -> HostedAgentResult {
+    func sendPrompt(
+        agentAddress: String,
+        conversation: Conversation,
+        prompt: String,
+        onEvent: (@MainActor (HostedAgentEvent) -> Void)?
+    ) async throws -> HostedAgentResult {
         guard Self.isHostedAgentAddress(agentAddress) else {
             throw HostedAgentClientError.invalidAddress
         }
@@ -112,6 +179,10 @@ final class HostedAgentClient: HostedAgentTransport {
                     serverSession = session
                 }
                 return HostedAgentResult(output: messageText(frame), endpointLabel: endpoint.label, serverSession: serverSession)
+            case "tool_call", "tool_result":
+                if let event = HostedAgentEvent.from(frame) {
+                    await onEvent?(event)
+                }
             case "ERROR":
                 throw HostedAgentClientError.server(messageText(frame))
             case "ask_user":

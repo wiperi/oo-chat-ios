@@ -63,13 +63,28 @@ final class StoredMessage {
     var content: String
     var createdAt: Date
     var deliveryStateRaw: String = "sent"
+    var toolName: String?
+    var toolArgumentsData: Data?
+    var toolStateRaw: String?
     var conversation: StoredConversation?
 
-    init(id: String, roleRaw: String, content: String, createdAt: Date, deliveryStateRaw: String = "sent") {
+    init(
+        id: String,
+        roleRaw: String,
+        content: String,
+        createdAt: Date,
+        deliveryStateRaw: String = "sent",
+        toolName: String? = nil,
+        toolArgumentsData: Data? = nil,
+        toolStateRaw: String? = nil
+    ) {
         self.id = id
         self.roleRaw = roleRaw
         self.content = content
         self.createdAt = createdAt
         self.deliveryStateRaw = deliveryStateRaw
+        self.toolName = toolName
+        self.toolArgumentsData = toolArgumentsData
+        self.toolStateRaw = toolStateRaw
     }
 }

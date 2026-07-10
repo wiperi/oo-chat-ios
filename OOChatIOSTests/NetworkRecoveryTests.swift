@@ -28,6 +28,7 @@ final class MockAgentTransport: HostedAgentTransport {
 
     var connectBehavior: Behavior = .succeed(output: "")
     var sendBehavior: Behavior = .succeed(output: "mock reply")
+    var streamedEvents: [HostedAgentEvent] = []
     var onSend: (@MainActor () -> Void)?
 
     private(set) var connectedAddresses: [String] = []
@@ -47,10 +48,18 @@ final class MockAgentTransport: HostedAgentTransport {
         }
     }
 
-    func sendPrompt(agentAddress: String, conversation: Conversation, prompt: String) async throws -> HostedAgentResult {
+    func sendPrompt(
+        agentAddress: String,
+        conversation: Conversation,
+        prompt: String,
+        onEvent: (@MainActor (HostedAgentEvent) -> Void)?
+    ) async throws -> HostedAgentResult {
         sentPrompts.append(prompt)
         switch sendBehavior {
         case .succeed(let output):
+            for event in streamedEvents {
+                await onEvent?(event)
+            }
             if let onSend {
                 await MainActor.run { onSend() }
             }
@@ -314,6 +323,59 @@ final class NetworkRecoveryTests: XCTestCase {
         let message = try decoder.decode(ChatMessage.self, from: Data(json.utf8))
 
         XCTAssertEqual(message.deliveryState, .sent)
+    }
+
+    func testChatMessageDecodesLegacyPayloadWithoutToolFields() throws {
+        let json = """
+        {
+          "id": "message-1",
+          "role": "agent",
+          "content": "legacy response",
+          "createdAt": "2026-07-09T01:00:00Z"
+        }
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+
+        let message = try decoder.decode(ChatMessage.self, from: Data(json.utf8))
+
+        XCTAssertNil(message.toolName)
+        XCTAssertNil(message.toolArguments)
+        XCTAssertNil(message.toolState)
+    }
+
+    func testStreamingToolCallIsUpdatedInPlaceAndPersistsWithResponse() async {
+        let (viewModel, transport, _) = makeEnvironment()
+        setUpAgentAndConversation(viewModel)
+        transport.streamedEvents = [
+            .toolCall(
+                id: "tool-read-1",
+                name: "read_file",
+                arguments: ["path": .string("README.md")]
+            ),
+            .toolResult(
+                id: "tool-read-1",
+                name: "read_file",
+                output: "# Project notes",
+                state: .completed
+            ),
+        ]
+        transport.sendBehavior = .succeed(output: "I found the project notes.")
+
+        viewModel.prompt = "Read the project notes"
+        viewModel.sendPrompt()
+        await viewModel.sendTask?.value
+
+        let messages = viewModel.activeConversation?.messages ?? []
+        let toolMessages = messages.filter { $0.role == .tool }
+        XCTAssertEqual(toolMessages.count, 1)
+        XCTAssertEqual(toolMessages.first?.id, "tool-read-1")
+        XCTAssertEqual(toolMessages.first?.toolName, "read_file")
+        XCTAssertEqual(toolMessages.first?.toolArguments, ["path": .string("README.md")])
+        XCTAssertEqual(toolMessages.first?.toolState, .completed)
+        XCTAssertEqual(toolMessages.first?.content, "# Project notes")
+        XCTAssertEqual(messages.last?.role, .agent)
+        XCTAssertEqual(messages.last?.content, "I found the project notes.")
     }
 
     // offline banner dismissal and manual retry

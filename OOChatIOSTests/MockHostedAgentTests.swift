@@ -52,6 +52,82 @@ final class MockHostedAgentTests: XCTestCase {
         XCTAssertEqual(agent.token, "")
     }
 
+    func testToolCallFramesMapToCorrelatedCallAndResultEvents() {
+        let arguments: [String: JSONValue] = [
+            "path": .string("OOChatIOS/Features/Chat/MessageBubble.swift"),
+            "line_end": .number(280),
+        ]
+
+        let call = HostedAgentEvent.from([
+            "type": .string("tool_call"),
+            "tool_id": .string("tool-read-1"),
+            "name": .string("read_file"),
+            "args": .object(arguments),
+        ])
+        let result = HostedAgentEvent.from([
+            "type": .string("tool_result"),
+            "tool_id": .string("tool-read-1"),
+            "name": .string("read_file"),
+            "result": .string("import SwiftUI"),
+        ])
+
+        XCTAssertEqual(
+            call,
+            .toolCall(id: "tool-read-1", name: "read_file", arguments: arguments)
+        )
+        XCTAssertEqual(
+            result,
+            .toolResult(
+                id: "tool-read-1",
+                name: "read_file",
+                output: "import SwiftUI",
+                state: .completed
+            )
+        )
+    }
+
+    func testToolResultUsesErrorStateAndMessageFallback() {
+        let event = HostedAgentEvent.from([
+            "type": .string("tool_result"),
+            "id": .string("tool-shell-1"),
+            "status": .string("error"),
+            "message": .string("Permission denied"),
+        ])
+
+        XCTAssertEqual(
+            event,
+            .toolResult(
+                id: "tool-shell-1",
+                name: nil,
+                output: "Permission denied",
+                state: .failed
+            )
+        )
+    }
+
+    func testToolResultPreservesStructuredOutput() {
+        let event = HostedAgentEvent.from([
+            "type": .string("tool_result"),
+            "tool_id": .string("tool-search-1"),
+            "result": .object([
+                "files": .array([.string("README.md")]),
+            ]),
+        ])
+
+        guard case .toolResult(_, _, let output, _) = event else {
+            return XCTFail("Expected a tool result event")
+        }
+        XCTAssertTrue(output.contains("files"))
+        XCTAssertTrue(output.contains("README.md"))
+    }
+
+    func testToolEventParserIgnoresFramesWithoutCallIdentifiers() {
+        XCTAssertNil(HostedAgentEvent.from([
+            "type": .string("tool_call"),
+            "name": .string("read_file"),
+        ]))
+    }
+
     @MainActor
     func testSaveAgentUpdatesTokenEndpointAndClearsSessions() {
         let viewModel = makeViewModel()

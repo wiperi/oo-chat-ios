@@ -431,7 +431,14 @@ final class ChatViewModel: ObservableObject {
         upsert(pending)
 
         do {
-            let result = try await client.sendPrompt(agentAddress: agent.address, conversation: pending, prompt: message.content)
+            let result = try await client.sendPrompt(
+                agentAddress: agent.address,
+                conversation: pending,
+                prompt: message.content,
+                onEvent: { [weak self] event in
+                    self?.apply(event, toConversationID: conversationID)
+                }
+            )
             var updated = self.conversation(withID: conversationID) ?? pending
             updated.messages.removeAll { $0.role == .thinking }
             if let index = updated.messages.firstIndex(where: { $0.id == messageID }) {
@@ -477,6 +484,47 @@ final class ChatViewModel: ObservableObject {
             await self.reconnect()
             await self.flushQueuedMessages()
         }
+    }
+
+    private func apply(_ event: HostedAgentEvent, toConversationID conversationID: String) {
+        guard var conversation = conversation(withID: conversationID) else {
+            return
+        }
+
+        switch event {
+        case .toolCall(let id, let name, let arguments):
+            guard !conversation.messages.contains(where: { $0.id == id }) else {
+                return
+            }
+            conversation.messages.append(
+                ChatMessage(
+                    id: id,
+                    role: .tool,
+                    content: "",
+                    toolName: name,
+                    toolArguments: arguments,
+                    toolState: .running
+                )
+            )
+        case .toolResult(let id, let name, let output, let state):
+            if let index = conversation.messages.firstIndex(where: { $0.id == id && $0.role == .tool }) {
+                conversation.messages[index].toolName = name ?? conversation.messages[index].toolName
+                conversation.messages[index].content = output
+                conversation.messages[index].toolState = state
+            } else {
+                conversation.messages.append(
+                    ChatMessage(
+                        id: id,
+                        role: .tool,
+                        content: output,
+                        toolName: name ?? "tool",
+                        toolState: state
+                    )
+                )
+            }
+        }
+
+        upsert(conversation)
     }
 
     /// The path monitor can lag well behind the actual network (especially on the

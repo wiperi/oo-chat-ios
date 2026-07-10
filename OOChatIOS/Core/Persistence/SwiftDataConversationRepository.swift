@@ -164,9 +164,13 @@ final class SwiftDataConversationRepository: ConversationRepository {
         }
         for message in messages {
             if let storedMessage = existing[message.id] {
-                // msg stays in place
+                // Existing rows keep their position while streamed tool results update in place.
+                storedMessage.roleRaw = message.role.rawValue
                 storedMessage.deliveryStateRaw = message.deliveryState.rawValue
                 storedMessage.content = message.content
+                storedMessage.toolName = message.toolName
+                storedMessage.toolArgumentsData = encodeToolArguments(message.toolArguments)
+                storedMessage.toolStateRaw = message.toolState?.rawValue
             } else {
                 stored.messages.append(toStoredMessage(message))
             }
@@ -208,7 +212,10 @@ final class SwiftDataConversationRepository: ConversationRepository {
             role: ChatRole(rawValue: stored.roleRaw) ?? .agent,
             content: stored.content,
             createdAt: stored.createdAt,
-            deliveryState: MessageDeliveryState(rawValue: stored.deliveryStateRaw) ?? .sent
+            deliveryState: MessageDeliveryState(rawValue: stored.deliveryStateRaw) ?? .sent,
+            toolName: stored.toolName,
+            toolArguments: decodeToolArguments(stored.toolArgumentsData),
+            toolState: stored.toolStateRaw.flatMap(ToolCallState.init(rawValue:))
         )
     }
 
@@ -243,7 +250,10 @@ final class SwiftDataConversationRepository: ConversationRepository {
             roleRaw: message.role.rawValue,
             content: message.content,
             createdAt: message.createdAt,
-            deliveryStateRaw: message.deliveryState.rawValue
+            deliveryStateRaw: message.deliveryState.rawValue,
+            toolName: message.toolName,
+            toolArgumentsData: encodeToolArguments(message.toolArguments),
+            toolStateRaw: message.toolState?.rawValue
         )
     }
 
@@ -253,6 +263,16 @@ final class SwiftDataConversationRepository: ConversationRepository {
     }
 
     private func decodeSession(_ data: Data?) -> [String: JSONValue]? {
+        guard let data else { return nil }
+        return try? JSONDecoder().decode([String: JSONValue].self, from: data)
+    }
+
+    private func encodeToolArguments(_ arguments: [String: JSONValue]?) -> Data? {
+        guard let arguments else { return nil }
+        return try? JSONEncoder().encode(arguments)
+    }
+
+    private func decodeToolArguments(_ data: Data?) -> [String: JSONValue]? {
         guard let data else { return nil }
         return try? JSONDecoder().decode([String: JSONValue].self, from: data)
     }
