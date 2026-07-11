@@ -90,18 +90,19 @@ struct AgentSessionsView: View {
                                     ConversationRow(conversation: conversation)
                                 }
                                 .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                    Button(role: .destructive) {
+                                        deleteTarget = conversation
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
+                                    }
+                                    .tint(AppTheme.destructive)
                                     Button {
                                         renameText = conversation.title
                                         renameTarget = conversation
                                     } label: {
                                         Label("Rename", systemImage: "pencil")
                                     }
-                                    .tint(.blue)
-                                    Button(role: .destructive) {
-                                        deleteTarget = conversation
-                                    } label: {
-                                        Label("Delete", systemImage: "trash")
-                                    }
+                                    .tint(AppTheme.primary)
                                 }
                             }
                         }

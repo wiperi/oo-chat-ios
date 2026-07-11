@@ -32,6 +32,7 @@ struct AgentsView: View {
                                 } label: {
                                     Label("Delete", systemImage: "trash")
                                 }
+                                .tint(AppTheme.destructive)
                                 Button {
                                     agentDraft = AgentFormDraft(agent: agent)
                                 } label: {

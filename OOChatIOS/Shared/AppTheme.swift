@@ -36,4 +36,6 @@ enum AppTheme {
             return UIColor(red: 109.0 / 255.0, green: 40.0 / 255.0, blue: 217.0 / 255.0, alpha: 1)
         }
     })
+
+    static let destructive = Color(uiColor: .systemRed)
 }
