@@ -31,11 +31,15 @@ enum ChatMode: String, CaseIterable, Codable, Identifiable, Equatable {
         case .plan:
             return "Plan"
         case .accept:
-            return "Accept"
+            return "Accept Edits"
         case .ulw:
-            return "ULW"
+            return "Ultra Work"
         }
     }
+}
+
+enum ClientSessionMetadata {
+    static let pendingModeChange = "_client_pending_mode_change"
 }
 
 struct AgentConnection: Identifiable, Codable, Equatable {
@@ -153,6 +157,7 @@ enum ApprovalDecision: Equatable {
     case allowSession
     case rejectSoft(feedback: String?)
     case rejectHard(feedback: String?)
+    case rejectExplain(feedback: String?)
 }
 
 struct PendingApproval: Identifiable, Equatable {
@@ -162,6 +167,52 @@ struct PendingApproval: Identifiable, Equatable {
     var id: String {
         request.id
     }
+}
+
+struct UlwCheckpointRequest: Identifiable, Equatable {
+    let id: String
+    let turnsUsed: Int
+    let maxTurns: Int
+
+    init(id: String = UUID().uuidString, turnsUsed: Int, maxTurns: Int) {
+        self.id = id
+        self.turnsUsed = turnsUsed
+        self.maxTurns = maxTurns
+    }
+}
+
+enum UlwCheckpointDecision: Equatable {
+    case continueWork(turns: Int)
+    case switchMode(ChatMode)
+}
+
+struct PendingUlwCheckpoint: Identifiable, Equatable {
+    let conversationID: String
+    let request: UlwCheckpointRequest
+
+    var id: String { request.id }
+}
+
+struct PlanReviewRequest: Identifiable, Equatable {
+    let id: String
+    let planContent: String
+
+    init(id: String = UUID().uuidString, planContent: String) {
+        self.id = id
+        self.planContent = planContent
+    }
+}
+
+enum PlanReviewDecision: Equatable {
+    case approve
+    case requestChanges(feedback: String?)
+}
+
+struct PendingPlanReview: Identifiable, Equatable {
+    let conversationID: String
+    let request: PlanReviewRequest
+
+    var id: String { request.id }
 }
 
 struct ChatMessage: Identifiable, Codable, Equatable {
@@ -383,6 +434,13 @@ enum JSONValue: Codable, Equatable {
 
     var stringValue: String? {
         if case .string(let value) = self {
+            return value
+        }
+        return nil
+    }
+
+    var numberValue: Double? {
+        if case .number(let value) = self {
             return value
         }
         return nil

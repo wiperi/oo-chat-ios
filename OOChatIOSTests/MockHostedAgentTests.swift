@@ -234,6 +234,15 @@ final class MockHostedAgentTests: XCTestCase {
                 "mode": .string("reject_hard"),
             ]
         )
+        XCTAssertEqual(
+            ApprovalDecision.rejectExplain(feedback: nil).responseFrame,
+            [
+                "type": .string("APPROVAL_RESPONSE"),
+                "approved": .bool(false),
+                "scope": .string("once"),
+                "mode": .string("reject_explain"),
+            ]
+        )
 
         let relayEndpoint = ResolvedEndpoint(
             wsURL: URL(string: "wss://relay.example/ws/input")!,
@@ -264,6 +273,66 @@ final class MockHostedAgentTests: XCTestCase {
             agentAddress: endpointA,
             endpoint: directEndpoint
         )["to"])
+    }
+
+    func testUlwCheckpointFramesMatchUpstreamContract() {
+        let request = UlwCheckpointRequest.from([
+            "type": .string("ulw_turns_reached"),
+            "turns_used": .number(100),
+            "max_turns": .number(100),
+        ])
+        XCTAssertEqual(request?.turnsUsed, 100)
+        XCTAssertEqual(request?.maxTurns, 100)
+
+        let relay = ResolvedEndpoint(
+            wsURL: URL(string: "wss://relay.example/ws/input")!,
+            kind: .relay,
+            label: "relay"
+        )
+        XCTAssertEqual(
+            HostedAgentClient.ulwResponseFrame(
+                decision: .continueWork(turns: 100),
+                agentAddress: endpointA,
+                endpoint: relay
+            ),
+            [
+                "type": .string("ULW_RESPONSE"),
+                "action": .string("continue"),
+                "turns": .number(100),
+                "to": .string(endpointA),
+            ]
+        )
+        XCTAssertEqual(
+            UlwCheckpointDecision.switchMode(.accept).responseFrame,
+            [
+                "type": .string("ULW_RESPONSE"),
+                "action": .string("switch_mode"),
+                "mode": .string("accept_edits"),
+            ]
+        )
+    }
+
+    func testPlanReviewFramesMatchUpstreamContract() {
+        let request = PlanReviewRequest.from([
+            "type": .string("plan_review"),
+            "plan_content": .string("# Plan\n\n1. Implement"),
+        ])
+        XCTAssertEqual(request?.planContent, "# Plan\n\n1. Implement")
+
+        XCTAssertEqual(
+            PlanReviewDecision.approve.responseFrame(for: request!),
+            [
+                "type": .string("PLAN_REVIEW_RESPONSE"),
+                "message": .string("Plan approved. Implement now. Do NOT re-enter plan mode.\n\n---\n\n# Plan\n\n1. Implement"),
+            ]
+        )
+        XCTAssertEqual(
+            PlanReviewDecision.requestChanges(feedback: "Use smaller commits").responseFrame(for: request!),
+            [
+                "type": .string("PLAN_REVIEW_RESPONSE"),
+                "message": .string("Plan rejected. Revise with write_plan(). Feedback: Use smaller commits"),
+            ]
+        )
     }
 
     @MainActor

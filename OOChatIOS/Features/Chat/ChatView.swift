@@ -34,8 +34,34 @@ struct ChatScreen: View {
                                     viewModel.trustPendingApprovalForSession(id: approval.id)
                                 } onReject: {
                                     viewModel.rejectPendingApproval(id: approval.id)
+                                } onStop: {
+                                    viewModel.stopPendingApproval(id: approval.id)
+                                } onExplain: {
+                                    viewModel.explainPendingApproval(id: approval.id)
                                 }
                                 .id("pendingApproval")
+                                .transition(.opacity)
+                            }
+
+                            if let checkpoint = viewModel.pendingUlwCheckpoint {
+                                UlwCheckpointCard(checkpoint: checkpoint) {
+                                    viewModel.continueUlw(id: checkpoint.id)
+                                } onAcceptEdits: {
+                                    viewModel.switchModeFromUlwCheckpoint(id: checkpoint.id, to: .accept)
+                                } onSafeMode: {
+                                    viewModel.switchModeFromUlwCheckpoint(id: checkpoint.id, to: .safe)
+                                }
+                                .id("pendingUlwCheckpoint")
+                                .transition(.opacity)
+                            }
+
+                            if let review = viewModel.pendingPlanReview {
+                                PlanReviewCard(review: review) {
+                                    viewModel.approvePendingPlan(id: review.id)
+                                } onRequestChanges: { feedback in
+                                    viewModel.requestPlanChanges(id: review.id, feedback: feedback)
+                                }
+                                .id("pendingPlanReview")
                                 .transition(.opacity)
                             }
                             Color.clear
@@ -52,10 +78,10 @@ struct ChatScreen: View {
                     .onChange(of: scrollSignature(for: conversation)) {
                         scrollToBottom(proxy)
                     }
-                    .onChange(of: viewModel.pendingApproval?.id) {
-                        if viewModel.pendingApproval != nil {
+                    .onChange(of: viewModel.pendingInteractionID) {
+                        if let interactionID = viewModel.pendingInteractionID {
                             withAnimation {
-                                proxy.scrollTo("pendingApproval", anchor: .bottom)
+                                proxy.scrollTo(scrollTarget(for: interactionID), anchor: .bottom)
                             }
                         }
                     }
@@ -109,6 +135,16 @@ struct ChatScreen: View {
         }
         .toolbarBackground(Color(.systemBackground), for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
+    }
+
+    private func scrollTarget(for interactionID: String) -> String {
+        if interactionID == viewModel.pendingApproval?.id {
+            return "pendingApproval"
+        }
+        if interactionID == viewModel.pendingUlwCheckpoint?.id {
+            return "pendingUlwCheckpoint"
+        }
+        return "pendingPlanReview"
     }
 
     private func scrollSignature(for conversation: Conversation) -> String {

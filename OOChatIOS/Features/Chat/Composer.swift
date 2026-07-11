@@ -158,13 +158,13 @@ private extension ChatMode {
     var detail: String {
         switch self {
         case .safe:
-            return "Asks before making changes"
+            return "Ask before file edits and commands"
         case .plan:
-            return "Plans before acting"
+            return "Research first, then review the plan"
         case .accept:
-            return "Auto-accepts edits"
+            return "Trust the agent to edit without asking"
         case .ulw:
-            return "Runs autonomously, up to 100 turns"
+            return "Work autonomously for up to 100 turns"
         }
     }
 }

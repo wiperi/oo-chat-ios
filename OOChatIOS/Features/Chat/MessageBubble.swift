@@ -322,6 +322,8 @@ struct ApprovalCard: View {
     var onAllowOnce: () -> Void
     var onTrustSession: () -> Void
     var onReject: () -> Void
+    var onStop: () -> Void
+    var onExplain: () -> Void
 
     private var request: ToolApprovalRequest {
         approval.request
@@ -440,6 +442,124 @@ struct ApprovalCard: View {
                 .buttonStyle(.bordered)
                 .accessibilityIdentifier("approval.reject.\(request.id)")
             }
+
+            HStack(spacing: 8) {
+                Button(role: .destructive) {
+                    onStop()
+                } label: {
+                    Label("Stop", systemImage: "stop.circle.fill")
+                        .font(.footnote.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 9)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("approval.stop.\(request.id)")
+
+                Button {
+                    onExplain()
+                } label: {
+                    Label("Explain", systemImage: "questionmark.circle.fill")
+                        .font(.footnote.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 9)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("approval.explain.\(request.id)")
+            }
         }
+    }
+}
+
+struct UlwCheckpointCard: View {
+    let checkpoint: PendingUlwCheckpoint
+    var onContinue: () -> Void
+    var onAcceptEdits: () -> Void
+    var onSafeMode: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("Ultra Work checkpoint", systemImage: "bolt.fill")
+                .font(.headline)
+                .foregroundStyle(AppTheme.primary)
+
+            Text("Completed \(checkpoint.request.turnsUsed) of \(checkpoint.request.maxTurns) turns")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            Button("Continue (+100 turns)", action: onContinue)
+                .buttonStyle(.borderedProminent)
+                .tint(AppTheme.primary)
+                .frame(maxWidth: .infinity)
+                .accessibilityIdentifier("ulw.continue.\(checkpoint.id)")
+
+            HStack(spacing: 8) {
+                Button("Accept Edits", action: onAcceptEdits)
+                    .buttonStyle(.bordered)
+                    .frame(maxWidth: .infinity)
+                    .accessibilityIdentifier("ulw.acceptEdits.\(checkpoint.id)")
+                Button("Safe Mode", action: onSafeMode)
+                    .buttonStyle(.bordered)
+                    .frame(maxWidth: .infinity)
+                    .accessibilityIdentifier("ulw.safe.\(checkpoint.id)")
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color(.secondarySystemBackground),
+            in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+        )
+    }
+}
+
+struct PlanReviewCard: View {
+    let review: PendingPlanReview
+    var onApprove: () -> Void
+    var onRequestChanges: (String?) -> Void
+
+    @State private var feedback = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("Review implementation plan", systemImage: "list.bullet.clipboard")
+                .font(.headline)
+                .foregroundStyle(AppTheme.primary)
+
+            ScrollView {
+                Text(review.request.planContent)
+                    .font(.subheadline)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 240)
+            .padding(10)
+            .background(
+                Color(.tertiarySystemBackground),
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
+
+            TextField("Feedback for changes (optional)", text: $feedback, axis: .vertical)
+                .lineLimit(2...5)
+                .textFieldStyle(.roundedBorder)
+
+            Button("Approve & Implement", action: onApprove)
+                .buttonStyle(.borderedProminent)
+                .tint(AppTheme.primary)
+                .frame(maxWidth: .infinity)
+                .accessibilityIdentifier("plan.approve.\(review.id)")
+
+            Button("Request Changes") {
+                onRequestChanges(feedback)
+            }
+            .buttonStyle(.bordered)
+            .frame(maxWidth: .infinity)
+            .accessibilityIdentifier("plan.requestChanges.\(review.id)")
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color(.secondarySystemBackground),
+            in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+        )
     }
 }

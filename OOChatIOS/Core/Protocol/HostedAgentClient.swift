@@ -174,6 +174,12 @@ extension ApprovalDecision {
             if let feedback, !feedback.isEmpty {
                 frame["feedback"] = .string(feedback)
             }
+        case .rejectExplain(let feedback):
+            frame["approved"] = .bool(false)
+            frame["mode"] = .string("reject_explain")
+            if let feedback, !feedback.isEmpty {
+                frame["feedback"] = .string(feedback)
+            }
         }
 
         if let recipient, !recipient.isEmpty {
@@ -181,6 +187,72 @@ extension ApprovalDecision {
         }
 
         return frame
+    }
+}
+
+extension UlwCheckpointRequest {
+    static func from(_ frame: [String: JSONValue]) -> UlwCheckpointRequest? {
+        guard frame["type"]?.stringValue?.lowercased() == "ulw_turns_reached",
+              let turnsUsed = frame["turns_used"]?.numberValue,
+              let maxTurns = frame["max_turns"]?.numberValue else {
+            return nil
+        }
+        return UlwCheckpointRequest(
+            id: frame["id"]?.stringValue ?? UUID().uuidString,
+            turnsUsed: Int(turnsUsed),
+            maxTurns: Int(maxTurns)
+        )
+    }
+}
+
+extension UlwCheckpointDecision {
+    var responseFrame: [String: JSONValue] {
+        switch self {
+        case .continueWork(let turns):
+            return [
+                "type": .string("ULW_RESPONSE"),
+                "action": .string("continue"),
+                "turns": .number(Double(turns)),
+            ]
+        case .switchMode(let mode):
+            return [
+                "type": .string("ULW_RESPONSE"),
+                "action": .string("switch_mode"),
+                "mode": .string(mode.rawValue),
+            ]
+        }
+    }
+}
+
+extension PlanReviewRequest {
+    static func from(_ frame: [String: JSONValue]) -> PlanReviewRequest? {
+        guard frame["type"]?.stringValue?.lowercased() == "plan_review",
+              let content = frame["plan_content"]?.stringValue,
+              !content.isEmpty else {
+            return nil
+        }
+        return PlanReviewRequest(
+            id: frame["id"]?.stringValue ?? UUID().uuidString,
+            planContent: content
+        )
+    }
+}
+
+extension PlanReviewDecision {
+    func responseFrame(for request: PlanReviewRequest) -> [String: JSONValue] {
+        let message: String
+        switch self {
+        case .approve:
+            message = "Plan approved. Implement now. Do NOT re-enter plan mode.\n\n---\n\n\(request.planContent)"
+        case .requestChanges(let feedback):
+            let trimmed = feedback?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let detail = trimmed.isEmpty ? "Plan needs revision." : trimmed
+            message = "Plan rejected. Revise with write_plan(). Feedback: \(detail)"
+        }
+        return [
+            "type": .string("PLAN_REVIEW_RESPONSE"),
+            "message": .string(message),
+        ]
     }
 }
 
@@ -193,7 +265,9 @@ protocol HostedAgentTransport {
         conversation: Conversation,
         prompt: String,
         onEvent: (@MainActor (HostedAgentEvent) -> Void)?,
-        onApprovalRequest: (@MainActor (ToolApprovalRequest) async -> ApprovalDecision)?
+        onApprovalRequest: (@MainActor (ToolApprovalRequest) async -> ApprovalDecision)?,
+        onUlwCheckpoint: (@MainActor (UlwCheckpointRequest) async -> UlwCheckpointDecision)?,
+        onPlanReview: (@MainActor (PlanReviewRequest) async -> PlanReviewDecision)?
     ) async throws -> HostedAgentResult
 }
 
@@ -246,7 +320,9 @@ final class HostedAgentClient: HostedAgentTransport {
         conversation: Conversation,
         prompt: String,
         onEvent: (@MainActor (HostedAgentEvent) -> Void)?,
-        onApprovalRequest: (@MainActor (ToolApprovalRequest) async -> ApprovalDecision)?
+        onApprovalRequest: (@MainActor (ToolApprovalRequest) async -> ApprovalDecision)?,
+        onUlwCheckpoint: (@MainActor (UlwCheckpointRequest) async -> UlwCheckpointDecision)?,
+        onPlanReview: (@MainActor (PlanReviewRequest) async -> PlanReviewDecision)?
     ) async throws -> HostedAgentResult {
         guard Self.isHostedAgentAddress(agentAddress) else {
             throw HostedAgentClientError.invalidAddress
@@ -274,6 +350,12 @@ final class HostedAgentClient: HostedAgentTransport {
                 }
                 if !inputSent {
                     inputSent = true
+                    if let modeChange = Self.pendingModeChangeFrame(
+                        for: conversation,
+                        connectionStatus: frame["status"]?.stringValue
+                    ) {
+                        try await send(modeChange, over: socket)
+                    }
                     let inputFrame = try buildInputFrame(agentAddress: agentAddress, prompt: prompt, endpoint: endpoint)
                     try await send(inputFrame, over: socket)
                 }
@@ -300,6 +382,34 @@ final class HostedAgentClient: HostedAgentTransport {
                     ),
                     over: socket
                 )
+            case "ulw_turns_reached":
+                guard let request = UlwCheckpointRequest.from(frame) else {
+                    throw HostedAgentClientError.badFrame
+                }
+                let decision = await onUlwCheckpoint?(request) ?? .switchMode(.safe)
+                try await send(
+                    Self.ulwResponseFrame(
+                        decision: decision,
+                        agentAddress: agentAddress,
+                        endpoint: endpoint
+                    ),
+                    over: socket
+                )
+            case "plan_review":
+                guard let request = PlanReviewRequest.from(frame) else {
+                    throw HostedAgentClientError.badFrame
+                }
+                let decision = await onPlanReview?(request)
+                    ?? .requestChanges(feedback: "Plan review unavailable.")
+                try await send(
+                    Self.planReviewResponseFrame(
+                        decision: decision,
+                        request: request,
+                        agentAddress: agentAddress,
+                        endpoint: endpoint
+                    ),
+                    over: socket
+                )
             case "ERROR":
                 throw HostedAgentClientError.server(messageText(frame))
             case "ask_user":
@@ -317,6 +427,63 @@ final class HostedAgentClient: HostedAgentTransport {
     ) -> [String: JSONValue] {
         let recipient = endpoint.kind == .relay ? agentAddress : nil
         return decision.responseFrame(to: recipient)
+    }
+
+    static func pendingModeChangeFrame(
+        for conversation: Conversation,
+        connectionStatus: String?
+    ) -> [String: JSONValue]? {
+        guard connectionStatus == "running",
+              let rawMode = conversation.serverSession?[ClientSessionMetadata.pendingModeChange]?.stringValue,
+              let mode = ChatMode(rawValue: rawMode) else {
+            return nil
+        }
+        var frame: [String: JSONValue] = [
+            "type": .string("mode_change"),
+            "mode": .string(mode.rawValue),
+        ]
+        if mode == .ulw {
+            frame["turns"] = conversation.serverSession?["ulw_turns"] ?? .number(100)
+        }
+        return frame
+    }
+
+    static func ulwResponseFrame(
+        decision: UlwCheckpointDecision,
+        agentAddress: String,
+        endpoint: ResolvedEndpoint
+    ) -> [String: JSONValue] {
+        routedInteractiveFrame(
+            decision.responseFrame,
+            agentAddress: agentAddress,
+            endpoint: endpoint
+        )
+    }
+
+    static func planReviewResponseFrame(
+        decision: PlanReviewDecision,
+        request: PlanReviewRequest,
+        agentAddress: String,
+        endpoint: ResolvedEndpoint
+    ) -> [String: JSONValue] {
+        routedInteractiveFrame(
+            decision.responseFrame(for: request),
+            agentAddress: agentAddress,
+            endpoint: endpoint
+        )
+    }
+
+    private static func routedInteractiveFrame(
+        _ frame: [String: JSONValue],
+        agentAddress: String,
+        endpoint: ResolvedEndpoint
+    ) -> [String: JSONValue] {
+        guard endpoint.kind == .relay else {
+            return frame
+        }
+        var routed = frame
+        routed["to"] = .string(agentAddress)
+        return routed
     }
 
     private func resolveEndpoint(agentAddress: String) async throws -> ResolvedEndpoint {
@@ -408,9 +575,11 @@ final class HostedAgentClient: HostedAgentTransport {
 
     private func sessionPayload(for conversation: Conversation) -> [String: JSONValue] {
         var session = conversation.serverSession ?? [:]
+        session.removeValue(forKey: ClientSessionMetadata.pendingModeChange)
         session["session_id"] = .string(conversation.id)
         session["mode"] = .string(conversation.mode.rawValue)
         if conversation.mode == .ulw {
+            session["skip_tool_approval"] = .bool(true)
             if session["ulw_turns"] == nil {
                 session["ulw_turns"] = .number(100)
             }
@@ -418,6 +587,7 @@ final class HostedAgentClient: HostedAgentTransport {
                 session["ulw_turns_used"] = .number(0)
             }
         } else {
+            session.removeValue(forKey: "skip_tool_approval")
             session.removeValue(forKey: "ulw_turns")
             session.removeValue(forKey: "ulw_turns_used")
         }
