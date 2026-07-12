@@ -677,3 +677,712 @@ private struct HostedAgentConnectionKey: Hashable {
     let agentAddress: String
     let conversationID: String
 }
+
+private actor HostedAgentConnection {
+    private enum State {
+        case disconnected
+        case connecting
+        case connected
+    }
+
+    private struct PendingPrompt {
+        let id: UUID
+        let continuation: CheckedContinuation<HostedAgentResult, Error>
+        let onEvent: (@MainActor (HostedAgentEvent) -> Void)?
+        let onApprovalRequest: (@MainActor (ToolApprovalRequest) async -> ApprovalDecision)?
+        let onUlwCheckpoint: (@MainActor (UlwCheckpointRequest) async -> UlwCheckpointDecision)?
+        let onPlanReview: (@MainActor (PlanReviewRequest) async -> PlanReviewDecision)?
+    }
+
+    private let key: HostedAgentConnectionKey
+    private let identityStore: IdentityStore
+    private let session: URLSession
+    private let relayURL: String
+    private let localEndpoints: [String]
+    private let connectTimeout: TimeInterval = 45
+    private let livenessTimeout: TimeInterval = 75
+
+    private var state: State = .disconnected
+    private var socket: URLSessionWebSocketTask?
+    private var endpoint: ResolvedEndpoint?
+    private var receiveTask: Task<Void, Never>?
+    private var connectTimeoutTask: Task<Void, Never>?
+    private var livenessTask: Task<Void, Never>?
+    private var interactionTasks: [UUID: Task<Void, Never>] = [:]
+    private var socketGeneration = 0
+    private var connectWaiters: [UUID: CheckedContinuation<HostedAgentResult, Error>] = [:]
+    private var pendingPrompt: PendingPrompt?
+    private var serverSession: [String: JSONValue]?
+    private var connectionStatus: String?
+    private var lastNetworkActivityAt = Date()
+
+    init(
+        key: HostedAgentConnectionKey,
+        identityStore: IdentityStore,
+        session: URLSession,
+        relayURL: String,
+        localEndpoints: [String]
+    ) {
+        self.key = key
+        self.identityStore = identityStore
+        self.session = session
+        self.relayURL = relayURL
+        self.localEndpoints = localEndpoints
+    }
+
+    func ensureConnected(conversation: Conversation) async throws -> HostedAgentResult {
+        if state == .connected, socket != nil, let endpoint {
+            return HostedAgentResult(output: nil, endpointLabel: endpoint.label, serverSession: serverSession)
+        }
+
+        let waiterID = UUID()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                connectWaiters[waiterID] = continuation
+                guard state != .connecting else {
+                    return
+                }
+                state = .connecting
+                serverSession = sessionPayload(for: conversation)
+                socketGeneration += 1
+                let generation = socketGeneration
+                Task { [weak self] in
+                    await self?.openConnection(conversation: conversation, generation: generation)
+                }
+            }
+        } onCancel: {
+            Task { [weak self] in
+                await self?.cancelConnectWaiter(waiterID)
+            }
+        }
+    }
+
+    func sendPrompt(
+        conversation: Conversation,
+        prompt: String,
+        onEvent: (@MainActor (HostedAgentEvent) -> Void)?,
+        onApprovalRequest: (@MainActor (ToolApprovalRequest) async -> ApprovalDecision)?,
+        onUlwCheckpoint: (@MainActor (UlwCheckpointRequest) async -> UlwCheckpointDecision)?,
+        onPlanReview: (@MainActor (PlanReviewRequest) async -> PlanReviewDecision)?
+    ) async throws -> HostedAgentResult {
+        try Task.checkCancellation()
+        reconnectToApplyPendingModeChangeIfNeeded(conversation: conversation)
+        _ = try await ensureConnected(conversation: conversation)
+        try Task.checkCancellation()
+        guard pendingPrompt == nil else {
+            throw HostedAgentClientError.busy
+        }
+
+        let promptID = UUID()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                pendingPrompt = PendingPrompt(
+                    id: promptID,
+                    continuation: continuation,
+                    onEvent: onEvent,
+                    onApprovalRequest: onApprovalRequest,
+                    onUlwCheckpoint: onUlwCheckpoint,
+                    onPlanReview: onPlanReview
+                )
+                guard !Task.isCancelled else {
+                    disconnect(with: CancellationError(), closeCode: .goingAway)
+                    return
+                }
+                Task { [weak self] in
+                    await self?.transmitPrompt(prompt, conversation: conversation, promptID: promptID)
+                }
+            }
+        } onCancel: {
+            Task { [weak self] in
+                await self?.cancelPrompt(promptID)
+            }
+        }
+    }
+
+    func close() {
+        disconnect(with: HostedAgentClientError.closed, closeCode: .goingAway)
+    }
+
+    private func openConnection(conversation: Conversation, generation: Int) async {
+        scheduleConnectTimeout(generation: generation)
+        do {
+            let endpoint = try await resolveEndpoint(agentAddress: key.agentAddress)
+            guard state == .connecting, generation == socketGeneration else {
+                return
+            }
+
+            self.endpoint = endpoint
+            let socket = session.webSocketTask(with: endpoint.wsURL)
+            self.socket = socket
+            lastNetworkActivityAt = Date()
+            socket.resume()
+            startReceiveLoop(socket: socket, generation: generation)
+            startLivenessMonitor(generation: generation)
+
+            let connectFrame = try buildConnectFrame(conversation: conversation, endpoint: endpoint)
+            try await send(connectFrame, over: socket)
+        } catch {
+            failConnection(error, generation: generation)
+        }
+    }
+
+    private func startReceiveLoop(socket: URLSessionWebSocketTask, generation: Int) {
+        receiveTask?.cancel()
+        receiveTask = Task { [weak self] in
+            while !Task.isCancelled {
+                do {
+                    let frame = try await Self.readFrame(from: socket)
+                    guard let self else {
+                        return
+                    }
+                    await self.handle(frame, generation: generation)
+                } catch is CancellationError {
+                    return
+                } catch {
+                    guard let self else {
+                        return
+                    }
+                    await self.failConnection(error, generation: generation)
+                    return
+                }
+            }
+        }
+    }
+
+    private func scheduleConnectTimeout(generation: Int) {
+        connectTimeoutTask?.cancel()
+        connectTimeoutTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: UInt64((self?.connectTimeout ?? 45) * 1_000_000_000))
+            } catch {
+                return
+            }
+            await self?.failConnection(HostedAgentClientError.timeout, generation: generation)
+        }
+    }
+
+    private func startLivenessMonitor(generation: Int) {
+        livenessTask?.cancel()
+        livenessTask = Task { [weak self] in
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(nanoseconds: 10_000_000_000)
+                } catch {
+                    return
+                }
+                guard let self else {
+                    return
+                }
+                if await self.hasTimedOut(generation: generation) {
+                    await self.failConnection(HostedAgentClientError.timeout, generation: generation)
+                    return
+                }
+            }
+        }
+    }
+
+    private func hasTimedOut(generation: Int) -> Bool {
+        generation == socketGeneration
+            && Date().timeIntervalSince(lastNetworkActivityAt) > livenessTimeout
+    }
+
+    private func transmitPrompt(_ prompt: String, conversation: Conversation, promptID: UUID) async {
+        let generation = socketGeneration
+        guard pendingPrompt?.id == promptID, let socket, let endpoint else {
+            return
+        }
+        do {
+            if let modeChange = HostedAgentClient.pendingModeChangeFrame(
+                for: conversation,
+                connectionStatus: connectionStatus
+            ) {
+                try await send(modeChange, over: socket)
+            }
+            let inputFrame = try buildInputFrame(prompt: prompt, endpoint: endpoint)
+            try await send(inputFrame, over: socket)
+        } catch {
+            failConnection(error, generation: generation)
+        }
+    }
+
+    private func cancelConnectWaiter(_ waiterID: UUID) {
+        guard let waiter = connectWaiters.removeValue(forKey: waiterID) else {
+            return
+        }
+        waiter.resume(throwing: CancellationError())
+        if connectWaiters.isEmpty, state == .connecting {
+            disconnect(with: CancellationError(), closeCode: .goingAway)
+        }
+    }
+
+    private func cancelPrompt(_ promptID: UUID) {
+        guard pendingPrompt?.id == promptID else {
+            return
+        }
+        disconnect(with: CancellationError(), closeCode: .goingAway)
+    }
+
+    private func handle(_ frame: [String: JSONValue], generation: Int) async {
+        guard generation == socketGeneration else {
+            return
+        }
+        lastNetworkActivityAt = Date()
+
+        switch frame["type"]?.stringValue {
+        case "PING":
+            guard let socket else {
+                return
+            }
+            do {
+                try await send(["type": .string("PONG")], over: socket)
+            } catch {
+                failConnection(error, generation: generation)
+            }
+        case "CONNECTED":
+            updateServerSession(from: frame)
+            connectionStatus = frame["status"]?.stringValue
+            state = .connected
+            connectTimeoutTask?.cancel()
+            connectTimeoutTask = nil
+            let result = HostedAgentResult(
+                output: nil,
+                endpointLabel: endpoint?.label ?? key.agentAddress,
+                serverSession: serverSession
+            )
+            let waiters = Array(connectWaiters.values)
+            connectWaiters.removeAll()
+            for waiter in waiters {
+                waiter.resume(returning: result)
+            }
+        case "OUTPUT":
+            updateServerSession(from: frame)
+            connectionStatus = "connected"
+            guard let pending = pendingPrompt else {
+                return
+            }
+            pendingPrompt = nil
+            cancelInteractionTasks()
+            pending.continuation.resume(
+                returning: HostedAgentResult(
+                    output: messageText(frame),
+                    endpointLabel: endpoint?.label ?? key.agentAddress,
+                    serverSession: serverSession
+                )
+            )
+        case "tool_call", "tool_result":
+            guard let pending = pendingPrompt, let event = HostedAgentEvent.from(frame) else {
+                return
+            }
+            await pending.onEvent?(event)
+        case "approval_needed", "APPROVAL_NEEDED":
+            guard let pending = pendingPrompt,
+                  let request = ToolApprovalRequest.from(frame) else {
+                failConnection(HostedAgentClientError.badFrame, generation: generation)
+                return
+            }
+            startApprovalTask(request: request, promptID: pending.id, generation: generation)
+        case "ulw_turns_reached":
+            guard let pending = pendingPrompt,
+                  let request = UlwCheckpointRequest.from(frame) else {
+                failConnection(HostedAgentClientError.badFrame, generation: generation)
+                return
+            }
+            startUlwCheckpointTask(request: request, promptID: pending.id, generation: generation)
+        case "plan_review":
+            guard let pending = pendingPrompt,
+                  let request = PlanReviewRequest.from(frame) else {
+                failConnection(HostedAgentClientError.badFrame, generation: generation)
+                return
+            }
+            startPlanReviewTask(request: request, promptID: pending.id, generation: generation)
+        case "ERROR", "ask_user":
+            failConnection(
+                HostedAgentClientError.server(messageText(frame)),
+                generation: generation
+            )
+        default:
+            break
+        }
+    }
+
+    private func startApprovalTask(request: ToolApprovalRequest, promptID: UUID, generation: Int) {
+        let taskID = UUID()
+        interactionTasks[taskID] = Task { [weak self] in
+            await self?.processApproval(
+                request: request,
+                promptID: promptID,
+                generation: generation,
+                taskID: taskID
+            )
+        }
+    }
+
+    private func processApproval(
+        request: ToolApprovalRequest,
+        promptID: UUID,
+        generation: Int,
+        taskID: UUID
+    ) async {
+        defer {
+            interactionTasks.removeValue(forKey: taskID)
+        }
+        guard generation == socketGeneration,
+              let pending = pendingPrompt,
+              pending.id == promptID else {
+            return
+        }
+        let decision = await pending.onApprovalRequest?(request)
+            ?? .rejectHard(feedback: "Approval unavailable.")
+        guard generation == socketGeneration,
+              pendingPrompt?.id == promptID,
+              let socket,
+              let endpoint else {
+            return
+        }
+        do {
+            try await send(
+                HostedAgentClient.approvalResponseFrame(
+                    decision: decision,
+                    agentAddress: key.agentAddress,
+                    endpoint: endpoint
+                ),
+                over: socket
+            )
+        } catch {
+            failConnection(error, generation: generation)
+        }
+    }
+
+    private func startUlwCheckpointTask(request: UlwCheckpointRequest, promptID: UUID, generation: Int) {
+        let taskID = UUID()
+        interactionTasks[taskID] = Task { [weak self] in
+            await self?.processUlwCheckpoint(
+                request: request,
+                promptID: promptID,
+                generation: generation,
+                taskID: taskID
+            )
+        }
+    }
+
+    private func processUlwCheckpoint(
+        request: UlwCheckpointRequest,
+        promptID: UUID,
+        generation: Int,
+        taskID: UUID
+    ) async {
+        defer {
+            interactionTasks.removeValue(forKey: taskID)
+        }
+        guard generation == socketGeneration,
+              let pending = pendingPrompt,
+              pending.id == promptID else {
+            return
+        }
+        let decision = await pending.onUlwCheckpoint?(request) ?? .switchMode(.safe)
+        guard generation == socketGeneration,
+              pendingPrompt?.id == promptID,
+              let socket,
+              let endpoint else {
+            return
+        }
+        do {
+            try await send(
+                HostedAgentClient.ulwResponseFrame(
+                    decision: decision,
+                    agentAddress: key.agentAddress,
+                    endpoint: endpoint
+                ),
+                over: socket
+            )
+        } catch {
+            failConnection(error, generation: generation)
+        }
+    }
+
+    private func startPlanReviewTask(request: PlanReviewRequest, promptID: UUID, generation: Int) {
+        let taskID = UUID()
+        interactionTasks[taskID] = Task { [weak self] in
+            await self?.processPlanReview(
+                request: request,
+                promptID: promptID,
+                generation: generation,
+                taskID: taskID
+            )
+        }
+    }
+
+    private func processPlanReview(
+        request: PlanReviewRequest,
+        promptID: UUID,
+        generation: Int,
+        taskID: UUID
+    ) async {
+        defer {
+            interactionTasks.removeValue(forKey: taskID)
+        }
+        guard generation == socketGeneration,
+              let pending = pendingPrompt,
+              pending.id == promptID else {
+            return
+        }
+        let decision = await pending.onPlanReview?(request)
+            ?? .requestChanges(feedback: "Plan review unavailable.")
+        guard generation == socketGeneration,
+              pendingPrompt?.id == promptID,
+              let socket,
+              let endpoint else {
+            return
+        }
+        do {
+            try await send(
+                HostedAgentClient.planReviewResponseFrame(
+                    decision: decision,
+                    request: request,
+                    agentAddress: key.agentAddress,
+                    endpoint: endpoint
+                ),
+                over: socket
+            )
+        } catch {
+            failConnection(error, generation: generation)
+        }
+    }
+
+    private func reconnectToApplyPendingModeChangeIfNeeded(conversation: Conversation) {
+        guard conversation.serverSession?[ClientSessionMetadata.pendingModeChange] != nil,
+              state == .connected,
+              pendingPrompt == nil else {
+            return
+        }
+        disconnect(with: HostedAgentClientError.closed, closeCode: .normalClosure)
+    }
+
+    private func cancelInteractionTasks() {
+        let tasks = Array(interactionTasks.values)
+        interactionTasks.removeAll()
+        for task in tasks {
+            task.cancel()
+        }
+    }
+
+    private func updateServerSession(from frame: [String: JSONValue]) {
+        if case .object(let session)? = frame["session"] {
+            serverSession = session
+        }
+        if let sessionID = frame["session_id"]?.stringValue {
+            var updated = serverSession ?? [:]
+            updated["session_id"] = .string(sessionID)
+            serverSession = updated
+        }
+    }
+
+    private func failConnection(_ error: Error, generation: Int) {
+        guard generation == socketGeneration else {
+            return
+        }
+        disconnect(with: normalizedConnectionError(error), closeCode: .goingAway)
+    }
+
+    private func disconnect(with error: Error, closeCode: URLSessionWebSocketTask.CloseCode) {
+        socketGeneration += 1
+        state = .disconnected
+        connectionStatus = nil
+
+        connectTimeoutTask?.cancel()
+        connectTimeoutTask = nil
+        livenessTask?.cancel()
+        livenessTask = nil
+        receiveTask?.cancel()
+        receiveTask = nil
+        cancelInteractionTasks()
+
+        let socket = socket
+        self.socket = nil
+        endpoint = nil
+        socket?.cancel(with: closeCode, reason: nil)
+
+        let waiters = Array(connectWaiters.values)
+        connectWaiters.removeAll()
+        let pending = pendingPrompt
+        pendingPrompt = nil
+
+        for waiter in waiters {
+            waiter.resume(throwing: error)
+        }
+        pending?.continuation.resume(throwing: error)
+    }
+
+    private func normalizedConnectionError(_ error: Error) -> Error {
+        if error is CancellationError || error is HostedAgentClientError {
+            return error
+        }
+        return HostedAgentClientError.closed
+    }
+
+    private func resolveEndpoint(agentAddress: String) async throws -> ResolvedEndpoint {
+        for httpURL in localEndpoints {
+            if let endpoint = try await probe(httpURL: httpURL, agentAddress: agentAddress, timeout: 1.2) {
+                return endpoint
+            }
+        }
+
+        let normalizedRelay = relayURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let relayHTTP = normalizedRelay.replacingOccurrences(of: "wss://", with: "https://")
+            .replacingOccurrences(of: "ws://", with: "http://")
+        if let url = URL(string: "\(relayHTTP)/api/relay/agents/\(agentAddress)"),
+           let relayInfo: AgentInfo = try? await fetchJSON(url: url, timeout: 3.0) {
+            for httpURL in sortByProximity(relayInfo.endpoints ?? []) where httpURL.hasPrefix("http") {
+                if let endpoint = try await probe(httpURL: httpURL, agentAddress: agentAddress, timeout: 2.5) {
+                    return endpoint
+                }
+            }
+        }
+
+        guard let relaySocketURL = URL(string: "\(normalizedRelay)/ws/input") else {
+            throw HostedAgentClientError.invalidURL("\(normalizedRelay)/ws/input")
+        }
+        return ResolvedEndpoint(wsURL: relaySocketURL, kind: .relay, label: normalizedRelay)
+    }
+
+    private func probe(httpURL: String, agentAddress: String, timeout: TimeInterval) async throws -> ResolvedEndpoint? {
+        guard let url = URL(string: "\(httpURL)/info") else {
+            return nil
+        }
+        guard let info: AgentInfo = try? await fetchJSON(url: url, timeout: timeout), info.address == agentAddress else {
+            return nil
+        }
+        guard let wsURL = URL(string: httpToWebSocket(httpURL)) else {
+            throw HostedAgentClientError.invalidURL(httpURL)
+        }
+        return ResolvedEndpoint(wsURL: wsURL, kind: .direct, label: info.name.map { "\($0) at \(httpURL)" } ?? httpURL)
+    }
+
+    private func fetchJSON<T: Decodable>(url: URL, timeout: TimeInterval) async throws -> T {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = timeout
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, 200..<300 ~= http.statusCode else {
+            throw HostedAgentClientError.server("Endpoint \(url.absoluteString) did not return OK.")
+        }
+        return try JSONDecoder().decode(T.self, from: data)
+    }
+
+    private func sortByProximity(_ endpoints: [String]) -> [String] {
+        endpoints.sorted { left, right in
+            priority(left) < priority(right)
+        }
+    }
+
+    private func priority(_ endpoint: String) -> Int {
+        if endpoint.contains("localhost") || endpoint.contains("127.0.0.1") {
+            return 0
+        }
+        if endpoint.contains("192.168.") || endpoint.contains("10.") || endpoint.contains("172.16.") {
+            return 1
+        }
+        return 2
+    }
+
+    private func httpToWebSocket(_ httpURL: String) -> String {
+        let base = httpURL.replacingOccurrences(of: "https://", with: "")
+            .replacingOccurrences(of: "http://", with: "")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let scheme = httpURL.hasPrefix("https://") ? "wss" : "ws"
+        return "\(scheme)://\(base)/ws"
+    }
+
+    private func buildConnectFrame(conversation: Conversation, endpoint: ResolvedEndpoint) throws -> [String: JSONValue] {
+        let timestamp = Double(Int(Date().timeIntervalSince1970))
+        let payload: [String: JSONValue] = [
+            "timestamp": .number(timestamp),
+            "to": .string(key.agentAddress),
+        ]
+        var frame = try identityStore.signedEnvelope(type: "CONNECT", payload: payload)
+        frame["session_id"] = .string(conversation.id)
+        frame["session"] = .object(sessionPayload(for: conversation))
+        if endpoint.kind == .relay {
+            frame["to"] = .string(key.agentAddress)
+        }
+        return frame
+    }
+
+    private func sessionPayload(for conversation: Conversation) -> [String: JSONValue] {
+        var session = conversation.serverSession ?? [:]
+        session.removeValue(forKey: ClientSessionMetadata.pendingModeChange)
+        session["session_id"] = .string(conversation.id)
+        session["mode"] = .string(conversation.mode.rawValue)
+        if conversation.mode == .ulw {
+            session["skip_tool_approval"] = .bool(true)
+            if session["ulw_turns"] == nil {
+                session["ulw_turns"] = .number(100)
+            }
+            if session["ulw_turns_used"] == nil {
+                session["ulw_turns_used"] = .number(0)
+            }
+        } else {
+            session.removeValue(forKey: "skip_tool_approval")
+            session.removeValue(forKey: "ulw_turns")
+            session.removeValue(forKey: "ulw_turns_used")
+        }
+        return session
+    }
+
+    private func buildInputFrame(prompt: String, endpoint: ResolvedEndpoint) throws -> [String: JSONValue] {
+        let timestamp = Double(Int(Date().timeIntervalSince1970))
+        var payload: [String: JSONValue] = [
+            "prompt": .string(prompt),
+            "timestamp": .number(timestamp),
+        ]
+        if endpoint.kind == .relay {
+            payload["to"] = .string(key.agentAddress)
+        }
+        var frame = try identityStore.signedEnvelope(type: "INPUT", payload: payload)
+        frame["input_id"] = .string(UUID().uuidString)
+        frame["prompt"] = .string(prompt)
+        if endpoint.kind == .relay {
+            frame["to"] = .string(key.agentAddress)
+        }
+        return frame
+    }
+
+    private func send(_ frame: [String: JSONValue], over socket: URLSessionWebSocketTask) async throws {
+        let data = try JSONEncoder().encode(frame)
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw HostedAgentClientError.badFrame
+        }
+        try await socket.send(.string(text))
+        guard self.socket === socket else {
+            throw HostedAgentClientError.closed
+        }
+        lastNetworkActivityAt = Date()
+    }
+
+    private static func readFrame(from socket: URLSessionWebSocketTask) async throws -> [String: JSONValue] {
+        let message = try await socket.receive()
+        switch message {
+        case .string(let text):
+            guard let data = text.data(using: .utf8) else {
+                throw HostedAgentClientError.badFrame
+            }
+            return try JSONDecoder().decode([String: JSONValue].self, from: data)
+        case .data(let data):
+            return try JSONDecoder().decode([String: JSONValue].self, from: data)
+        @unknown default:
+            throw HostedAgentClientError.badFrame
+        }
+    }
+
+    private func messageText(_ frame: [String: JSONValue]) -> String {
+        for key in ["result", "message", "error", "text", "content"] {
+            if let value = frame[key]?.stringValue {
+                return value
+            }
+        }
+        return "Hosted agent returned \(frame["type"]?.stringValue ?? "an event")."
+    }
+}
