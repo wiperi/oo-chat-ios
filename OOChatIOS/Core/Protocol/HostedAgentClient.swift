@@ -7,6 +7,7 @@ enum HostedAgentClientError: LocalizedError {
     case server(String)
     case closed
     case timeout
+    case busy
 
     var errorDescription: String? {
         switch self {
@@ -22,6 +23,8 @@ enum HostedAgentClientError: LocalizedError {
             return "The connection closed before the agent replied. Try again."
         case .timeout:
             return "The agent didn't reply in time. Try again."
+        case .busy:
+            return "The hosted agent is already processing a message in this conversation."
         }
     }
 }
@@ -668,4 +671,9 @@ final class HostedAgentClient: HostedAgentTransport {
         }
         return "Hosted agent returned \(frame["type"]?.stringValue ?? "an event")."
     }
+}
+
+private struct HostedAgentConnectionKey: Hashable {
+    let agentAddress: String
+    let conversationID: String
 }
