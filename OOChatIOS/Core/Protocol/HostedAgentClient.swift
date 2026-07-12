@@ -678,6 +678,193 @@ private struct HostedAgentConnectionKey: Hashable {
     let conversationID: String
 }
 
+/// Owns a bounded set of session-bound WebSockets. Connections that are actively
+/// running an agent or waiting for human interaction are pinned and never evicted.
+private actor HostedAgentConnectionPool {
+    private struct Entry {
+        let connection: HostedAgentConnection
+        var activeLeases: Int
+        var lastUsedAt: Date
+    }
+
+    private struct Lease {
+        let key: HostedAgentConnectionKey
+        let connection: HostedAgentConnection
+    }
+
+    private let identityStore: IdentityStore
+    private let session: URLSession
+    private let maximumSize: Int
+    private let idleLifetime: TimeInterval
+    private let relayURL: String
+    private let localEndpoints: [String]
+
+    private var connections: [HostedAgentConnectionKey: Entry] = [:]
+    private var cleanupTask: Task<Void, Never>?
+
+    init(
+        identityStore: IdentityStore,
+        session: URLSession,
+        maximumSize: Int,
+        idleLifetime: TimeInterval,
+        relayURL: String,
+        localEndpoints: [String]
+    ) {
+        self.identityStore = identityStore
+        self.session = session
+        self.maximumSize = max(1, maximumSize)
+        self.idleLifetime = max(1, idleLifetime)
+        self.relayURL = relayURL
+        self.localEndpoints = localEndpoints
+    }
+
+    func connect(agentAddress: String, conversation: Conversation) async throws -> HostedAgentResult {
+        let lease = await acquire(agentAddress: agentAddress, conversationID: conversation.id)
+        do {
+            let result = try await lease.connection.ensureConnected(conversation: conversation)
+            release(lease)
+            await trimToSize()
+            return result
+        } catch {
+            release(lease)
+            await trimToSize()
+            throw error
+        }
+    }
+
+    func sendPrompt(
+        agentAddress: String,
+        conversation: Conversation,
+        prompt: String,
+        onEvent: (@MainActor (HostedAgentEvent) -> Void)?,
+        onApprovalRequest: (@MainActor (ToolApprovalRequest) async -> ApprovalDecision)?,
+        onUlwCheckpoint: (@MainActor (UlwCheckpointRequest) async -> UlwCheckpointDecision)?,
+        onPlanReview: (@MainActor (PlanReviewRequest) async -> PlanReviewDecision)?
+    ) async throws -> HostedAgentResult {
+        let lease = await acquire(agentAddress: agentAddress, conversationID: conversation.id)
+        do {
+            let result = try await lease.connection.sendPrompt(
+                conversation: conversation,
+                prompt: prompt,
+                onEvent: onEvent,
+                onApprovalRequest: onApprovalRequest,
+                onUlwCheckpoint: onUlwCheckpoint,
+                onPlanReview: onPlanReview
+            )
+            release(lease)
+            await trimToSize()
+            return result
+        } catch {
+            release(lease)
+            await trimToSize()
+            throw error
+        }
+    }
+
+    func closeAll() async {
+        cleanupTask?.cancel()
+        cleanupTask = nil
+        let activeConnections = connections.values.map(\.connection)
+        connections.removeAll()
+        for connection in activeConnections {
+            await connection.close()
+        }
+    }
+
+    private func acquire(agentAddress: String, conversationID: String) async -> Lease {
+        startCleanupTaskIfNeeded()
+        await evictExpiredConnections()
+
+        let key = HostedAgentConnectionKey(agentAddress: agentAddress, conversationID: conversationID)
+        if var entry = connections[key] {
+            entry.activeLeases += 1
+            entry.lastUsedAt = Date()
+            connections[key] = entry
+            return Lease(key: key, connection: entry.connection)
+        }
+
+        while connections.count >= maximumSize, await evictLeastRecentlyUsedIdleConnection() {}
+
+        let connection = HostedAgentConnection(
+            key: key,
+            identityStore: identityStore,
+            session: session,
+            relayURL: relayURL,
+            localEndpoints: localEndpoints
+        )
+        connections[key] = Entry(connection: connection, activeLeases: 1, lastUsedAt: Date())
+        return Lease(key: key, connection: connection)
+    }
+
+    private func release(_ lease: Lease) {
+        guard var entry = connections[lease.key], entry.connection === lease.connection else {
+            return
+        }
+        entry.activeLeases = max(0, entry.activeLeases - 1)
+        entry.lastUsedAt = Date()
+        connections[lease.key] = entry
+    }
+
+    private func startCleanupTaskIfNeeded() {
+        guard cleanupTask == nil else {
+            return
+        }
+        let interval = min(30, max(1, idleLifetime / 2))
+        cleanupTask = Task { [weak self] in
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+                } catch {
+                    return
+                }
+                await self?.evictExpiredConnections()
+            }
+        }
+    }
+
+    private func evictExpiredConnections() async {
+        let cutoff = Date().addingTimeInterval(-idleLifetime)
+        let expiredKeys = connections.compactMap { key, entry in
+            entry.activeLeases == 0 && entry.lastUsedAt < cutoff ? key : nil
+        }
+        let expiredConnections = expiredKeys.compactMap { key in
+            connections.removeValue(forKey: key)?.connection
+        }
+        for connection in expiredConnections {
+            await connection.close()
+        }
+    }
+
+    @discardableResult
+    private func evictLeastRecentlyUsedIdleConnection() async -> Bool {
+        var candidate: (key: HostedAgentConnectionKey, entry: Entry)?
+        for (key, entry) in connections {
+            guard entry.activeLeases == 0 else {
+                continue
+            }
+            if candidate == nil || entry.lastUsedAt < candidate!.entry.lastUsedAt {
+                candidate = (key, entry)
+            }
+        }
+        guard let candidate,
+              let removed = connections.removeValue(forKey: candidate.key),
+              removed.connection === candidate.entry.connection else {
+            return false
+        }
+        await removed.connection.close()
+        return true
+    }
+
+    private func trimToSize() async {
+        while connections.count > maximumSize {
+            guard await evictLeastRecentlyUsedIdleConnection() else {
+                return
+            }
+        }
+    }
+}
+
+
 private actor HostedAgentConnection {
     private enum State {
         case disconnected
