@@ -105,7 +105,15 @@ struct AgentsView: View {
                         token: savedDraft.token
                     ) {
                         agentDraft = nil
-                        path = [.sessions(agent.id)]
+                        if savedDraft.shouldConnectAfterSave {
+                            Task { @MainActor in
+                                if await viewModel.connectToAgent() != nil {
+                                    switchToChat()
+                                }
+                            }
+                        } else {
+                            path = [.sessions(agent.id)]
+                        }
                         return true
                     }
                     return false

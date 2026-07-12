@@ -6,6 +6,7 @@ struct AgentFormDraft: Identifiable {
     var name: String
     var address: String
     var token: String
+    var shouldConnectAfterSave = false
 
     init(agent: AgentConnection? = nil) {
         self.agentID = agent?.id
@@ -22,6 +23,8 @@ struct AgentFormDraft: Identifiable {
 struct AgentFormView: View {
     @State private var draft: AgentFormDraft
     @State private var validationMessage: String?
+    @State private var isPresentingScanner = false
+    @State private var scannedAddress: String?
     let onSave: (AgentFormDraft) -> Bool
     let onCancel: () -> Void
 
@@ -43,7 +46,21 @@ struct AgentFormView: View {
                         .font(.system(.body, design: .monospaced))
                         .onChange(of: draft.address) {
                             validationMessage = nil
+                            if draft.address != scannedAddress {
+                                draft.shouldConnectAfterSave = false
+                            }
                         }
+                    if draft.agentID == nil {
+                        Button {
+                            guard AgentQRCodeScannerView.isAvailable else {
+                                validationMessage = "Camera scanning is unavailable. Enter the agent address manually."
+                                return
+                            }
+                            isPresentingScanner = true
+                        } label: {
+                            Label("Scan QR Code", systemImage: "qrcode.viewfinder")
+                        }
+                    }
                     if let validationMessage {
                         Text(validationMessage)
                             .font(.footnote)
@@ -85,5 +102,29 @@ struct AgentFormView: View {
                 }
             }
         }
+        .fullScreenCover(isPresented: $isPresentingScanner) {
+            AgentQRCodeScannerView(
+                onCode: handleScannedCode,
+                onUnavailable: handleScannerUnavailable
+            )
+        }
+    }
+
+    private func handleScannedCode(_ code: String) {
+        isPresentingScanner = false
+        guard let address = AgentQRCodePayload.address(from: code) else {
+            validationMessage = "This QR code does not contain a valid agent address."
+            return
+        }
+
+        scannedAddress = address
+        draft.address = address
+        draft.shouldConnectAfterSave = true
+        validationMessage = nil
+    }
+
+    private func handleScannerUnavailable(_ message: String) {
+        isPresentingScanner = false
+        validationMessage = message
     }
 }
