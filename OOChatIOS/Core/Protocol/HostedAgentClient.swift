@@ -314,29 +314,7 @@ final class HostedAgentClient: HostedAgentTransport {
         guard Self.isHostedAgentAddress(agentAddress) else {
             throw HostedAgentClientError.invalidAddress
         }
-        let endpoint = try await resolveEndpoint(agentAddress: agentAddress)
-        let socket = session.webSocketTask(with: endpoint.wsURL)
-        socket.resume()
-        defer {
-            socket.cancel(with: .normalClosure, reason: nil)
-        }
-
-        let connectFrame = try buildConnectFrame(agentAddress: agentAddress, conversation: conversation, endpoint: endpoint)
-        try await send(connectFrame, over: socket)
-
-        while true {
-            let frame = try await receiveFrame(from: socket)
-            switch frame["type"]?.stringValue {
-            case "PING":
-                try await send(["type": .string("PONG")], over: socket)
-            case "CONNECTED":
-                return HostedAgentResult(output: nil, endpointLabel: endpoint.label, serverSession: extractServerSession(from: frame))
-            case "ERROR":
-                throw HostedAgentClientError.server(messageText(frame))
-            default:
-                continue
-            }
-        }
+        return try await connectionPool.connect(agentAddress: agentAddress, conversation: conversation)
     }
 
     func sendPrompt(
