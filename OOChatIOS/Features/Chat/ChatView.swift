@@ -133,8 +133,6 @@ struct ChatScreen: View {
                 .accessibilityLabel("Switch Agent")
             }
         }
-        .toolbarBackground(Color(.systemBackground), for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
     }
 
     private func scrollTarget(for interactionID: String) -> String {

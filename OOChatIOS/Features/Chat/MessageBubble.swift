@@ -30,7 +30,7 @@ struct MessageBubble: View {
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
                     .background(
-                        Color(.secondarySystemBackground),
+                        AppTheme.outgoingMessageBackground,
                         in: RoundedRectangle(cornerRadius: 20, style: .continuous)
                     )
                 deliveryStatus
