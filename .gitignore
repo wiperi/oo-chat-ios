@@ -1,4 +1,5 @@
 tt.*
+*.bak.*
 
 # Build and Derived Data
 build/
