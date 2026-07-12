@@ -275,14 +275,35 @@ protocol HostedAgentTransport {
 }
 
 final class HostedAgentClient: HostedAgentTransport {
+    private let connectionPool: HostedAgentConnectionPool
     private let identityStore: IdentityStore
     private let session: URLSession
     private let relayURL = "wss://oo.openonion.ai"
     private let localEndpoints = ["http://localhost:8000", "http://127.0.0.1:8000"]
 
-    init(identityStore: IdentityStore, session: URLSession = .shared) {
+    init(
+        identityStore: IdentityStore,
+        session: URLSession = .shared,
+        poolSize: Int = 3,
+        connectionIdleLifetime: TimeInterval = 5 * 60
+    ) {
+        connectionPool = HostedAgentConnectionPool(
+            identityStore: identityStore,
+            session: session,
+            maximumSize: poolSize,
+            idleLifetime: connectionIdleLifetime,
+            relayURL: "wss://oo.openonion.ai",
+            localEndpoints: ["http://localhost:8000", "http://127.0.0.1:8000"]
+        )
         self.identityStore = identityStore
         self.session = session
+    }
+
+    deinit {
+        let connectionPool = connectionPool
+        Task {
+            await connectionPool.closeAll()
+        }
     }
 
     static func isHostedAgentAddress(_ address: String) -> Bool {
