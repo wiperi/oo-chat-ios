@@ -3,7 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @StateObject var viewModel: ChatViewModel
     @State private var selectedTab: AppTab = .agents
-    @AppStorage("appAppearance") private var appAppearance = AppAppearance.light.rawValue
+    @AppStorage("appAppearance") private var appAppearance = AppAppearance.system.rawValue
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -34,10 +34,10 @@ struct ContentView: View {
             }
         }
         .tint(AppTheme.primary)
-        .preferredColorScheme(AppAppearance(rawValue: appAppearance)?.colorScheme ?? .light)
+        .preferredColorScheme(AppAppearance(rawValue: appAppearance)?.colorScheme)
         .onAppear {
             if AppAppearance(rawValue: appAppearance) == nil {
-                appAppearance = AppAppearance.light.rawValue
+                appAppearance = AppAppearance.system.rawValue
             }
         }
         .onChange(of: viewModel.pendingInteractionID) {
@@ -56,6 +56,7 @@ enum AppTab: Hashable {
 }
 
 enum AppAppearance: String, CaseIterable, Identifiable {
+    case system
     case light
     case dark
 
@@ -63,6 +64,8 @@ enum AppAppearance: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
+        case .system:
+            return "System"
         case .light:
             return "Light"
         case .dark:
@@ -70,8 +73,10 @@ enum AppAppearance: String, CaseIterable, Identifiable {
         }
     }
 
-    var colorScheme: ColorScheme {
+    var colorScheme: ColorScheme? {
         switch self {
+        case .system:
+            return nil
         case .light:
             return .light
         case .dark:

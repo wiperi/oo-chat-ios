@@ -2,7 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var viewModel: ChatViewModel
-    @AppStorage("appAppearance") private var appAppearance = AppAppearance.light.rawValue
+    @AppStorage("appAppearance") private var appAppearance = AppAppearance.system.rawValue
 
     var body: some View {
         NavigationStack {
