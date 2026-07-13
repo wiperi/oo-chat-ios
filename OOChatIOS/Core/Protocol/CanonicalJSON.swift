@@ -6,8 +6,8 @@ enum CanonicalJSON {
         case .string(let text):
             return quote(text)
         case .number(let number):
-            if number.rounded() == number {
-                return String(Int64(number))
+            if number.rounded() == number, let integer = Int64(exactly: number) {
+                return String(integer)
             }
             return String(number)
         case .bool(let flag):

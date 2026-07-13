@@ -282,7 +282,13 @@ enum ToolActionSummary {
         case .string(let value):
             return value
         case .number(let value):
-            return value.rounded() == value ? String(Int(value)) : String(value)
+            // Tool arguments come from the hosted agent and may contain numbers
+            // outside the range representable by Int. Keep rendering total so a
+            // malicious or simply large JSON number cannot trap the app.
+            if value.rounded() == value, let integer = Int64(exactly: value) {
+                return String(integer)
+            }
+            return String(value)
         case .bool(let value):
             return value ? "true" : "false"
         case .array(let values):
