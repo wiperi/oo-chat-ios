@@ -366,6 +366,24 @@ final class SwiftDataConversationRepositoryTests: XCTestCase {
         XCTAssertEqual(loaded, tool)
     }
 
+    func testMessagesWithSameIDInDifferentConversationsBothSurvive() throws {
+        let repository = try makeRepository()
+        // Server-chosen tool IDs are not globally unique across conversations.
+        var first = makeConversation(agentID: "a1", address: "0xaaa", title: "first", updatedAt: seconds(1000))
+        first.messages = [ChatMessage(id: "t1", role: .tool, content: "in first", createdAt: seconds(1001))]
+        var second = makeConversation(agentID: "a1", address: "0xaaa", title: "second", updatedAt: seconds(2000))
+        second.messages = [ChatMessage(id: "t1", role: .tool, content: "in second", createdAt: seconds(2001))]
+
+        repository.upsertConversation(first)
+        repository.upsertConversation(second)
+        let loaded = repository.load().conversations
+
+        let firstLoaded = loaded.first { $0.id == first.id }
+        let secondLoaded = loaded.first { $0.id == second.id }
+        XCTAssertEqual(firstLoaded?.messages.map(\.content), ["in first"])
+        XCTAssertEqual(secondLoaded?.messages.map(\.content), ["in second"])
+    }
+
     private func seconds(_ value: TimeInterval) -> Date {
         Date(timeIntervalSince1970: value)
     }

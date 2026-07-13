@@ -154,13 +154,14 @@ final class SwiftDataConversationRepository: ConversationRepository {
     }
 
     private func syncMessages(_ messages: [ChatMessage], of stored: StoredConversation) {
+        // StoredMessage.id is a composite; match on the original messageID.
         let keep = Set(messages.map(\.id))
-        for message in stored.messages where !keep.contains(message.id) {
+        for message in stored.messages where !keep.contains(message.messageID) {
             context.delete(message)
         }
         var existing: [String: StoredMessage] = [:]
         for message in stored.messages {
-            existing[message.id] = message
+            existing[message.messageID] = message
         }
         for message in messages {
             if let storedMessage = existing[message.id] {
@@ -172,7 +173,7 @@ final class SwiftDataConversationRepository: ConversationRepository {
                 storedMessage.toolArgumentsData = encodeToolArguments(message.toolArguments)
                 storedMessage.toolStateRaw = message.toolState?.rawValue
             } else {
-                stored.messages.append(toStoredMessage(message))
+                stored.messages.append(toStoredMessage(message, conversationID: stored.id))
             }
         }
     }
@@ -208,7 +209,7 @@ final class SwiftDataConversationRepository: ConversationRepository {
 
     private func toMessage(_ stored: StoredMessage) -> ChatMessage {
         ChatMessage(
-            id: stored.id,
+            id: stored.messageID,
             role: ChatRole(rawValue: stored.roleRaw) ?? .agent,
             content: stored.content,
             createdAt: stored.createdAt,
@@ -240,13 +241,14 @@ final class SwiftDataConversationRepository: ConversationRepository {
             createdAt: conversation.createdAt,
             updatedAt: conversation.updatedAt,
             serverSessionData: encodeSession(conversation.serverSession),
-            messages: conversation.messages.map(toStoredMessage)
+            messages: conversation.messages.map { toStoredMessage($0, conversationID: conversation.id) }
         )
     }
 
-    private func toStoredMessage(_ message: ChatMessage) -> StoredMessage {
+    private func toStoredMessage(_ message: ChatMessage, conversationID: String) -> StoredMessage {
         StoredMessage(
-            id: message.id,
+            messageID: message.id,
+            conversationID: conversationID,
             roleRaw: message.role.rawValue,
             content: message.content,
             createdAt: message.createdAt,

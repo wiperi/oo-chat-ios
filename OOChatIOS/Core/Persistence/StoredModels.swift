@@ -58,7 +58,10 @@ final class StoredConversation {
 
 @Model
 final class StoredMessage {
+    // Server-chosen message IDs are not globally unique, so `id` is a conversation-scoped
+    // composite; `messageID` keeps the original ID for in-conversation matching.
     @Attribute(.unique) var id: String
+    var messageID: String
     var roleRaw: String
     var content: String
     var createdAt: Date
@@ -69,7 +72,8 @@ final class StoredMessage {
     var conversation: StoredConversation?
 
     init(
-        id: String,
+        messageID: String,
+        conversationID: String,
         roleRaw: String,
         content: String,
         createdAt: Date,
@@ -78,7 +82,8 @@ final class StoredMessage {
         toolArgumentsData: Data? = nil,
         toolStateRaw: String? = nil
     ) {
-        self.id = id
+        self.id = StoredMessage.compositeID(conversationID: conversationID, messageID: messageID)
+        self.messageID = messageID
         self.roleRaw = roleRaw
         self.content = content
         self.createdAt = createdAt
@@ -86,5 +91,10 @@ final class StoredMessage {
         self.toolName = toolName
         self.toolArgumentsData = toolArgumentsData
         self.toolStateRaw = toolStateRaw
+    }
+
+    static func compositeID(conversationID: String, messageID: String) -> String {
+        assert(!conversationID.contains("#"), "conversation IDs must not contain '#'")
+        return "\(conversationID)#\(messageID)"
     }
 }
