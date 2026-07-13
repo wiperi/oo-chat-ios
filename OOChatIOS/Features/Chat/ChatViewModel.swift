@@ -94,7 +94,6 @@ final class ChatViewModel: ObservableObject {
     @Published private(set) var isOffline = false
     @Published private(set) var isOfflineBannerDismissed = false
     @Published private(set) var pendingApproval: PendingApproval?
-    @Published private(set) var pendingUlwCheckpoint: PendingUlwCheckpoint?
     @Published private(set) var pendingPlanReview: PendingPlanReview?
 
     var shouldShowOfflineBanner: Bool {
@@ -107,10 +106,6 @@ final class ChatViewModel: ObservableObject {
     private let approvalGate = ContinuationGate<ApprovalDecision>(
         cancellationDecision: .rejectHard(feedback: "Approval cancelled."),
         unavailableDecision: .rejectHard(feedback: "Approval unavailable.")
-    )
-    private let ulwCheckpointGate = ContinuationGate<UlwCheckpointDecision>(
-        cancellationDecision: .switchMode(.safe),
-        unavailableDecision: .switchMode(.safe)
     )
     private let planReviewGate = ContinuationGate<PlanReviewDecision>(
         cancellationDecision: .requestChanges(feedback: "Plan review cancelled."),
@@ -148,7 +143,7 @@ final class ChatViewModel: ObservableObject {
     }
 
     var pendingInteractionID: String? {
-        pendingApproval?.id ?? pendingUlwCheckpoint?.id ?? pendingPlanReview?.id
+        pendingApproval?.id ?? pendingPlanReview?.id
     }
 
     init(
@@ -190,7 +185,6 @@ final class ChatViewModel: ObservableObject {
         recoveryTask?.cancel()
         sendTask?.cancel()
         approvalGate.cancelAll()
-        ulwCheckpointGate.cancelAll()
         planReviewGate.cancelAll()
     }
 
@@ -558,10 +552,9 @@ final class ChatViewModel: ObservableObject {
 
         let transport = client
         let approvalGate = approvalGate
-        let ulwCheckpointGate = ulwCheckpointGate
         let planReviewGate = planReviewGate
         let owner = WeakChatViewModelReference(self)
-        return Task { [transport, approvalGate, ulwCheckpointGate, planReviewGate, owner] in
+        return Task { [transport, approvalGate, planReviewGate, owner] in
             defer {
                 if clearsProcessingState {
                     owner.value?.isProcessing = false
@@ -592,26 +585,6 @@ final class ChatViewModel: ObservableObject {
                         } dismiss: { [owner] in
                             if owner.value?.pendingApproval?.id == request.id {
                                 owner.value?.pendingApproval = nil
-                            }
-                        }
-                    },
-                    onUlwCheckpoint: { [ulwCheckpointGate, owner] request in
-                        await ulwCheckpointGate.wait(for: request.id) { [owner] in
-                            guard let viewModel = owner.value,
-                                  viewModel.conversation(withID: conversationID) != nil else {
-                                return false
-                            }
-                            if viewModel.activeConversationID != conversationID {
-                                viewModel.selectConversation(withID: conversationID)
-                            }
-                            viewModel.pendingUlwCheckpoint = PendingUlwCheckpoint(
-                                conversationID: conversationID,
-                                request: request
-                            )
-                            return true
-                        } dismiss: { [owner] in
-                            if owner.value?.pendingUlwCheckpoint?.id == request.id {
-                                owner.value?.pendingUlwCheckpoint = nil
                             }
                         }
                     },
@@ -790,15 +763,6 @@ final class ChatViewModel: ObservableObject {
         resolvePendingApproval(id: id, with: .rejectExplain(feedback: nil))
     }
 
-    func continueUlw(id: String, turns: Int = 100) {
-        resolvePendingUlwCheckpoint(id: id, with: .continueWork(turns: turns))
-    }
-
-    func switchModeFromUlwCheckpoint(id: String, to mode: ChatMode) {
-        setMode(mode)
-        resolvePendingUlwCheckpoint(id: id, with: .switchMode(mode))
-    }
-
     func approvePendingPlan(id: String) {
         resolvePendingPlanReview(id: id, with: .approve)
     }
@@ -815,12 +779,6 @@ final class ChatViewModel: ObservableObject {
         approvalGate.resolve(id: id, with: decision)
     }
 
-    private func resolvePendingUlwCheckpoint(id: String, with decision: UlwCheckpointDecision) {
-        guard pendingUlwCheckpoint?.id == id else { return }
-        pendingUlwCheckpoint = nil
-        ulwCheckpointGate.resolve(id: id, with: decision)
-    }
-
     private func resolvePendingPlanReview(id: String, with decision: PlanReviewDecision) {
         guard pendingPlanReview?.id == id else { return }
         pendingPlanReview = nil
@@ -834,10 +792,6 @@ final class ChatViewModel: ObservableObject {
                 id: pending.request.id,
                 with: .rejectHard(feedback: "Approval cancelled.")
             )
-        }
-        if let pending = pendingUlwCheckpoint, pending.conversationID == conversationID {
-            pendingUlwCheckpoint = nil
-            ulwCheckpointGate.resolve(id: pending.id, with: .switchMode(.safe))
         }
         if let pending = pendingPlanReview, pending.conversationID == conversationID {
             pendingPlanReview = nil
@@ -1024,19 +978,9 @@ final class ChatViewModel: ObservableObject {
         var next = session ?? [:]
         next["session_id"] = .string(conversationID)
         next["mode"] = .string(mode.rawValue)
-        if mode == .ulw {
-            next["skip_tool_approval"] = .bool(true)
-            if next["ulw_turns"] == nil {
-                next["ulw_turns"] = .number(100)
-            }
-            if next["ulw_turns_used"] == nil {
-                next["ulw_turns_used"] = .number(0)
-            }
-        } else {
-            next.removeValue(forKey: "ulw_turns")
-            next.removeValue(forKey: "ulw_turns_used")
-            next.removeValue(forKey: "skip_tool_approval")
-        }
+        next.removeValue(forKey: "ulw_turns")
+        next.removeValue(forKey: "ulw_turns_used")
+        next.removeValue(forKey: "skip_tool_approval")
         return next
     }
 

@@ -193,40 +193,6 @@ extension ApprovalDecision {
     }
 }
 
-extension UlwCheckpointRequest {
-    static func from(_ frame: [String: JSONValue]) -> UlwCheckpointRequest? {
-        guard frame["type"]?.stringValue?.lowercased() == "ulw_turns_reached",
-              let turnsUsed = frame["turns_used"]?.numberValue,
-              let maxTurns = frame["max_turns"]?.numberValue else {
-            return nil
-        }
-        return UlwCheckpointRequest(
-            id: frame["id"]?.stringValue ?? UUID().uuidString,
-            turnsUsed: Int(turnsUsed),
-            maxTurns: Int(maxTurns)
-        )
-    }
-}
-
-extension UlwCheckpointDecision {
-    var responseFrame: [String: JSONValue] {
-        switch self {
-        case .continueWork(let turns):
-            return [
-                "type": .string("ULW_RESPONSE"),
-                "action": .string("continue"),
-                "turns": .number(Double(turns)),
-            ]
-        case .switchMode(let mode):
-            return [
-                "type": .string("ULW_RESPONSE"),
-                "action": .string("switch_mode"),
-                "mode": .string(mode.rawValue),
-            ]
-        }
-    }
-}
-
 extension PlanReviewRequest {
     static func from(_ frame: [String: JSONValue]) -> PlanReviewRequest? {
         guard frame["type"]?.stringValue?.lowercased() == "plan_review",
@@ -269,7 +235,6 @@ protocol HostedAgentTransport {
         prompt: String,
         onEvent: (@MainActor (HostedAgentEvent) -> Void)?,
         onApprovalRequest: (@MainActor (ToolApprovalRequest) async -> ApprovalDecision)?,
-        onUlwCheckpoint: (@MainActor (UlwCheckpointRequest) async -> UlwCheckpointDecision)?,
         onPlanReview: (@MainActor (PlanReviewRequest) async -> PlanReviewDecision)?
     ) async throws -> HostedAgentResult
 }
@@ -317,7 +282,6 @@ final class HostedAgentClient: HostedAgentTransport {
         prompt: String,
         onEvent: (@MainActor (HostedAgentEvent) -> Void)?,
         onApprovalRequest: (@MainActor (ToolApprovalRequest) async -> ApprovalDecision)?,
-        onUlwCheckpoint: (@MainActor (UlwCheckpointRequest) async -> UlwCheckpointDecision)?,
         onPlanReview: (@MainActor (PlanReviewRequest) async -> PlanReviewDecision)?
     ) async throws -> HostedAgentResult {
         guard Self.isHostedAgentAddress(agentAddress) else {
@@ -329,7 +293,6 @@ final class HostedAgentClient: HostedAgentTransport {
             prompt: prompt,
             onEvent: onEvent,
             onApprovalRequest: onApprovalRequest,
-            onUlwCheckpoint: onUlwCheckpoint,
             onPlanReview: onPlanReview
         )
     }
@@ -356,22 +319,7 @@ final class HostedAgentClient: HostedAgentTransport {
             "type": .string("mode_change"),
             "mode": .string(mode.rawValue),
         ]
-        if mode == .ulw {
-            frame["turns"] = conversation.serverSession?["ulw_turns"] ?? .number(100)
-        }
         return frame
-    }
-
-    static func ulwResponseFrame(
-        decision: UlwCheckpointDecision,
-        agentAddress: String,
-        endpoint: ResolvedEndpoint
-    ) -> [String: JSONValue] {
-        routedInteractiveFrame(
-            decision.responseFrame,
-            agentAddress: agentAddress,
-            endpoint: endpoint
-        )
     }
 
     static func planReviewResponseFrame(
@@ -467,7 +415,6 @@ private actor HostedAgentConnectionPool {
         prompt: String,
         onEvent: (@MainActor (HostedAgentEvent) -> Void)?,
         onApprovalRequest: (@MainActor (ToolApprovalRequest) async -> ApprovalDecision)?,
-        onUlwCheckpoint: (@MainActor (UlwCheckpointRequest) async -> UlwCheckpointDecision)?,
         onPlanReview: (@MainActor (PlanReviewRequest) async -> PlanReviewDecision)?
     ) async throws -> HostedAgentResult {
         let lease = await acquire(agentAddress: agentAddress, conversationID: conversation.id)
@@ -477,7 +424,6 @@ private actor HostedAgentConnectionPool {
                 prompt: prompt,
                 onEvent: onEvent,
                 onApprovalRequest: onApprovalRequest,
-                onUlwCheckpoint: onUlwCheckpoint,
                 onPlanReview: onPlanReview
             )
             release(lease)
@@ -605,7 +551,6 @@ private actor HostedAgentConnection {
         let continuation: CheckedContinuation<HostedAgentResult, Error>
         let onEvent: (@MainActor (HostedAgentEvent) -> Void)?
         let onApprovalRequest: (@MainActor (ToolApprovalRequest) async -> ApprovalDecision)?
-        let onUlwCheckpoint: (@MainActor (UlwCheckpointRequest) async -> UlwCheckpointDecision)?
         let onPlanReview: (@MainActor (PlanReviewRequest) async -> PlanReviewDecision)?
     }
 
@@ -681,7 +626,6 @@ private actor HostedAgentConnection {
         prompt: String,
         onEvent: (@MainActor (HostedAgentEvent) -> Void)?,
         onApprovalRequest: (@MainActor (ToolApprovalRequest) async -> ApprovalDecision)?,
-        onUlwCheckpoint: (@MainActor (UlwCheckpointRequest) async -> UlwCheckpointDecision)?,
         onPlanReview: (@MainActor (PlanReviewRequest) async -> PlanReviewDecision)?
     ) async throws -> HostedAgentResult {
         try Task.checkCancellation()
@@ -700,7 +644,6 @@ private actor HostedAgentConnection {
                     continuation: continuation,
                     onEvent: onEvent,
                     onApprovalRequest: onApprovalRequest,
-                    onUlwCheckpoint: onUlwCheckpoint,
                     onPlanReview: onPlanReview
                 )
                 guard !Task.isCancelled else {
@@ -900,13 +843,6 @@ private actor HostedAgentConnection {
                 return
             }
             startApprovalTask(request: request, promptID: pending.id, generation: generation)
-        case "ulw_turns_reached":
-            guard let pending = pendingPrompt,
-                  let request = UlwCheckpointRequest.from(frame) else {
-                failConnection(HostedAgentClientError.badFrame, generation: generation)
-                return
-            }
-            startUlwCheckpointTask(request: request, promptID: pending.id, generation: generation)
         case "plan_review":
             guard let pending = pendingPrompt,
                   let request = PlanReviewRequest.from(frame) else {
@@ -961,53 +897,6 @@ private actor HostedAgentConnection {
         do {
             try await send(
                 HostedAgentClient.approvalResponseFrame(
-                    decision: decision,
-                    agentAddress: key.agentAddress,
-                    endpoint: endpoint
-                ),
-                over: socket
-            )
-        } catch {
-            failConnection(error, generation: generation)
-        }
-    }
-
-    private func startUlwCheckpointTask(request: UlwCheckpointRequest, promptID: UUID, generation: Int) {
-        let taskID = UUID()
-        interactionTasks[taskID] = Task { [weak self] in
-            await self?.processUlwCheckpoint(
-                request: request,
-                promptID: promptID,
-                generation: generation,
-                taskID: taskID
-            )
-        }
-    }
-
-    private func processUlwCheckpoint(
-        request: UlwCheckpointRequest,
-        promptID: UUID,
-        generation: Int,
-        taskID: UUID
-    ) async {
-        defer {
-            interactionTasks.removeValue(forKey: taskID)
-        }
-        guard generation == socketGeneration,
-              let pending = pendingPrompt,
-              pending.id == promptID else {
-            return
-        }
-        let decision = await pending.onUlwCheckpoint?(request) ?? .switchMode(.safe)
-        guard generation == socketGeneration,
-              pendingPrompt?.id == promptID,
-              let socket,
-              let endpoint else {
-            return
-        }
-        do {
-            try await send(
-                HostedAgentClient.ulwResponseFrame(
                     decision: decision,
                     agentAddress: key.agentAddress,
                     endpoint: endpoint
@@ -1231,19 +1120,9 @@ private actor HostedAgentConnection {
         session.removeValue(forKey: ClientSessionMetadata.pendingModeChange)
         session["session_id"] = .string(conversation.id)
         session["mode"] = .string(conversation.mode.rawValue)
-        if conversation.mode == .ulw {
-            session["skip_tool_approval"] = .bool(true)
-            if session["ulw_turns"] == nil {
-                session["ulw_turns"] = .number(100)
-            }
-            if session["ulw_turns_used"] == nil {
-                session["ulw_turns_used"] = .number(0)
-            }
-        } else {
-            session.removeValue(forKey: "skip_tool_approval")
-            session.removeValue(forKey: "ulw_turns")
-            session.removeValue(forKey: "ulw_turns_used")
-        }
+        session.removeValue(forKey: "skip_tool_approval")
+        session.removeValue(forKey: "ulw_turns")
+        session.removeValue(forKey: "ulw_turns_used")
         return session
     }
 

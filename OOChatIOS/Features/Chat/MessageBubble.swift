@@ -471,48 +471,6 @@ struct ApprovalCard: View {
     }
 }
 
-struct UlwCheckpointCard: View {
-    let checkpoint: PendingUlwCheckpoint
-    var onContinue: () -> Void
-    var onAcceptEdits: () -> Void
-    var onSafeMode: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Label("Ultra Work checkpoint", systemImage: "bolt.fill")
-                .font(.headline)
-                .foregroundStyle(AppTheme.primary)
-
-            Text("Completed \(checkpoint.request.turnsUsed) of \(checkpoint.request.maxTurns) turns")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-
-            Button("Continue (+100 turns)", action: onContinue)
-                .buttonStyle(.borderedProminent)
-                .tint(AppTheme.primary)
-                .frame(maxWidth: .infinity)
-                .accessibilityIdentifier("ulw.continue.\(checkpoint.id)")
-
-            HStack(spacing: 8) {
-                Button("Accept Edits", action: onAcceptEdits)
-                    .buttonStyle(.bordered)
-                    .frame(maxWidth: .infinity)
-                    .accessibilityIdentifier("ulw.acceptEdits.\(checkpoint.id)")
-                Button("Safe Mode", action: onSafeMode)
-                    .buttonStyle(.bordered)
-                    .frame(maxWidth: .infinity)
-                    .accessibilityIdentifier("ulw.safe.\(checkpoint.id)")
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            Color(.secondarySystemBackground),
-            in: RoundedRectangle(cornerRadius: 14, style: .continuous)
-        )
-    }
-}
-
 struct PlanReviewCard: View {
     let review: PendingPlanReview
     var onApprove: () -> Void

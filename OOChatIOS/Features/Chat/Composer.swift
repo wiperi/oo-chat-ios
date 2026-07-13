@@ -150,8 +150,6 @@ private extension ChatMode {
             return "list.bullet.clipboard"
         case .accept:
             return "checkmark.circle"
-        case .ulw:
-            return "bolt.fill"
         }
     }
 
@@ -163,8 +161,6 @@ private extension ChatMode {
             return "Research first, then review the plan"
         case .accept:
             return "Trust the agent to edit without asking"
-        case .ulw:
-            return "Work autonomously for up to 100 turns"
         }
     }
 }

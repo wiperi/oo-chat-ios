@@ -43,17 +43,6 @@ struct ChatScreen: View {
                                 .transition(.opacity)
                             }
 
-                            if let checkpoint = viewModel.pendingUlwCheckpoint {
-                                UlwCheckpointCard(checkpoint: checkpoint) {
-                                    viewModel.continueUlw(id: checkpoint.id)
-                                } onAcceptEdits: {
-                                    viewModel.switchModeFromUlwCheckpoint(id: checkpoint.id, to: .accept)
-                                } onSafeMode: {
-                                    viewModel.switchModeFromUlwCheckpoint(id: checkpoint.id, to: .safe)
-                                }
-                                .id("pendingUlwCheckpoint")
-                                .transition(.opacity)
-                            }
 
                             if let review = viewModel.pendingPlanReview {
                                 PlanReviewCard(review: review) {
@@ -138,9 +127,6 @@ struct ChatScreen: View {
     private func scrollTarget(for interactionID: String) -> String {
         if interactionID == viewModel.pendingApproval?.id {
             return "pendingApproval"
-        }
-        if interactionID == viewModel.pendingUlwCheckpoint?.id {
-            return "pendingUlwCheckpoint"
         }
         return "pendingPlanReview"
     }
