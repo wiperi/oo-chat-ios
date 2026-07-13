@@ -1,7 +1,5 @@
 import SwiftUI
 
-// Claude-style message rendering: user messages sit in a soft rounded bubble
-// on the right; agent replies are plain text on the background.
 struct MessageBubble: View {
     let message: ChatMessage
     var onRetry: (() -> Void)? = nil
@@ -39,10 +37,7 @@ struct MessageBubble: View {
     }
 
     private var agentMessage: some View {
-        Text(message.content)
-            .textSelection(.enabled)
-            .lineSpacing(4)
-            .frame(maxWidth: .infinity, alignment: .leading)
+        MarkdownMessageView(content: message.content)
     }
 
     private var thinkingMessage: some View {

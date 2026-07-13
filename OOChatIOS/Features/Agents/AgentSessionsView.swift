@@ -9,6 +9,7 @@ struct AgentSessionsView: View {
     @State private var renameTarget: Conversation?
     @State private var renameText = ""
     @State private var deleteTarget: Conversation?
+    @State private var isPresentingQRCode = false
 
     private var agent: AgentConnection? {
         viewModel.agent(withID: agentID)
@@ -114,6 +115,30 @@ struct AgentSessionsView: View {
                     prompt: "Search chats"
                 )
                 .navigationTitle(agent.name)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        if let url = AgentShareURL.url(for: agent.address) {
+                            Menu {
+                                ShareLink(item: url) {
+                                    Label("Share Link", systemImage: "square.and.arrow.up")
+                                }
+                                Button {
+                                    isPresentingQRCode = true
+                                } label: {
+                                    Label("Show QR Code", systemImage: "qrcode")
+                                }
+                            } label: {
+                                Image(systemName: "square.and.arrow.up")
+                            }
+                            .accessibilityLabel("Share agent")
+                        }
+                    }
+                }
+                .sheet(isPresented: $isPresentingQRCode) {
+                    if let url = AgentShareURL.url(for: agent.address) {
+                        AgentQRCodeShareView(url: url)
+                    }
+                }
                 .onAppear {
                     viewModel.selectAgent(agent)
                 }

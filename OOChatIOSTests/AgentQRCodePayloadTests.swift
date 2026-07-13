@@ -15,6 +15,17 @@ final class AgentQRCodePayloadTests: XCTestCase {
         )
     }
 
+    func testShareURLMatchesWebQRCodeFormat() {
+        XCTAssertEqual(
+            AgentShareURL.url(for: address)?.absoluteString,
+            "https://chat.openonion.ai/\(address)"
+        )
+    }
+
+    func testShareURLRejectsInvalidAddress() {
+        XCTAssertNil(AgentShareURL.url(for: "not-an-agent-address"))
+    }
+
     func testRejectsUnrecognisedPayloads() {
         XCTAssertNil(AgentQRCodePayload.address(from: ""))
         XCTAssertNil(AgentQRCodePayload.address(from: "https://example.com/\(address)"))
