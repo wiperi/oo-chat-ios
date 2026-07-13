@@ -456,7 +456,7 @@ final class ChatViewModel: ObservableObject {
         }
 
         isProcessing = true
-        connectionState = .reconnecting
+        markReconnectingIfNeeded()
         guard let deliveryTask = makeDeliveryTask(
             messageID: message.id,
             conversationID: conversation.id,
@@ -487,7 +487,7 @@ final class ChatViewModel: ObservableObject {
             return
         }
         isProcessing = true
-        connectionState = .reconnecting
+        markReconnectingIfNeeded()
         guard let deliveryTask = makeDeliveryTask(
             messageID: message.id,
             conversationID: conversation.id,
@@ -533,6 +533,13 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
+    private func markReconnectingIfNeeded() {
+        guard connectionState != .connected else {
+            return
+        }
+        connectionState = .reconnecting
+    }
+
     private func makeDeliveryTask(
         messageID: String,
         conversationID: String,
@@ -545,7 +552,7 @@ final class ChatViewModel: ObservableObject {
               HostedAgentClient.isHostedAgentAddress(agent.address) else {
             return nil
         }
-        connectionState = .reconnecting
+        markReconnectingIfNeeded()
         var pending = conversation
         pending.messages.append(ChatMessage(role: .thinking, content: "Waiting for hosted agent..."))
         upsert(pending)

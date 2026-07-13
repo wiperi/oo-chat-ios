@@ -9,10 +9,22 @@ struct StatusPill: View {
                 .fill(statusColor)
                 .frame(width: 8, height: 8)
 
-            Text(state.rawValue)
+            Text(label)
         }
         .font(.subheadline)
         .foregroundStyle(statusColor)
+        .accessibilityLabel("Connection status: \(label)")
+    }
+
+    private var label: String {
+        switch state {
+        case .connected:
+            return "Connected"
+        case .reconnecting:
+            return "Reconnecting"
+        case .disconnected:
+            return "Disconnected"
+        }
     }
 
     private var statusColor: Color {
