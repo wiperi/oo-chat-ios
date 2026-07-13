@@ -86,6 +86,15 @@ final class MockHostedAgentTests: XCTestCase {
         )
     }
 
+    func testLargeToolArgumentDoesNotTrapWhenRendered() {
+        let arguments: [String: JSONValue] = [
+            "n": .number(1e20),
+        ]
+
+        XCTAssertEqual(ToolActionSummary.argumentsDescription(arguments), "n: 1e+20")
+        XCTAssertEqual(CanonicalJSON.string(from: .number(1e20)), "1e+20")
+    }
+
     func testToolResultUsesErrorStateAndMessageFallback() {
         let event = HostedAgentEvent.from([
             "type": .string("tool_result"),
