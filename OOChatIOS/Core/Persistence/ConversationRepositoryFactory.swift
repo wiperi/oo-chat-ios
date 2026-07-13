@@ -6,7 +6,7 @@ enum ConversationRepositoryFactory {
         do {
             return try SwiftDataConversationRepository(defaults: defaults)
         } catch {
-            fatalError("SwiftData container failed to initialize (incompatible store after a schema change? delete the app and reinstall): \(error)")
+            fatalError("SwiftData container failed to initialize: \(error)")
         }
     }
 }

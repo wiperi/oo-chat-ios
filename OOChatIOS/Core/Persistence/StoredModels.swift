@@ -59,9 +59,11 @@ final class StoredConversation {
 @Model
 final class StoredMessage {
     // Server-chosen message IDs are not globally unique, so `id` is a conversation-scoped
-    // composite; `messageID` keeps the original ID for in-conversation matching.
+    // composite; `messageID` keeps the original ID for in-conversation matching. The ""
+    // default lets stores written before this field existed open via lightweight migration;
+    // SwiftDataConversationRepository backfills the real values on init.
     @Attribute(.unique) var id: String
-    var messageID: String
+    var messageID: String = ""
     var roleRaw: String
     var content: String
     var createdAt: Date
@@ -93,8 +95,10 @@ final class StoredMessage {
         self.toolStateRaw = toolStateRaw
     }
 
+    // Length-prefixing the conversation component keeps the key unambiguous for arbitrary
+    // IDs (including ones containing "#"), so distinct (conversation, message) pairs can
+    // never produce the same key.
     static func compositeID(conversationID: String, messageID: String) -> String {
-        assert(!conversationID.contains("#"), "conversation IDs must not contain '#'")
-        return "\(conversationID)#\(messageID)"
+        "\(conversationID.utf8.count)#\(conversationID)#\(messageID)"
     }
 }

@@ -1,5 +1,86 @@
+import SwiftData
 import XCTest
 @testable import OOChatIOS
+
+// The stored-message schema as shipped before `messageID` existed (commit 5bdf20b^), used
+// to seed an on-disk store so tests exercise the real upgrade path. Entity names match the
+// production models, so the production schema opens these stores via lightweight migration.
+private enum LegacyStoredModels {
+    @Model
+    final class StoredAgent {
+        @Attribute(.unique) var id: String
+        var name: String
+        var address: String
+        var token: String = ""
+        var createdAt: Date
+        var updatedAt: Date
+
+        init(id: String, name: String, address: String, token: String, createdAt: Date, updatedAt: Date) {
+            self.id = id
+            self.name = name
+            self.address = address
+            self.token = token
+            self.createdAt = createdAt
+            self.updatedAt = updatedAt
+        }
+    }
+
+    @Model
+    final class StoredConversation {
+        @Attribute(.unique) var id: String
+        var title: String
+        var agentID: String?
+        var agentAddress: String
+        var modeRaw: String
+        var createdAt: Date
+        var updatedAt: Date
+        var serverSessionData: Data?
+        @Relationship(deleteRule: .cascade, inverse: \StoredMessage.conversation)
+        var messages: [StoredMessage]
+
+        init(
+            id: String,
+            title: String,
+            agentID: String?,
+            agentAddress: String,
+            modeRaw: String,
+            createdAt: Date,
+            updatedAt: Date,
+            serverSessionData: Data?,
+            messages: [StoredMessage]
+        ) {
+            self.id = id
+            self.title = title
+            self.agentID = agentID
+            self.agentAddress = agentAddress
+            self.modeRaw = modeRaw
+            self.createdAt = createdAt
+            self.updatedAt = updatedAt
+            self.serverSessionData = serverSessionData
+            self.messages = messages
+        }
+    }
+
+    @Model
+    final class StoredMessage {
+        @Attribute(.unique) var id: String
+        var roleRaw: String
+        var content: String
+        var createdAt: Date
+        var deliveryStateRaw: String = "sent"
+        var toolName: String?
+        var toolArgumentsData: Data?
+        var toolStateRaw: String?
+        var conversation: StoredConversation?
+
+        init(id: String, roleRaw: String, content: String, createdAt: Date) {
+            self.id = id
+            self.roleRaw = roleRaw
+            self.content = content
+            self.createdAt = createdAt
+        }
+    }
+}
 
 @MainActor
 final class SwiftDataConversationRepositoryTests: XCTestCase {
@@ -382,6 +463,99 @@ final class SwiftDataConversationRepositoryTests: XCTestCase {
         let secondLoaded = loaded.first { $0.id == second.id }
         XCTAssertEqual(firstLoaded?.messages.map(\.content), ["in first"])
         XCTAssertEqual(secondLoaded?.messages.map(\.content), ["in second"])
+    }
+
+    func testCompositeIDStaysUniqueForDelimiterEmptyAndMultibyteIDs() {
+        // Pairs chosen to collide under naive "conversation#message" concatenation.
+        let pairs: [(conversation: String, message: String)] = [
+            ("a#b", "c"),
+            ("a", "b#c"),
+            ("a#", "b#c"),
+            ("a#b#", "c"),
+            ("", ""),
+            ("", "x"),
+            ("x", ""),
+            ("12", "x"),
+            ("1", "2#x"),
+            ("Café", "résumé"),
+            ("Caf", "é#résumé"),
+        ]
+
+        let ids = pairs.map { StoredMessage.compositeID(conversationID: $0.conversation, messageID: $0.message) }
+
+        XCTAssertEqual(Set(ids).count, pairs.count, "distinct (conversation, message) pairs must never share a key")
+    }
+
+    func testLegacyStoreOpensAfterUpgradeKeepingMessagesAndServerIDs() throws {
+        let storeURL = try makeScratchStoreURL()
+        defer { try? FileManager.default.removeItem(at: storeURL.deletingLastPathComponent()) }
+        try seedLegacyStore(at: storeURL)
+
+        let repository = try SwiftDataConversationRepository(storeURL: storeURL, defaults: defaults)
+        let loaded = repository.load()
+
+        XCTAssertEqual(loaded.agents.map(\.id), ["a1"])
+        XCTAssertEqual(Set(loaded.conversations.map(\.id)), ["c1", "c2"])
+        let first = loaded.conversations.first { $0.id == "c1" }
+        let second = loaded.conversations.first { $0.id == "c2" }
+        XCTAssertEqual(first?.messages.map(\.id), ["m1", "m2"])
+        XCTAssertEqual(first?.messages.map(\.content), ["hello", "world"])
+        XCTAssertEqual(first?.messages.map(\.role), [.user, .agent])
+        XCTAssertEqual(second?.messages.map(\.id), ["m3"])
+        XCTAssertEqual(second?.messages.first?.role, .tool)
+    }
+
+    func testUpgradedLegacyStoreAcceptsSameMessageIDAcrossConversations() throws {
+        let storeURL = try makeScratchStoreURL()
+        defer { try? FileManager.default.removeItem(at: storeURL.deletingLastPathComponent()) }
+        try seedLegacyStore(at: storeURL)
+        let repository = try SwiftDataConversationRepository(storeURL: storeURL, defaults: defaults)
+
+        // "m3" already exists in legacy conversation c2; reusing it elsewhere must not clash.
+        var third = makeConversation(agentID: "a1", address: "0xaaa", title: "third", updatedAt: seconds(4000))
+        third.messages = [ChatMessage(id: "m3", role: .tool, content: "duplicate id", createdAt: seconds(4001))]
+        repository.upsertConversation(third)
+        let loaded = repository.load().conversations
+
+        XCTAssertEqual(loaded.first { $0.id == "c2" }?.messages.map(\.content), ["tool ran"])
+        XCTAssertEqual(loaded.first { $0.id == third.id }?.messages.map(\.content), ["duplicate id"])
+    }
+
+    private func makeScratchStoreURL() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("legacy-store-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory.appendingPathComponent("store.sqlite")
+    }
+
+    private func seedLegacyStore(at storeURL: URL) throws {
+        let schema = Schema([
+            LegacyStoredModels.StoredAgent.self,
+            LegacyStoredModels.StoredConversation.self,
+            LegacyStoredModels.StoredMessage.self,
+        ])
+        let container = try ModelContainer(for: schema, configurations: ModelConfiguration(url: storeURL))
+        let context = ModelContext(container)
+        context.insert(LegacyStoredModels.StoredAgent(
+            id: "a1", name: "Agent", address: "0xaaa", token: "",
+            createdAt: seconds(1000), updatedAt: seconds(1000)
+        ))
+        context.insert(LegacyStoredModels.StoredConversation(
+            id: "c1", title: "first", agentID: "a1", agentAddress: "0xaaa", modeRaw: "safe",
+            createdAt: seconds(1000), updatedAt: seconds(2000), serverSessionData: nil,
+            messages: [
+                LegacyStoredModels.StoredMessage(id: "m1", roleRaw: "user", content: "hello", createdAt: seconds(1001)),
+                LegacyStoredModels.StoredMessage(id: "m2", roleRaw: "agent", content: "world", createdAt: seconds(1002)),
+            ]
+        ))
+        context.insert(LegacyStoredModels.StoredConversation(
+            id: "c2", title: "second", agentID: "a1", agentAddress: "0xaaa", modeRaw: "plan",
+            createdAt: seconds(3000), updatedAt: seconds(3000), serverSessionData: nil,
+            messages: [
+                LegacyStoredModels.StoredMessage(id: "m3", roleRaw: "tool", content: "tool ran", createdAt: seconds(3001)),
+            ]
+        ))
+        try context.save()
     }
 
     private func seconds(_ value: TimeInterval) -> Date {

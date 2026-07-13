@@ -23,6 +23,27 @@ final class SwiftDataConversationRepository: ConversationRepository {
             configurations: configuration
         )
         context = ModelContext(container)
+        repairLegacyMessageIDs()
+    }
+
+    /// Stores written before `StoredMessage.messageID` existed carry the raw server ID in
+    /// `id` and the lightweight-migration default ("") in `messageID`. Rewrite such rows
+    /// once into the composite-key form; the empty-`messageID` predicate makes this a
+    /// no-op on healthy stores. Runs before any load or write so callers never observe
+    /// half-migrated rows.
+    private func repairLegacyMessageIDs() {
+        let legacy = (try? context.fetch(FetchDescriptor<StoredMessage>(
+            predicate: #Predicate { $0.messageID == "" }
+        ))) ?? []
+        guard !legacy.isEmpty else { return }
+        for message in legacy {
+            message.messageID = message.id
+            message.id = StoredMessage.compositeID(
+                conversationID: message.conversation?.id ?? "",
+                messageID: message.messageID
+            )
+        }
+        save()
     }
 
     func load() -> ChatSnapshot {
