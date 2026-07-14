@@ -486,6 +486,14 @@ final class SwiftDataConversationRepositoryTests: XCTestCase {
         XCTAssertEqual(Set(ids).count, pairs.count, "distinct (conversation, message) pairs must never share a key")
     }
 
+    func testCompositeIDFormatIsStable() {
+        // The key is persisted; changing the encoding would orphan every existing row.
+        XCTAssertEqual(StoredMessage.compositeID(conversationID: "c1", messageID: "m1"), "2#c1#m1")
+        // The prefix is the UTF-8 byte count, not the character count.
+        XCTAssertEqual(StoredMessage.compositeID(conversationID: "Café", messageID: "x"), "5#Café#x")
+        XCTAssertEqual(StoredMessage.compositeID(conversationID: "", messageID: ""), "0##")
+    }
+
     func testLegacyStoreOpensAfterUpgradeKeepingMessagesAndServerIDs() throws {
         let storeURL = try makeScratchStoreURL()
         defer { try? FileManager.default.removeItem(at: storeURL.deletingLastPathComponent()) }
@@ -503,6 +511,10 @@ final class SwiftDataConversationRepositoryTests: XCTestCase {
         XCTAssertEqual(first?.messages.map(\.role), [.user, .agent])
         XCTAssertEqual(second?.messages.map(\.id), ["m3"])
         XCTAssertEqual(second?.messages.first?.role, .tool)
+
+        // The lifted store must reopen (now matching the versioned plan) with the repair intact.
+        let reopened = try SwiftDataConversationRepository(storeURL: storeURL, defaults: defaults)
+        XCTAssertEqual(reopened.load().conversations.first { $0.id == "c1" }?.messages.map(\.id), ["m1", "m2"])
     }
 
     func testUpgradedLegacyStoreAcceptsSameMessageIDAcrossConversations() throws {
@@ -521,6 +533,84 @@ final class SwiftDataConversationRepositoryTests: XCTestCase {
         XCTAssertEqual(loaded.first { $0.id == third.id }?.messages.map(\.content), ["duplicate id"])
     }
 
+    func testLegacyStoreUpgradePreservesDelimiterUnicodeToolAndSessionData() throws {
+        let storeURL = try makeScratchStoreURL()
+        defer { try? FileManager.default.removeItem(at: storeURL.deletingLastPathComponent()) }
+        let sessionData = try JSONEncoder().encode(["session_id": JSONValue.string("s1")])
+        let argumentsData = try JSONEncoder().encode(["query": JSONValue.string("café")])
+        try withLegacyContext(at: storeURL) { context in
+            let user = LegacyStoredModels.StoredMessage(id: "m#1", roleRaw: "user", content: "queued send", createdAt: seconds(1001))
+            user.deliveryStateRaw = "queued"
+            let agent = LegacyStoredModels.StoredMessage(id: "Café", roleRaw: "agent", content: "unicode id", createdAt: seconds(1002))
+            let tool = LegacyStoredModels.StoredMessage(id: "t1", roleRaw: "tool", content: "ran", createdAt: seconds(1003))
+            tool.toolName = "search"
+            tool.toolArgumentsData = argumentsData
+            tool.toolStateRaw = "completed"
+            context.insert(LegacyStoredModels.StoredConversation(
+                id: "c1", title: "legacy", agentID: nil, agentAddress: "0xaaa", modeRaw: "safe",
+                createdAt: seconds(1000), updatedAt: seconds(2000), serverSessionData: sessionData,
+                messages: [user, agent, tool]
+            ))
+        }
+
+        let repository = try SwiftDataConversationRepository(storeURL: storeURL, defaults: defaults)
+        let conversation = repository.load().conversations.first { $0.id == "c1" }
+
+        XCTAssertEqual(conversation?.messages.map(\.id), ["m#1", "Café", "t1"])
+        XCTAssertNil(conversation?.agentID)
+        XCTAssertEqual(conversation?.serverSession?["session_id"]?.stringValue, "s1")
+        XCTAssertEqual(conversation?.messages.first?.deliveryState, .queued)
+        let toolMessage = conversation?.messages.last
+        XCTAssertEqual(toolMessage?.toolName, "search")
+        XCTAssertEqual(toolMessage?.toolArguments, ["query": .string("café")])
+        XCTAssertEqual(toolMessage?.toolState, .completed)
+
+        // A repaired delimiter-bearing ID must still be reusable in another conversation.
+        var other = makeConversation(agentID: "a1", address: "0xaaa", title: "other", updatedAt: seconds(3000))
+        other.messages = [ChatMessage(id: "m#1", role: .user, content: "same raw id", createdAt: seconds(3001))]
+        repository.upsertConversation(other)
+        let reloaded = repository.load().conversations
+        XCTAssertEqual(reloaded.first { $0.id == "c1" }?.messages.first?.content, "queued send")
+        XCTAssertEqual(reloaded.first { $0.id == other.id }?.messages.map(\.content), ["same raw id"])
+    }
+
+    func testLegacyOrphanMessageDoesNotBlockUpgrade() throws {
+        let storeURL = try makeScratchStoreURL()
+        defer { try? FileManager.default.removeItem(at: storeURL.deletingLastPathComponent()) }
+        try withLegacyContext(at: storeURL) { context in
+            context.insert(LegacyStoredModels.StoredConversation(
+                id: "c1", title: "kept", agentID: "a1", agentAddress: "0xaaa", modeRaw: "safe",
+                createdAt: seconds(1000), updatedAt: seconds(1000), serverSessionData: nil,
+                messages: [LegacyStoredModels.StoredMessage(id: "m1", roleRaw: "user", content: "hello", createdAt: seconds(1001))]
+            ))
+            // A row that lost its conversation must not stall the repair pass.
+            context.insert(LegacyStoredModels.StoredMessage(id: "orphan", roleRaw: "agent", content: "dangling", createdAt: seconds(1002)))
+        }
+
+        let repository = try SwiftDataConversationRepository(storeURL: storeURL, defaults: defaults)
+
+        XCTAssertEqual(repository.load().conversations.first { $0.id == "c1" }?.messages.map(\.id), ["m1"])
+        // The repair must be durable: a reopen sees the same healthy state.
+        let reopened = try SwiftDataConversationRepository(storeURL: storeURL, defaults: defaults)
+        XCTAssertEqual(reopened.load().conversations.first { $0.id == "c1" }?.messages.map(\.id), ["m1"])
+    }
+
+    func testUpgradedStoreMixesRepairedAndFreshMessagesCorrectly() throws {
+        let storeURL = try makeScratchStoreURL()
+        defer { try? FileManager.default.removeItem(at: storeURL.deletingLastPathComponent()) }
+        try seedLegacyStore(at: storeURL)
+        let repository = try SwiftDataConversationRepository(storeURL: storeURL, defaults: defaults)
+
+        var conversation = try XCTUnwrap(repository.load().conversations.first { $0.id == "c1" })
+        conversation.messages.append(ChatMessage(id: "fresh", role: .agent, content: "post-upgrade", createdAt: seconds(5000)))
+        repository.upsertConversation(conversation)
+
+        let reopened = try SwiftDataConversationRepository(storeURL: storeURL, defaults: defaults)
+        let loaded = reopened.load().conversations.first { $0.id == "c1" }
+        XCTAssertEqual(loaded?.messages.map(\.id), ["m1", "m2", "fresh"])
+        XCTAssertEqual(loaded?.messages.last?.content, "post-upgrade")
+    }
+
     private func makeScratchStoreURL() throws -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("legacy-store-\(UUID().uuidString)", isDirectory: true)
@@ -528,7 +618,7 @@ final class SwiftDataConversationRepositoryTests: XCTestCase {
         return directory.appendingPathComponent("store.sqlite")
     }
 
-    private func seedLegacyStore(at storeURL: URL) throws {
+    private func withLegacyContext(at storeURL: URL, _ populate: (ModelContext) throws -> Void) throws {
         let schema = Schema([
             LegacyStoredModels.StoredAgent.self,
             LegacyStoredModels.StoredConversation.self,
@@ -536,26 +626,32 @@ final class SwiftDataConversationRepositoryTests: XCTestCase {
         ])
         let container = try ModelContainer(for: schema, configurations: ModelConfiguration(url: storeURL))
         let context = ModelContext(container)
-        context.insert(LegacyStoredModels.StoredAgent(
-            id: "a1", name: "Agent", address: "0xaaa", token: "",
-            createdAt: seconds(1000), updatedAt: seconds(1000)
-        ))
-        context.insert(LegacyStoredModels.StoredConversation(
-            id: "c1", title: "first", agentID: "a1", agentAddress: "0xaaa", modeRaw: "safe",
-            createdAt: seconds(1000), updatedAt: seconds(2000), serverSessionData: nil,
-            messages: [
-                LegacyStoredModels.StoredMessage(id: "m1", roleRaw: "user", content: "hello", createdAt: seconds(1001)),
-                LegacyStoredModels.StoredMessage(id: "m2", roleRaw: "agent", content: "world", createdAt: seconds(1002)),
-            ]
-        ))
-        context.insert(LegacyStoredModels.StoredConversation(
-            id: "c2", title: "second", agentID: "a1", agentAddress: "0xaaa", modeRaw: "plan",
-            createdAt: seconds(3000), updatedAt: seconds(3000), serverSessionData: nil,
-            messages: [
-                LegacyStoredModels.StoredMessage(id: "m3", roleRaw: "tool", content: "tool ran", createdAt: seconds(3001)),
-            ]
-        ))
+        try populate(context)
         try context.save()
+    }
+
+    private func seedLegacyStore(at storeURL: URL) throws {
+        try withLegacyContext(at: storeURL) { context in
+            context.insert(LegacyStoredModels.StoredAgent(
+                id: "a1", name: "Agent", address: "0xaaa", token: "",
+                createdAt: seconds(1000), updatedAt: seconds(1000)
+            ))
+            context.insert(LegacyStoredModels.StoredConversation(
+                id: "c1", title: "first", agentID: "a1", agentAddress: "0xaaa", modeRaw: "safe",
+                createdAt: seconds(1000), updatedAt: seconds(2000), serverSessionData: nil,
+                messages: [
+                    LegacyStoredModels.StoredMessage(id: "m1", roleRaw: "user", content: "hello", createdAt: seconds(1001)),
+                    LegacyStoredModels.StoredMessage(id: "m2", roleRaw: "agent", content: "world", createdAt: seconds(1002)),
+                ]
+            ))
+            context.insert(LegacyStoredModels.StoredConversation(
+                id: "c2", title: "second", agentID: "a1", agentAddress: "0xaaa", modeRaw: "plan",
+                createdAt: seconds(3000), updatedAt: seconds(3000), serverSessionData: nil,
+                messages: [
+                    LegacyStoredModels.StoredMessage(id: "m3", roleRaw: "tool", content: "tool ran", createdAt: seconds(3001)),
+                ]
+            ))
+        }
     }
 
     private func seconds(_ value: TimeInterval) -> Date {
