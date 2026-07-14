@@ -18,10 +18,19 @@ final class SwiftDataConversationRepository: ConversationRepository {
         } else {
             configuration = ModelConfiguration(isStoredInMemoryOnly: inMemory)
         }
-        container = try ModelContainer(
-            for: StoredAgent.self, StoredConversation.self, StoredMessage.self,
-            configurations: configuration
-        )
+        let schema = Schema(versionedSchema: StoredModelsSchemaV1.self)
+        do {
+            container = try ModelContainer(
+                for: schema,
+                migrationPlan: StoredModelsMigrationPlan.self,
+                configurations: configuration
+            )
+        } catch {
+            // Stores written before schema versioning hash-match no plan version, which makes
+            // the staged open throw. A plan-less open lightweight-infers them up to the V1
+            // shape instead; once saved, the next launch matches V1 through the plan.
+            container = try ModelContainer(for: schema, configurations: configuration)
+        }
         context = ModelContext(container)
         repairLegacyMessageIDs()
     }
