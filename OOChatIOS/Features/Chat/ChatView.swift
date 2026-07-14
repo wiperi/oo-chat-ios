@@ -29,7 +29,7 @@ struct ChatScreen: View {
                                 }
                             }
 
-                            if let approval = viewModel.pendingApproval {
+                            if let approval = viewModel.activePendingApproval {
                                 ApprovalCard(approval: approval) {
                                     viewModel.allowPendingApprovalOnce(id: approval.id)
                                 } onTrustSession: {
@@ -46,7 +46,7 @@ struct ChatScreen: View {
                             }
 
 
-                            if let review = viewModel.pendingPlanReview {
+                            if let review = viewModel.activePendingPlanReview {
                                 PlanReviewCard(review: review) {
                                     viewModel.approvePendingPlan(id: review.id)
                                 } onRequestChanges: { feedback in
@@ -127,7 +127,7 @@ struct ChatScreen: View {
     }
 
     private func scrollTarget(for interactionID: String) -> String {
-        if interactionID == viewModel.pendingApproval?.id {
+        if interactionID == viewModel.activePendingApproval?.id {
             return "pendingApproval"
         }
         return "pendingPlanReview"

@@ -142,8 +142,24 @@ final class ChatViewModel: ObservableObject {
         activeConversation?.mode ?? .safe
     }
 
+    var activePendingApproval: PendingApproval? {
+        guard let pendingApproval,
+              pendingApproval.conversationID == activeConversationID else {
+            return nil
+        }
+        return pendingApproval
+    }
+
+    var activePendingPlanReview: PendingPlanReview? {
+        guard let pendingPlanReview,
+              pendingPlanReview.conversationID == activeConversationID else {
+            return nil
+        }
+        return pendingPlanReview
+    }
+
     var pendingInteractionID: String? {
-        pendingApproval?.id ?? pendingPlanReview?.id
+        activePendingApproval?.id ?? activePendingPlanReview?.id
     }
 
     init(
@@ -779,16 +795,22 @@ final class ChatViewModel: ObservableObject {
     }
 
     private func resolvePendingApproval(id: String, with decision: ApprovalDecision) {
-        guard pendingApproval?.id == id else {
+        guard let pendingApproval,
+              pendingApproval.id == id,
+              pendingApproval.conversationID == activeConversationID else {
             return
         }
-        pendingApproval = nil
+        self.pendingApproval = nil
         approvalGate.resolve(id: id, with: decision)
     }
 
     private func resolvePendingPlanReview(id: String, with decision: PlanReviewDecision) {
-        guard pendingPlanReview?.id == id else { return }
-        pendingPlanReview = nil
+        guard let pendingPlanReview,
+              pendingPlanReview.id == id,
+              pendingPlanReview.conversationID == activeConversationID else {
+            return
+        }
+        self.pendingPlanReview = nil
         planReviewGate.resolve(id: id, with: decision)
     }
 
