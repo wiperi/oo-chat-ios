@@ -21,10 +21,12 @@ struct ChatScreen: View {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 20) {
                             ForEach(conversation.messages) { message in
-                                MessageBubble(message: message) {
-                                    viewModel.retryMessage(message)
+                                if shouldShowMessage(message, in: conversation.id) {
+                                    MessageBubble(message: message) {
+                                        viewModel.retryMessage(message)
+                                    }
+                                    .id(message.id)
                                 }
-                                .id(message.id)
                             }
 
                             if let approval = viewModel.pendingApproval {
@@ -129,6 +131,37 @@ struct ChatScreen: View {
             return "pendingApproval"
         }
         return "pendingPlanReview"
+    }
+
+    private func shouldShowMessage(_ message: ChatMessage, in conversationID: String) -> Bool {
+        !isToolCallCoveredByPendingApproval(message, in: conversationID)
+    }
+
+    private func isToolCallCoveredByPendingApproval(_ message: ChatMessage, in conversationID: String) -> Bool {
+        guard let approval = viewModel.pendingApproval,
+              approval.conversationID == conversationID,
+              message.role == .tool,
+              message.toolState == .running,
+              message.content.isEmpty else {
+            return false
+        }
+
+        let messageArguments = message.toolArguments ?? [:]
+        guard messageArguments == approval.request.arguments else {
+            return false
+        }
+
+        if message.toolName == approval.request.tool {
+            return true
+        }
+
+        return ToolActionSummary.requested(
+            toolName: message.toolName ?? "tool",
+            arguments: messageArguments
+        ) == ToolActionSummary.requested(
+            toolName: approval.request.tool,
+            arguments: approval.request.arguments
+        )
     }
 
     private func scrollSignature(for conversation: Conversation) -> String {
