@@ -464,6 +464,32 @@ final class NetworkRecoveryTests: XCTestCase {
         XCTAssertEqual(transport.approvalDecisions, [.allowOnce])
     }
 
+    func testPendingApprovalIsScopedToItsConversation() async {
+        let (viewModel, transport, _) = makeEnvironment()
+        let agent = setUpAgentAndConversation(viewModel)
+        let approvalConversation = viewModel.activeConversation!
+        transport.approvalRequests = [approvalRequest(tool: "write")]
+
+        viewModel.prompt = "Create a file"
+        viewModel.sendPrompt()
+        await waitForPendingApproval(on: viewModel)
+        let approvalID = viewModel.pendingApproval!.id
+
+        _ = viewModel.createConversation(for: agent)
+        XCTAssertNil(viewModel.activePendingApproval)
+
+        viewModel.allowPendingApprovalOnce(id: approvalID)
+        XCTAssertTrue(transport.approvalDecisions.isEmpty)
+        XCTAssertNotNil(viewModel.pendingApproval)
+
+        viewModel.selectConversation(approvalConversation)
+        XCTAssertEqual(viewModel.activePendingApproval?.id, approvalID)
+        viewModel.allowPendingApprovalOnce(id: approvalID)
+        await viewModel.sendTask?.value
+
+        XCTAssertEqual(transport.approvalDecisions, [.allowOnce])
+    }
+
     func testApprovalGateRegistersBeforePresentation() async {
         let gate = ContinuationGate<ApprovalDecision>(
             cancellationDecision: .rejectHard(feedback: "cancelled"),
@@ -581,6 +607,32 @@ final class NetworkRecoveryTests: XCTestCase {
             transport.planReviewDecisions,
             [.requestChanges(feedback: "Use smaller commits")]
         )
+    }
+
+    func testPendingPlanReviewIsScopedToItsConversation() async {
+        let (viewModel, transport, _) = makeEnvironment()
+        let agent = setUpAgentAndConversation(viewModel)
+        let reviewConversation = viewModel.activeConversation!
+        transport.planReviews = [PlanReviewRequest(planContent: "# Plan")]
+
+        viewModel.prompt = "Plan the change"
+        viewModel.sendPrompt()
+        await waitForPlanReview(on: viewModel)
+        let reviewID = viewModel.pendingPlanReview!.id
+
+        _ = viewModel.createConversation(for: agent)
+        XCTAssertNil(viewModel.activePendingPlanReview)
+
+        viewModel.approvePendingPlan(id: reviewID)
+        XCTAssertTrue(transport.planReviewDecisions.isEmpty)
+        XCTAssertNotNil(viewModel.pendingPlanReview)
+
+        viewModel.selectConversation(reviewConversation)
+        XCTAssertEqual(viewModel.activePendingPlanReview?.id, reviewID)
+        viewModel.approvePendingPlan(id: reviewID)
+        await viewModel.sendTask?.value
+
+        XCTAssertEqual(transport.planReviewDecisions, [.approve])
     }
 
     func testDeletingConversationCancelsPlanReview() async {
