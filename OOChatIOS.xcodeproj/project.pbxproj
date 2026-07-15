@@ -45,6 +45,11 @@
 		100000000000000000000138 /* ToolActionSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000043 /* ToolActionSummary.swift */; };
 		100000000000000000000139 /* ApprovalCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000044 /* ApprovalCard.swift */; };
 		100000000000000000000140 /* PlanReviewCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000045 /* PlanReviewCard.swift */; };
+		100000000000000000000141 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000046 /* Assets.xcassets */; };
+		100000000000000000000142 /* AppAppearance.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000047 /* AppAppearance.swift */; };
+		100000000000000000000143 /* ChatShellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000048 /* ChatShellView.swift */; };
+		100000000000000000000144 /* ChatSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000049 /* ChatSidebarView.swift */; };
+		100000000000000000000145 /* SidebarButtonStyles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000050 /* SidebarButtonStyles.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -99,6 +104,11 @@
 		100000000000000000000043 /* ToolActionSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolActionSummary.swift; sourceTree = "<group>"; };
 		100000000000000000000044 /* ApprovalCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalCard.swift; sourceTree = "<group>"; };
 		100000000000000000000045 /* PlanReviewCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanReviewCard.swift; sourceTree = "<group>"; };
+		100000000000000000000046 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		100000000000000000000047 /* AppAppearance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppAppearance.swift; sourceTree = "<group>"; };
+		100000000000000000000048 /* ChatShellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatShellView.swift; sourceTree = "<group>"; };
+		100000000000000000000049 /* ChatSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSidebarView.swift; sourceTree = "<group>"; };
+		100000000000000000000050 /* SidebarButtonStyles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarButtonStyles.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -156,6 +166,7 @@
 			children = (
 				100000000000000000000001 /* OOChatIOSApp.swift */,
 				100000000000000000000002 /* ContentView.swift */,
+				100000000000000000000047 /* AppAppearance.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -194,6 +205,7 @@
 		100000000000000000000307 /* Resources */ = {
 			isa = PBXGroup;
 			children = (
+				100000000000000000000046 /* Assets.xcassets */,
 				100000000000000000000010 /* Info.plist */,
 			);
 			path = Resources;
@@ -205,6 +217,9 @@
 				100000000000000000000039 /* MarkdownMessageView.swift */,
 				100000000000000000000003 /* ChatViewModel.swift */,
 				100000000000000000000023 /* ChatView.swift */,
+				100000000000000000000048 /* ChatShellView.swift */,
+				100000000000000000000049 /* ChatSidebarView.swift */,
+				100000000000000000000050 /* SidebarButtonStyles.swift */,
 				100000000000000000000024 /* Composer.swift */,
 				100000000000000000000025 /* MessageBubble.swift */,
 				100000000000000000000042 /* ToolCallView.swift */,
@@ -398,6 +413,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				100000000000000000000141 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -437,6 +453,7 @@
 				100000000000000000000135 /* MarkdownMessageView.swift in Sources */,
 				100000000000000000000101 /* OOChatIOSApp.swift in Sources */,
 				100000000000000000000102 /* ContentView.swift in Sources */,
+				100000000000000000000142 /* AppAppearance.swift in Sources */,
 				100000000000000000000103 /* ChatViewModel.swift in Sources */,
 				100000000000000000000104 /* Models.swift in Sources */,
 				100000000000000000000105 /* CanonicalJSON.swift in Sources */,
@@ -450,6 +467,9 @@
 				100000000000000000000117 /* AgentsView.swift in Sources */,
 				100000000000000000000118 /* AgentSessionsView.swift in Sources */,
 				100000000000000000000119 /* ChatView.swift in Sources */,
+				100000000000000000000143 /* ChatShellView.swift in Sources */,
+				100000000000000000000144 /* ChatSidebarView.swift in Sources */,
+				100000000000000000000145 /* SidebarButtonStyles.swift in Sources */,
 				100000000000000000000120 /* Composer.swift in Sources */,
 				100000000000000000000121 /* MessageBubble.swift in Sources */,
 				100000000000000000000137 /* ToolCallView.swift in Sources */,

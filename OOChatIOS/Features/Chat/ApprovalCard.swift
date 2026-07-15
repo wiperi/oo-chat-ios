@@ -1,5 +1,5 @@
 import SwiftUI
-
+// Card view for pending approval requests.
 struct ApprovalCard: View {
     let approval: PendingApproval
     var onAllowOnce: () -> Void

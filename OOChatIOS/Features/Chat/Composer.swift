@@ -7,23 +7,40 @@ struct Composer: View {
     @State private var sheetHeight: CGFloat = 400
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: ComposerMetrics.stackSpacing) {
+            modeMenu
+                .padding(.leading, ComposerMetrics.modeLeadingPadding)
+
+            inputBar
+        }
+        .padding(.horizontal, ComposerMetrics.outerHorizontalPadding)
+        .padding(.bottom, ComposerMetrics.outerBottomPadding)
+    }
+
+    private var inputBar: some View {
+        HStack(alignment: .center, spacing: ComposerMetrics.inputSpacing) {
             TextField("Message the agent", text: $viewModel.prompt, axis: .vertical)
+                .font(.body)
                 .lineLimit(1...4)
                 .focused($isPromptFocused)
                 .disabled(viewModel.isProcessing)
+                .tint(AppTheme.primary)
+                .frame(minHeight: ComposerMetrics.sendButtonSize, alignment: .center)
+                .padding(.vertical, ComposerMetrics.inputVerticalPadding)
 
-            HStack(alignment: .center, spacing: 10) {
-                modeMenu
-                Spacer()
-                sendButton
-            }
+            sendButton
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .glassBackground(in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-        .padding(.horizontal, 12)
-        .padding(.bottom, 6)
+        .padding(.leading, ComposerMetrics.horizontalPadding)
+        .padding(.trailing, ComposerMetrics.trailingPadding)
+        .padding(.vertical, ComposerMetrics.verticalPadding)
+        .background(
+            Color(.secondarySystemBackground),
+            in: RoundedRectangle(cornerRadius: ComposerMetrics.cornerRadius, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: ComposerMetrics.cornerRadius, style: .continuous)
+                .stroke(Color(.separator).opacity(ComposerMetrics.inputStrokeOpacity), lineWidth: 0.5)
+        )
     }
 
     private var modeMenu: some View {
@@ -32,15 +49,23 @@ struct Composer: View {
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: viewModel.activeMode.icon)
+                    .foregroundStyle(AppTheme.primary)
+
                 Text(viewModel.activeMode.label)
+                    .foregroundStyle(.secondary)
+
                 Image(systemName: "chevron.up.chevron.down")
                     .imageScale(.small)
+                    .foregroundStyle(Color(.tertiaryLabel))
             }
             .font(.footnote.weight(.medium))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
+            .padding(.horizontal, ComposerMetrics.modeHorizontalPadding)
+            .padding(.vertical, ComposerMetrics.modeVerticalPadding)
             .background(Color(.tertiarySystemFill), in: Capsule())
+            .overlay {
+                Capsule()
+                    .stroke(Color(.separator).opacity(ComposerMetrics.modeStrokeOpacity), lineWidth: 0.5)
+            }
         }
         .buttonStyle(.plain)
         .disabled(viewModel.activeConversation == nil || viewModel.isProcessing)
@@ -131,13 +156,31 @@ struct Composer: View {
                         .foregroundStyle(.white)
                 }
             }
-            .frame(width: 36, height: 36)
+            .frame(width: ComposerMetrics.sendButtonSize, height: ComposerMetrics.sendButtonSize)
             .glassBackground(in: Circle(), interactive: true, tint: AppTheme.primary)
         }
         .disabled(viewModel.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isProcessing)
         .accessibilityLabel("Send message")
     }
 
+}
+
+private enum ComposerMetrics {
+    static let outerHorizontalPadding: CGFloat = 12
+    static let outerBottomPadding: CGFloat = 6
+    static let horizontalPadding: CGFloat = 16
+    static let trailingPadding: CGFloat = 7
+    static let verticalPadding: CGFloat = 7
+    static let cornerRadius: CGFloat = 27
+    static let stackSpacing: CGFloat = 7
+    static let inputSpacing: CGFloat = 10
+    static let inputVerticalPadding: CGFloat = 2
+    static let inputStrokeOpacity: Double = 0.10
+    static let modeLeadingPadding: CGFloat = 8
+    static let modeHorizontalPadding: CGFloat = 10
+    static let modeVerticalPadding: CGFloat = 5
+    static let modeStrokeOpacity: Double = 0.08
+    static let sendButtonSize: CGFloat = 40
 }
 
 // Presentation details for each mode, kept out of the model layer.

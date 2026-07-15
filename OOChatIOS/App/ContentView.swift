@@ -1,23 +1,20 @@
 import SwiftUI
-// In charge of organizing three main screens.
+
+// In charge of organizing the main chat shell.
 struct ContentView: View {
     @StateObject var viewModel: ChatViewModel
-    @State private var selectedTab: AppTab = .agents
+    @State private var isShowingAgentsScreen = false
     @AppStorage("appAppearance") private var appAppearance = AppAppearance.system.rawValue
 
     var body: some View {
-        TabView(selection: $selectedTab) {
-            AgentsView(viewModel: viewModel) {
-                selectedTab = .chat
+        Group {
+            if isShowingAgentsScreen || viewModel.agents.isEmpty {
+                AgentsView(viewModel: viewModel) {
+                    isShowingAgentsScreen = false
+                }
+            } else {
+                ChatShellView(viewModel: viewModel)
             }
-                .tabItem { Label("Agents", systemImage: "network") }
-                .tag(AppTab.agents)
-            ChatView(viewModel: viewModel)
-                .tabItem { Label("Chat", systemImage: "bubble.left.and.bubble.right") }
-                .tag(AppTab.chat)
-            SettingsView(viewModel: viewModel)
-                .tabItem { Label("Settings", systemImage: "gearshape") }
-                .tag(AppTab.settings)
         }
         .safeAreaInset(edge: .top, spacing: 0) {
             VStack(spacing: 1) {
@@ -39,48 +36,20 @@ struct ContentView: View {
             if AppAppearance(rawValue: appAppearance) == nil {
                 appAppearance = AppAppearance.system.rawValue
             }
+            isShowingAgentsScreen = viewModel.agents.isEmpty
+        }
+        .onChange(of: viewModel.agents.isEmpty) {
+            if viewModel.agents.isEmpty {
+                isShowingAgentsScreen = true
+            }
         }
         .onChange(of: viewModel.pendingInteractionID) {
             guard viewModel.pendingInteractionID != nil else {
                 return
             }
-            selectedTab = .chat
-        }
-    }
-}
-
-enum AppTab: Hashable {
-    case agents
-    case chat
-    case settings
-}
-
-enum AppAppearance: String, CaseIterable, Identifiable {
-    case system
-    case light
-    case dark
-
-    var id: Self { self }
-
-    var label: String {
-        switch self {
-        case .system:
-            return "System"
-        case .light:
-            return "Light"
-        case .dark:
-            return "Dark"
-        }
-    }
-
-    var colorScheme: ColorScheme? {
-        switch self {
-        case .system:
-            return nil
-        case .light:
-            return .light
-        case .dark:
-            return .dark
+            if !viewModel.agents.isEmpty {
+                isShowingAgentsScreen = false
+            }
         }
     }
 }

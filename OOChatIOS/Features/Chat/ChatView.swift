@@ -1,17 +1,24 @@
 import SwiftUI
-
+// The main chat view message and conversations of the app.
 struct ChatView: View {
     @ObservedObject var viewModel: ChatViewModel
+    let onOpenSidebar: () -> Void
+
+    init(viewModel: ChatViewModel, onOpenSidebar: @escaping () -> Void = {}) {
+        self.viewModel = viewModel
+        self.onOpenSidebar = onOpenSidebar
+    }
 
     var body: some View {
         NavigationStack {
-            ChatScreen(viewModel: viewModel)
+            ChatScreen(viewModel: viewModel, onOpenSidebar: onOpenSidebar)
         }
     }
 }
 
 struct ChatScreen: View {
     @ObservedObject var viewModel: ChatViewModel
+    let onOpenSidebar: () -> Void
     private let bottomAnchorID = "chat.bottomAnchor"
 
     var body: some View {
@@ -45,7 +52,6 @@ struct ChatScreen: View {
                                 .transition(.opacity)
                             }
 
-
                             if let review = viewModel.activePendingPlanReview {
                                 PlanReviewCard(review: review) {
                                     viewModel.approvePendingPlan(id: review.id)
@@ -78,12 +84,18 @@ struct ChatScreen: View {
                     }
                     .safeAreaInset(edge: .bottom, spacing: 0) {
                         Composer(viewModel: viewModel)
+                            .padding(.top, 8)
+                            .background {
+                                Color(.systemBackground)
+                                    .ignoresSafeArea(edges: .bottom)
+                            }
                     }
                 }
             } else {
                 ContentUnavailableView("No Conversation", systemImage: "bubble.left")
             }
         }
+        .background(Color(.systemBackground))
         .navigationTitle(viewModel.activeConversation?.title ?? "Chat")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -98,30 +110,13 @@ struct ChatScreen: View {
             }
 
             ToolbarItem(placement: .topBarLeading) {
-                Menu {
-                    if viewModel.agents.isEmpty {
-                        Text("No Agents")
-                    } else {
-                        ForEach(viewModel.agents) { agent in
-                            Button {
-                                viewModel.switchToAgentForChat(agent)
-                            } label: {
-                                HStack {
-                                    Text(agent.name)
-                                    if viewModel.activeAgentID == agent.id {
-                                        Image(systemName: "checkmark.circle.fill")
-                                            .symbolRenderingMode(.palette)
-                                            .foregroundStyle(.white, AppTheme.primary)
-                                    }
-                                }
-                            }
-                        }
-                    }
+                Button {
+                    onOpenSidebar()
                 } label: {
                     Image(systemName: "sidebar.left")
                 }
-                .disabled(viewModel.agents.isEmpty || viewModel.isProcessing)
-                .accessibilityLabel("Switch Agent")
+                .disabled(viewModel.agents.isEmpty)
+                .accessibilityLabel("Open sidebar")
             }
         }
     }

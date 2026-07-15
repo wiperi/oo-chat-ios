@@ -7,6 +7,7 @@ enum AgentRoute: Hashable {
 struct AgentsView: View {
     @ObservedObject var viewModel: ChatViewModel
     let switchToChat: () -> Void
+    var onClose: (() -> Void)?
     @State private var path: [AgentRoute] = []
     @State private var agentDraft: AgentFormDraft?
     @State private var pendingDeleteAgent: AgentConnection?
@@ -61,7 +62,19 @@ struct AgentsView: View {
                     Text("ConnectOnion")
                         .font(.largeTitle.bold())
                         .foregroundStyle(AppTheme.primary)
-                        .offset(y: 6)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.80)
+                }
+                if let onClose {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            onClose()
+                        } label: {
+                            Image(systemName: "xmark")
+                        }
+                        .accessibilityLabel("Close")
+                        .tint(.primary)
+                    }
                 }
             }
             .overlay(alignment: .bottomTrailing) {

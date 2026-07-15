@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var viewModel: ChatViewModel
+    var onClose: (() -> Void)?
     @AppStorage("appAppearance") private var appAppearance = AppAppearance.system.rawValue
 
     var body: some View {
@@ -36,6 +37,20 @@ struct SettingsView: View {
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if let onClose {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            onClose()
+                        } label: {
+                            Image(systemName: "xmark")
+                        }
+                        .accessibilityLabel("Close")
+                        .tint(.primary)
+                    }
+                }
+            }
         }
+        .preferredColorScheme(AppAppearance(rawValue: appAppearance)?.colorScheme)
     }
 }
