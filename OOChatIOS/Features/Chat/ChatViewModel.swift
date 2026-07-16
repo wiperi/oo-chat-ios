@@ -95,6 +95,7 @@ final class ChatViewModel: ObservableObject {
     @Published private var processingConversationIDs: Set<String> = []
     @Published private var pendingApprovalsByConversationID: [String: PendingApproval] = [:]
     @Published private var pendingPlanReviewsByConversationID: [String: PendingPlanReview] = [:]
+    @Published private var pendingAskUsersByConversationID: [String: PendingAskUser] = [:]
     @Published private var skillsByAgentAddress: [String: [AgentSkill]] = [:]
 
     var shouldShowOfflineBanner: Bool {
@@ -114,6 +115,10 @@ final class ChatViewModel: ObservableObject {
     private let planReviewGate = ContinuationGate<PlanReviewDecision>(
         cancellationDecision: .requestChanges(feedback: "Plan review cancelled."),
         unavailableDecision: .requestChanges(feedback: "Plan review unavailable.")
+    )
+    private let askUserGate = ContinuationGate<String>(
+        cancellationDecision: "",
+        unavailableDecision: ""
     )
 
     /// Seconds between silent reachability probes while offline. Overridable in tests.
@@ -175,6 +180,10 @@ final class ChatViewModel: ObservableObject {
         activePendingPlanReview
     }
 
+    var pendingAskUser: PendingAskUser? {
+        activePendingAskUser
+    }
+
     var activePendingApproval: PendingApproval? {
         guard let activeConversationID else {
             return nil
@@ -189,8 +198,15 @@ final class ChatViewModel: ObservableObject {
         return pendingPlanReviewsByConversationID[activeConversationID]
     }
 
+    var activePendingAskUser: PendingAskUser? {
+        guard let activeConversationID else {
+            return nil
+        }
+        return pendingAskUsersByConversationID[activeConversationID]
+    }
+
     var pendingInteractionID: String? {
-        activePendingApproval?.id ?? activePendingPlanReview?.id
+        activePendingApproval?.id ?? activePendingPlanReview?.id ?? activePendingAskUser?.id
     }
 
     func isProcessing(conversationID: String) -> Bool {
@@ -200,12 +216,14 @@ final class ChatViewModel: ObservableObject {
     func hasPendingInteraction(forConversationID conversationID: String) -> Bool {
         pendingApprovalsByConversationID[conversationID] != nil
             || pendingPlanReviewsByConversationID[conversationID] != nil
+            || pendingAskUsersByConversationID[conversationID] != nil
     }
 
     var hasBackgroundPendingInteraction: Bool {
         let activeConversationID = activeConversationID
         return pendingApprovalsByConversationID.keys.contains { $0 != activeConversationID }
             || pendingPlanReviewsByConversationID.keys.contains { $0 != activeConversationID }
+            || pendingAskUsersByConversationID.keys.contains { $0 != activeConversationID }
     }
 
     var onlineAgentCount: Int {
@@ -283,6 +301,7 @@ final class ChatViewModel: ObservableObject {
         skillFetchTasks.values.forEach { $0.cancel() }
         approvalGate.cancelAll()
         planReviewGate.cancelAll()
+        askUserGate.cancelAll()
     }
 
     func agent(withID id: String) -> AgentConnection? {
@@ -689,8 +708,9 @@ final class ChatViewModel: ObservableObject {
         let transport = client
         let approvalGate = approvalGate
         let planReviewGate = planReviewGate
+        let askUserGate = askUserGate
         let owner = WeakChatViewModelReference(self)
-        return Task { [transport, approvalGate, planReviewGate, owner] in
+        return Task { [transport, approvalGate, planReviewGate, askUserGate, owner] in
             defer {
                 owner.value?.deliveryDidFinish(
                     messageID: messageID,
@@ -744,6 +764,27 @@ final class ChatViewModel: ObservableObject {
                         } dismiss: { [owner] in
                             if owner.value?.pendingPlanReviewsByConversationID[conversationID]?.id == request.id {
                                 owner.value?.pendingPlanReviewsByConversationID[conversationID] = nil
+                            }
+                        }
+                    },
+                    onAskUser: { [askUserGate, owner] request in
+                        let gateID = Self.interactionGateID(
+                            conversationID: conversationID,
+                            interactionID: request.id
+                        )
+                        return await askUserGate.wait(for: gateID) { [owner] in
+                            guard let viewModel = owner.value,
+                                  viewModel.conversation(withID: conversationID) != nil else {
+                                return false
+                            }
+                            viewModel.pendingAskUsersByConversationID[conversationID] = PendingAskUser(
+                                conversationID: conversationID,
+                                request: request
+                            )
+                            return true
+                        } dismiss: { [owner] in
+                            if owner.value?.pendingAskUsersByConversationID[conversationID]?.id == request.id {
+                                owner.value?.pendingAskUsersByConversationID[conversationID] = nil
                             }
                         }
                     }
@@ -929,6 +970,19 @@ final class ChatViewModel: ObservableObject {
         resolvePendingPlanReview(id: id, with: .requestChanges(feedback: feedback))
     }
 
+    func answerPendingAskUser(id: String, answer: String) {
+        guard let conversationID = activeConversationID,
+              let pendingAskUser = pendingAskUsersByConversationID[conversationID],
+              pendingAskUser.id == id else {
+            return
+        }
+        pendingAskUsersByConversationID[conversationID] = nil
+        askUserGate.resolve(
+            id: Self.interactionGateID(conversationID: conversationID, interactionID: id),
+            with: answer
+        )
+    }
+
     private func resolvePendingApproval(id: String, with decision: ApprovalDecision) {
         guard let conversationID = activeConversationID,
               let pendingApproval = pendingApprovalsByConversationID[conversationID],
@@ -968,6 +1022,12 @@ final class ChatViewModel: ObservableObject {
                 with: .requestChanges(feedback: "Plan review cancelled.")
             )
         }
+        if let pending = pendingAskUsersByConversationID.removeValue(forKey: conversationID) {
+            askUserGate.resolve(
+                id: Self.interactionGateID(conversationID: conversationID, interactionID: pending.id),
+                with: ""
+            )
+        }
         deliveryTasksByConversationID[conversationID]?.cancel()
     }
 
@@ -984,6 +1044,13 @@ final class ChatViewModel: ObservableObject {
             planReviewGate.resolve(
                 id: Self.interactionGateID(conversationID: conversationID, interactionID: review.id),
                 with: .requestChanges(feedback: "Plan review cancelled.")
+            )
+            settledInteraction = true
+        }
+        if let request = pendingAskUsersByConversationID.removeValue(forKey: conversationID) {
+            askUserGate.resolve(
+                id: Self.interactionGateID(conversationID: conversationID, interactionID: request.id),
+                with: ""
             )
             settledInteraction = true
         }

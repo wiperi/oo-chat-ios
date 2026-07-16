@@ -225,6 +225,59 @@ extension PlanReviewDecision {
     }
 }
 
+extension AskUserRequest {
+    static func from(_ frame: [String: JSONValue]) -> AskUserRequest? {
+        guard frame["type"]?.stringValue?.lowercased() == "ask_user",
+              let question = frame["question"]?.stringValue ?? frame["text"]?.stringValue,
+              !question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+
+        let options: [String]
+        if case .array(let values)? = frame["options"] {
+            options = values.compactMap(\.stringValue)
+        } else {
+            options = []
+        }
+
+        let fields: [AskUserField]
+        if case .array(let values)? = frame["fields"] {
+            var seenNames: Set<String> = []
+            fields = values.compactMap { value in
+                guard case .object(let field) = value,
+                      let name = field["name"]?.stringValue,
+                      !name.isEmpty,
+                      seenNames.insert(name).inserted else {
+                    return nil
+                }
+                return AskUserField(
+                    name: name,
+                    label: field["label"]?.stringValue ?? name,
+                    type: field["type"]?.stringValue ?? "text",
+                    placeholder: field["placeholder"]?.stringValue
+                )
+            }
+        } else {
+            fields = []
+        }
+
+        let multiSelect: Bool
+        if case .bool(let value)? = frame["multi_select"] {
+            multiSelect = value
+        } else {
+            multiSelect = false
+        }
+
+        return AskUserRequest(
+            id: frame["id"]?.stringValue ?? UUID().uuidString,
+            question: question,
+            options: options,
+            multiSelect: multiSelect,
+            fields: fields
+        )
+    }
+}
+
 /// Wire-level operations the view model needs from the hosted-agent client,
 /// as a protocol so tests can substitute a scripted transport.
 protocol HostedAgentTransport {
@@ -238,7 +291,8 @@ protocol HostedAgentTransport {
         prompt: String,
         onEvent: (@MainActor (HostedAgentEvent) -> Void)?,
         onApprovalRequest: (@MainActor (ToolApprovalRequest) async -> ApprovalDecision)?,
-        onPlanReview: (@MainActor (PlanReviewRequest) async -> PlanReviewDecision)?
+        onPlanReview: (@MainActor (PlanReviewRequest) async -> PlanReviewDecision)?,
+        onAskUser: (@MainActor (AskUserRequest) async -> String)?
     ) async throws -> HostedAgentResult
     func waitForPendingInteractionResponses(agentAddress: String, conversationID: String) async
 }
@@ -314,7 +368,8 @@ final class HostedAgentClient: HostedAgentTransport {
         prompt: String,
         onEvent: (@MainActor (HostedAgentEvent) -> Void)?,
         onApprovalRequest: (@MainActor (ToolApprovalRequest) async -> ApprovalDecision)?,
-        onPlanReview: (@MainActor (PlanReviewRequest) async -> PlanReviewDecision)?
+        onPlanReview: (@MainActor (PlanReviewRequest) async -> PlanReviewDecision)?,
+        onAskUser: (@MainActor (AskUserRequest) async -> String)?
     ) async throws -> HostedAgentResult {
         guard Self.isHostedAgentAddress(agentAddress) else {
             throw HostedAgentClientError.invalidAddress
@@ -325,7 +380,8 @@ final class HostedAgentClient: HostedAgentTransport {
             prompt: prompt,
             onEvent: onEvent,
             onApprovalRequest: onApprovalRequest,
-            onPlanReview: onPlanReview
+            onPlanReview: onPlanReview,
+            onAskUser: onAskUser
         )
     }
 
@@ -369,6 +425,18 @@ final class HostedAgentClient: HostedAgentTransport {
     ) -> [String: JSONValue] {
         routedInteractiveFrame(
             decision.responseFrame(for: request),
+            agentAddress: agentAddress,
+            endpoint: endpoint
+        )
+    }
+
+    static func askUserResponseFrame(
+        answer: String,
+        agentAddress: String,
+        endpoint: ResolvedEndpoint
+    ) -> [String: JSONValue] {
+        routedInteractiveFrame(
+            ["answer": .string(answer)],
             agentAddress: agentAddress,
             endpoint: endpoint
         )
@@ -631,7 +699,8 @@ private actor HostedAgentConnectionPool {
         prompt: String,
         onEvent: (@MainActor (HostedAgentEvent) -> Void)?,
         onApprovalRequest: (@MainActor (ToolApprovalRequest) async -> ApprovalDecision)?,
-        onPlanReview: (@MainActor (PlanReviewRequest) async -> PlanReviewDecision)?
+        onPlanReview: (@MainActor (PlanReviewRequest) async -> PlanReviewDecision)?,
+        onAskUser: (@MainActor (AskUserRequest) async -> String)?
     ) async throws -> HostedAgentResult {
         let lease = await acquire(agentAddress: agentAddress, conversationID: conversation.id)
         do {
@@ -640,7 +709,8 @@ private actor HostedAgentConnectionPool {
                 prompt: prompt,
                 onEvent: onEvent,
                 onApprovalRequest: onApprovalRequest,
-                onPlanReview: onPlanReview
+                onPlanReview: onPlanReview,
+                onAskUser: onAskUser
             )
             release(lease)
             await trimToSize()
@@ -776,6 +846,7 @@ private actor HostedAgentConnection {
         let onEvent: (@MainActor (HostedAgentEvent) -> Void)?
         let onApprovalRequest: (@MainActor (ToolApprovalRequest) async -> ApprovalDecision)?
         let onPlanReview: (@MainActor (PlanReviewRequest) async -> PlanReviewDecision)?
+        let onAskUser: (@MainActor (AskUserRequest) async -> String)?
     }
 
     private let key: HostedAgentConnectionKey
@@ -850,7 +921,8 @@ private actor HostedAgentConnection {
         prompt: String,
         onEvent: (@MainActor (HostedAgentEvent) -> Void)?,
         onApprovalRequest: (@MainActor (ToolApprovalRequest) async -> ApprovalDecision)?,
-        onPlanReview: (@MainActor (PlanReviewRequest) async -> PlanReviewDecision)?
+        onPlanReview: (@MainActor (PlanReviewRequest) async -> PlanReviewDecision)?,
+        onAskUser: (@MainActor (AskUserRequest) async -> String)?
     ) async throws -> HostedAgentResult {
         try Task.checkCancellation()
         reconnectToApplyPendingModeChangeIfNeeded(conversation: conversation)
@@ -868,7 +940,8 @@ private actor HostedAgentConnection {
                     continuation: continuation,
                     onEvent: onEvent,
                     onApprovalRequest: onApprovalRequest,
-                    onPlanReview: onPlanReview
+                    onPlanReview: onPlanReview,
+                    onAskUser: onAskUser
                 )
                 guard !Task.isCancelled else {
                     disconnect(with: CancellationError(), closeCode: .goingAway)
@@ -1081,7 +1154,14 @@ private actor HostedAgentConnection {
                 return
             }
             startPlanReviewTask(request: request, promptID: pending.id, generation: generation)
-        case "ERROR", "ask_user":
+        case "ask_user":
+            guard let pending = pendingPrompt,
+                  let request = AskUserRequest.from(frame) else {
+                failConnection(HostedAgentClientError.badFrame, generation: generation)
+                return
+            }
+            startAskUserTask(request: request, promptID: pending.id, generation: generation)
+        case "ERROR":
             failConnection(
                 HostedAgentClientError.server(messageText(frame)),
                 generation: generation
@@ -1178,6 +1258,53 @@ private actor HostedAgentConnection {
                 HostedAgentClient.planReviewResponseFrame(
                     decision: decision,
                     request: request,
+                    agentAddress: key.agentAddress,
+                    endpoint: endpoint
+                ),
+                over: socket
+            )
+        } catch {
+            failConnection(error, generation: generation)
+        }
+    }
+
+    private func startAskUserTask(request: AskUserRequest, promptID: UUID, generation: Int) {
+        let taskID = UUID()
+        interactionTasks[taskID] = Task { [weak self] in
+            await self?.processAskUser(
+                request: request,
+                promptID: promptID,
+                generation: generation,
+                taskID: taskID
+            )
+        }
+    }
+
+    private func processAskUser(
+        request: AskUserRequest,
+        promptID: UUID,
+        generation: Int,
+        taskID: UUID
+    ) async {
+        defer {
+            interactionTasks.removeValue(forKey: taskID)
+        }
+        guard generation == socketGeneration,
+              let pending = pendingPrompt,
+              pending.id == promptID else {
+            return
+        }
+        let answer = await pending.onAskUser?(request) ?? ""
+        guard generation == socketGeneration,
+              pendingPrompt?.id == promptID,
+              let socket,
+              let endpoint else {
+            return
+        }
+        do {
+            try await send(
+                HostedAgentClient.askUserResponseFrame(
+                    answer: answer,
                     agentAddress: key.agentAddress,
                     endpoint: endpoint
                 ),

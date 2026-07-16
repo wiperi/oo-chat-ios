@@ -189,6 +189,55 @@ struct PendingPlanReview: Identifiable, Equatable {
     var id: String { request.id }
 }
 
+struct AskUserField: Identifiable, Equatable {
+    let name: String
+    let label: String
+    let type: String
+    let placeholder: String?
+
+    var id: String { name }
+
+    init(name: String, label: String, type: String = "text", placeholder: String? = nil) {
+        self.name = name
+        self.label = label
+        self.type = type
+        self.placeholder = placeholder
+    }
+
+    var isSecure: Bool {
+        type.lowercased() == "password"
+    }
+}
+
+struct AskUserRequest: Identifiable, Equatable {
+    let id: String
+    let question: String
+    let options: [String]
+    let multiSelect: Bool
+    let fields: [AskUserField]
+
+    init(
+        id: String = UUID().uuidString,
+        question: String,
+        options: [String] = [],
+        multiSelect: Bool = false,
+        fields: [AskUserField] = []
+    ) {
+        self.id = id
+        self.question = question
+        self.options = options
+        self.multiSelect = multiSelect
+        self.fields = fields
+    }
+}
+
+struct PendingAskUser: Identifiable, Equatable {
+    let conversationID: String
+    let request: AskUserRequest
+
+    var id: String { request.id }
+}
+
 struct ChatMessage: Identifiable, Codable, Equatable {
     let id: String
     var role: ChatRole
