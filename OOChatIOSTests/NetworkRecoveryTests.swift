@@ -56,6 +56,7 @@ final class MockAgentTransport: HostedAgentTransport {
     var streamedEvents: [HostedAgentEvent] = []
     var approvalRequests: [ToolApprovalRequest] = []
     var planReviews: [PlanReviewRequest] = []
+    var askUserRequests: [AskUserRequest] = []
     var availableSkills: [AgentSkill] = []
     var skillsByAddress: [String: [AgentSkill]] = [:]
     var skillFetchError: Error?
@@ -66,6 +67,7 @@ final class MockAgentTransport: HostedAgentTransport {
     private(set) var sentPrompts: [String] = []
     private(set) var approvalDecisions: [ApprovalDecision] = []
     private(set) var planReviewDecisions: [PlanReviewDecision] = []
+    private(set) var askUserAnswers: [String] = []
     private(set) var fetchedSkillAddresses: [String] = []
     private(set) var interactionResponseWaits: [(agentAddress: String, conversationID: String)] = []
 
@@ -108,7 +110,8 @@ final class MockAgentTransport: HostedAgentTransport {
         prompt: String,
         onEvent: (@MainActor (HostedAgentEvent) -> Void)?,
         onApprovalRequest: (@MainActor (ToolApprovalRequest) async -> ApprovalDecision)?,
-        onPlanReview: (@MainActor (PlanReviewRequest) async -> PlanReviewDecision)?
+        onPlanReview: (@MainActor (PlanReviewRequest) async -> PlanReviewDecision)?,
+        onAskUser: (@MainActor (AskUserRequest) async -> String)?
     ) async throws -> HostedAgentResult {
         sentPrompts.append(prompt)
         let behavior = sendBehaviorsByPrompt[prompt] ?? sendBehavior
@@ -139,6 +142,12 @@ final class MockAgentTransport: HostedAgentTransport {
                 throw HostedAgentClientError.badFrame
             }
             planReviewDecisions.append(await onPlanReview(review))
+        }
+        for request in askUserRequests {
+            guard let onAskUser else {
+                throw HostedAgentClientError.badFrame
+            }
+            askUserAnswers.append(await onAskUser(request))
         }
         if waitAfterInteractionsUntilCancelled {
             while true {
@@ -881,6 +890,61 @@ final class NetworkRecoveryTests: XCTestCase {
         XCTAssertEqual(transport.approvalDecisions, [.allowOnce])
     }
 
+    func testAskUserAnswerResumesTheActiveAgentTurn() async {
+        let (viewModel, transport, _) = makeEnvironment()
+        setUpAgentAndConversation(viewModel)
+        transport.askUserRequests = [
+            AskUserRequest(
+                id: "question-1",
+                question: "Which environment?",
+                options: ["Staging", "Production"]
+            ),
+        ]
+
+        viewModel.prompt = "Deploy the app"
+        viewModel.sendPrompt()
+        await waitForPendingAskUser(on: viewModel)
+
+        XCTAssertTrue(viewModel.isProcessing)
+        XCTAssertEqual(viewModel.activePendingAskUser?.request.question, "Which environment?")
+
+        viewModel.answerPendingAskUser(id: "question-1", answer: "Staging")
+        await viewModel.sendTask?.value
+
+        XCTAssertEqual(transport.askUserAnswers, ["Staging"])
+        XCTAssertNil(viewModel.pendingAskUser)
+        XCTAssertFalse(viewModel.isProcessing)
+    }
+
+    func testPendingAskUserIsScopedToItsConversation() async {
+        let (viewModel, transport, _) = makeEnvironment()
+        let agent = setUpAgentAndConversation(viewModel)
+        let questionConversation = viewModel.activeConversation!
+        transport.askUserRequests = [
+            AskUserRequest(id: "question-1", question: "Continue?", options: ["Yes", "No"]),
+        ]
+
+        viewModel.prompt = "Start task"
+        viewModel.sendPrompt()
+        await waitForPendingAskUser(on: viewModel)
+
+        _ = viewModel.createConversation(for: agent)
+        XCTAssertNil(viewModel.activePendingAskUser)
+
+        viewModel.answerPendingAskUser(id: "question-1", answer: "Yes")
+        XCTAssertTrue(transport.askUserAnswers.isEmpty)
+        XCTAssertNil(viewModel.pendingAskUser)
+        XCTAssertTrue(viewModel.hasPendingInteraction(forConversationID: questionConversation.id))
+        XCTAssertTrue(viewModel.hasBackgroundPendingInteraction)
+
+        viewModel.selectConversation(questionConversation)
+        viewModel.answerPendingAskUser(id: "question-1", answer: "Yes")
+        await viewModel.sendTask?.value
+
+        XCTAssertEqual(transport.askUserAnswers, ["Yes"])
+        XCTAssertNil(viewModel.pendingAskUser)
+    }
+
     func testApprovalGateRegistersBeforePresentation() async {
         let gate = ContinuationGate<ApprovalDecision>(
             cancellationDecision: .rejectHard(feedback: "cancelled"),
@@ -1344,6 +1408,13 @@ final class NetworkRecoveryTests: XCTestCase {
             await Task.yield()
         }
         XCTAssertNotNil(viewModel.activePendingApproval)
+    }
+
+    private func waitForPendingAskUser(on viewModel: ChatViewModel) async {
+        for _ in 0..<100 where viewModel.pendingAskUser == nil {
+            await Task.yield()
+        }
+        XCTAssertNotNil(viewModel.pendingAskUser)
     }
 
     private func waitForPlanReview(on viewModel: ChatViewModel) async {

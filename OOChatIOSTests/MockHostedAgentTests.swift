@@ -347,6 +347,99 @@ final class MockHostedAgentTests: XCTestCase {
         )
     }
 
+    func testAskUserFrameMapsAllSupportedInputShapes() {
+        let request = AskUserRequest.from([
+            "type": .string("ask_user"),
+            "id": .string("question-1"),
+            "question": .string("Enter your login"),
+            "options": .array([.string("Use saved account")]),
+            "multi_select": .bool(true),
+            "fields": .array([
+                .object([
+                    "name": .string("username"),
+                    "label": .string("Username"),
+                    "type": .string("text"),
+                    "placeholder": .string("name@example.com"),
+                ]),
+                .object([
+                    "name": .string("password"),
+                    "label": .string("Password"),
+                    "type": .string("password"),
+                ]),
+            ]),
+        ])
+
+        XCTAssertEqual(
+            request,
+            AskUserRequest(
+                id: "question-1",
+                question: "Enter your login",
+                options: ["Use saved account"],
+                multiSelect: true,
+                fields: [
+                    AskUserField(
+                        name: "username",
+                        label: "Username",
+                        placeholder: "name@example.com"
+                    ),
+                    AskUserField(name: "password", label: "Password", type: "password"),
+                ]
+            )
+        )
+        XCTAssertTrue(request?.fields.last?.isSecure ?? false)
+    }
+
+    func testAskUserFrameAcceptsLegacyTextAndDefaultsOptionalValues() {
+        let request = AskUserRequest.from([
+            "type": .string("ask_user"),
+            "text": .string("Which date?"),
+        ])
+
+        XCTAssertEqual(request?.question, "Which date?")
+        XCTAssertEqual(request?.options, [])
+        XCTAssertEqual(request?.fields, [])
+        XCTAssertEqual(request?.multiSelect, false)
+        XCTAssertFalse(request?.id.isEmpty ?? true)
+    }
+
+    func testAskUserRejectsMissingQuestionAndEncodesResponseForEndpoint() {
+        XCTAssertNil(AskUserRequest.from([
+            "type": .string("ask_user"),
+            "options": .array([.string("Yes")]),
+        ]))
+
+        let relayEndpoint = ResolvedEndpoint(
+            wsURL: URL(string: "wss://relay.example/ws/input")!,
+            kind: .relay,
+            label: "relay"
+        )
+        let directEndpoint = ResolvedEndpoint(
+            wsURL: URL(string: "ws://127.0.0.1:8000/ws")!,
+            kind: .direct,
+            label: "local"
+        )
+
+        XCTAssertEqual(
+            HostedAgentClient.askUserResponseFrame(
+                answer: #"{"username":"me","password":"secret"}"#,
+                agentAddress: endpointA,
+                endpoint: relayEndpoint
+            ),
+            [
+                "answer": .string(#"{"username":"me","password":"secret"}"#),
+                "to": .string(endpointA),
+            ]
+        )
+        XCTAssertEqual(
+            HostedAgentClient.askUserResponseFrame(
+                answer: "red, blue",
+                agentAddress: endpointA,
+                endpoint: directEndpoint
+            ),
+            ["answer": .string("red, blue")]
+        )
+    }
+
     @MainActor
     func testSaveAgentUpdatesTokenEndpointAndClearsSessions() {
         let viewModel = makeViewModel()
