@@ -90,6 +90,17 @@ struct MessageBubble: View {
                 .font(.caption2.weight(.semibold))
                 .accessibilityLabel("Retry sending message")
             }
+        case .cancelled:
+            HStack(spacing: 8) {
+                Label("Cancelled", systemImage: "stop.circle")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Button("Retry") {
+                    onRetry?()
+                }
+                .font(.caption2.weight(.semibold))
+                .accessibilityLabel("Retry cancelled message")
+            }
         }
     }
 }

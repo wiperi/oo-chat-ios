@@ -104,6 +104,7 @@ enum MessageDeliveryState: String, Codable, Equatable {
     case sent
     case queued
     case failed
+    case cancelled
 }
 
 enum ToolCallState: String, Codable, Equatable {
