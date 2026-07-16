@@ -305,6 +305,16 @@ struct ChatSidebarView: View {
                         .lineLimit(1)
 
                     Spacer(minLength: 0)
+
+                    if viewModel.hasPendingInteraction(forConversationID: conversation.id) {
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .foregroundStyle(Color(.systemOrange))
+                            .accessibilityLabel("Approval required")
+                    } else if viewModel.isProcessing(conversationID: conversation.id) {
+                        ProgressView()
+                            .controlSize(.small)
+                            .accessibilityLabel("Agent working")
+                    }
                 }
                 .padding(.leading, SidebarMetrics.sessionIndent)
             }

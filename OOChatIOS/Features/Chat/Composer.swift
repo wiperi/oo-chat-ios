@@ -124,7 +124,6 @@ struct Composer: View {
                 .font(.body)
                 .lineLimit(1...4)
                 .focused($isPromptFocused)
-                .disabled(viewModel.isProcessing)
                 .tint(AppTheme.primary)
                 .frame(minHeight: ComposerMetrics.sendButtonSize, alignment: .center)
                 .padding(.vertical, ComposerMetrics.inputVerticalPadding)
@@ -244,24 +243,28 @@ struct Composer: View {
 
     private var sendButton: some View {
         Button {
-            viewModel.sendPrompt()
-            isPromptFocused = false
-        } label: {
-            Group {
-                if viewModel.isProcessing {
-                    ProgressView()
-                        .tint(.white)
-                } else {
-                    Image(systemName: "arrow.up")
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(.white)
-                }
+            if viewModel.isProcessing {
+                viewModel.stopActiveResponse()
+            } else {
+                viewModel.sendPrompt()
+                isPromptFocused = false
             }
-            .frame(width: ComposerMetrics.sendButtonSize, height: ComposerMetrics.sendButtonSize)
-            .glassBackground(in: Circle(), interactive: true, tint: AppTheme.primary)
+        } label: {
+            Image(systemName: viewModel.isProcessing ? "stop.fill" : "arrow.up")
+                .font(viewModel.isProcessing ? .caption.weight(.bold) : .body.weight(.semibold))
+                .foregroundStyle(.white)
+                .frame(width: ComposerMetrics.sendButtonSize, height: ComposerMetrics.sendButtonSize)
+                .glassBackground(
+                    in: Circle(),
+                    interactive: true,
+                    tint: viewModel.isProcessing ? Color(.systemRed) : AppTheme.primary
+                )
         }
-        .disabled(viewModel.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isProcessing)
-        .accessibilityLabel("Send message")
+        .disabled(
+            !viewModel.isProcessing
+                && viewModel.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        )
+        .accessibilityLabel(viewModel.isProcessing ? "Stop response" : "Send message")
     }
 
 }
