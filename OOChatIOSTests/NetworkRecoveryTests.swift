@@ -51,6 +51,7 @@ final class MockAgentTransport: HostedAgentTransport {
 
     var connectBehavior: Behavior = .succeed(output: "")
     var sendBehavior: Behavior = .succeed(output: "mock reply")
+    var onConnectionStateChange: (@MainActor (String, ConnectionState) -> Void)?
     var sendBehaviorsByPrompt: [String: Behavior] = [:]
     var streamedEvents: [HostedAgentEvent] = []
     var approvalRequests: [ToolApprovalRequest] = []
@@ -59,12 +60,14 @@ final class MockAgentTransport: HostedAgentTransport {
     var skillsByAddress: [String: [AgentSkill]] = [:]
     var skillFetchError: Error?
     var onSend: (@MainActor () -> Void)?
+    var waitAfterInteractionsUntilCancelled = false
 
     private(set) var connectedAddresses: [String] = []
     private(set) var sentPrompts: [String] = []
     private(set) var approvalDecisions: [ApprovalDecision] = []
     private(set) var planReviewDecisions: [PlanReviewDecision] = []
     private(set) var fetchedSkillAddresses: [String] = []
+    private(set) var interactionResponseWaits: [(agentAddress: String, conversationID: String)] = []
 
     func connect(agentAddress: String, conversation: Conversation) async throws -> HostedAgentResult {
         connectedAddresses.append(agentAddress)
@@ -137,6 +140,11 @@ final class MockAgentTransport: HostedAgentTransport {
             }
             planReviewDecisions.append(await onPlanReview(review))
         }
+        if waitAfterInteractionsUntilCancelled {
+            while true {
+                try await Task.sleep(nanoseconds: 10_000_000)
+            }
+        }
         for event in streamedEvents {
             await onEvent?(event)
         }
@@ -144,6 +152,18 @@ final class MockAgentTransport: HostedAgentTransport {
             await MainActor.run { onSend() }
         }
         return HostedAgentResult(output: output, endpointLabel: "mock", serverSession: nil)
+    }
+
+    func waitForPendingInteractionResponses(agentAddress: String, conversationID: String) async {
+        interactionResponseWaits.append((agentAddress, conversationID))
+        for _ in 0..<100 where approvalDecisions.isEmpty && planReviewDecisions.isEmpty {
+            await Task.yield()
+        }
+    }
+
+    @MainActor
+    func simulateConnectionState(_ state: ConnectionState, conversationID: String) {
+        onConnectionStateChange?(conversationID, state)
     }
 }
 
@@ -173,6 +193,27 @@ final class NetworkRecoveryTests: XCTestCase {
 
         XCTAssertNil(viewModel.recoveryTask)
         XCTAssertTrue(transport.connectedAddresses.isEmpty)
+    }
+
+    func testOnlineCountTracksBackgroundConnectionLiveness() {
+        let (viewModel, transport, _) = makeEnvironment()
+        let firstAgent = setUpAgentAndConversation(viewModel)
+        let firstConversation = viewModel.activeConversation!
+        let secondAddress = "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        let secondAgent = viewModel.saveAgent(name: "Second", address: secondAddress, token: "")!
+        _ = viewModel.createConversation(for: secondAgent)
+
+        transport.simulateConnectionState(.connected, conversationID: firstConversation.id)
+
+        XCTAssertEqual(viewModel.activeAgentID, secondAgent.id)
+        XCTAssertTrue(viewModel.isAgentOnline(firstAgent))
+        XCTAssertFalse(viewModel.isAgentOnline(secondAgent))
+        XCTAssertEqual(viewModel.onlineAgentCount, 1)
+
+        transport.simulateConnectionState(.disconnected, conversationID: firstConversation.id)
+
+        XCTAssertFalse(viewModel.isAgentOnline(firstAgent))
+        XCTAssertEqual(viewModel.onlineAgentCount, 0)
     }
 
     // queueing while offline
@@ -311,7 +352,7 @@ final class NetworkRecoveryTests: XCTestCase {
         )
     }
 
-    func testQueuedFollowUpContinuesAfterStoppingActiveResponse() async {
+    func testStoppingLeavesQueuedFollowUpPausedUntilTheUserSendsAgain() async {
         let (viewModel, transport, _) = makeEnvironment()
         setUpAgentAndConversation(viewModel)
         transport.sendBehaviorsByPrompt["long task"] = .waitUntilCancelled
@@ -323,15 +364,62 @@ final class NetworkRecoveryTests: XCTestCase {
 
         viewModel.prompt = "follow up"
         viewModel.sendPrompt()
+        viewModel.prompt = "draft"
         viewModel.stopActiveResponse()
         await task?.value
         await viewModel.flushQueuedMessages()
 
-        XCTAssertEqual(transport.sentPrompts, ["long task", "follow up"])
+        XCTAssertEqual(transport.sentPrompts, ["long task"])
         let userMessages = viewModel.activeConversation?.messages.filter { $0.role == .user } ?? []
         XCTAssertEqual(userMessages.first { $0.content == "long task" }?.deliveryState, .cancelled)
-        XCTAssertEqual(userMessages.first { $0.content == "follow up" }?.deliveryState, .sent)
+        XCTAssertEqual(userMessages.first { $0.content == "follow up" }?.deliveryState, .queued)
+        XCTAssertEqual(viewModel.prompt, "draft")
         XCTAssertFalse(viewModel.isProcessing)
+
+        viewModel.sendPrompt()
+        await viewModel.flushQueuedMessages()
+
+        XCTAssertEqual(transport.sentPrompts, ["long task", "follow up", "draft"])
+        XCTAssertTrue(
+            viewModel.activeConversation?.messages.filter { $0.role == .user }.allSatisfy {
+                $0.deliveryState != .queued
+            } ?? false
+        )
+    }
+
+    func testStoppingActiveConversationLeavesBackgroundDeliveryRunning() async {
+        let (viewModel, transport, _) = makeEnvironment()
+        let agent = setUpAgentAndConversation(viewModel)
+        let backgroundConversation = viewModel.activeConversation!
+        let backgroundGate = PromptGate()
+        transport.sendBehaviorsByPrompt = [
+            "background": .wait(gate: backgroundGate, output: "background reply"),
+            "active": .waitUntilCancelled,
+        ]
+
+        viewModel.prompt = "background"
+        viewModel.sendPrompt()
+        await waitForSentPrompt("background", transport: transport)
+
+        let activeConversation = viewModel.createConversation(for: agent)
+        viewModel.prompt = "active"
+        viewModel.sendPrompt()
+        await waitForSentPrompt("active", transport: transport)
+        let activeTask = viewModel.sendTask
+
+        viewModel.stopActiveResponse()
+        await activeTask?.value
+
+        XCTAssertFalse(viewModel.isProcessing(conversationID: activeConversation.id))
+        XCTAssertTrue(viewModel.isProcessing(conversationID: backgroundConversation.id))
+
+        await backgroundGate.open()
+        await waitUntilIdle(backgroundConversation.id, on: viewModel)
+        XCTAssertTrue(
+            viewModel.conversation(withID: backgroundConversation.id)?.messages.contains {
+                $0.role == .agent && $0.content == "background reply"
+            } ?? false
+        )
     }
 
     // automatic reconnection and flush
@@ -662,6 +750,30 @@ final class NetworkRecoveryTests: XCTestCase {
         XCTAssertEqual(transport.approvalDecisions, [.allowOnce])
     }
 
+    func testStoppingPendingApprovalWaitsForRejectionBeforeCancelling() async {
+        let (viewModel, transport, _) = makeEnvironment()
+        setUpAgentAndConversation(viewModel)
+        transport.approvalRequests = [approvalRequest(tool: "write")]
+        transport.waitAfterInteractionsUntilCancelled = true
+
+        viewModel.prompt = "Create a file"
+        viewModel.sendPrompt()
+        await waitForPendingApproval(on: viewModel)
+        let conversationID = viewModel.activeConversation!.id
+        let task = viewModel.sendTask
+
+        viewModel.stopActiveResponse()
+        await task?.value
+
+        XCTAssertEqual(
+            transport.approvalDecisions,
+            [.rejectHard(feedback: "Approval cancelled.")]
+        )
+        XCTAssertEqual(transport.interactionResponseWaits.count, 1)
+        XCTAssertEqual(transport.interactionResponseWaits.first?.conversationID, conversationID)
+        XCTAssertFalse(viewModel.isProcessing)
+    }
+
     func testBackgroundApprovalDoesNotBlockSendingOrStealFocus() async {
         let (viewModel, transport, _) = makeEnvironment()
         let agent = setUpAgentAndConversation(viewModel)
@@ -684,6 +796,10 @@ final class NetworkRecoveryTests: XCTestCase {
         XCTAssertTrue(viewModel.isProcessing(conversationID: approvalConversation.id))
         XCTAssertTrue(viewModel.hasPendingInteraction(forConversationID: approvalConversation.id))
         XCTAssertNil(viewModel.activePendingApproval)
+        XCTAssertNil(viewModel.pendingApproval)
+        XCTAssertNil(viewModel.pendingPlanReview)
+        XCTAssertNil(viewModel.sendTask)
+        XCTAssertTrue(viewModel.hasBackgroundPendingInteraction)
         XCTAssertTrue(
             viewModel.conversation(withID: secondConversation.id)?.messages.contains {
                 $0.role == .agent && $0.content == "mock reply"
@@ -691,11 +807,14 @@ final class NetworkRecoveryTests: XCTestCase {
         )
 
         viewModel.selectConversation(approvalConversation)
+        XCTAssertEqual(viewModel.pendingApproval?.id, approvalID)
+        XCTAssertNotNil(viewModel.sendTask)
         viewModel.allowPendingApprovalOnce(id: approvalID)
         await viewModel.sendTask?.value
 
         XCTAssertEqual(transport.approvalDecisions, [.allowOnce])
         XCTAssertFalse(viewModel.hasPendingInteraction(forConversationID: approvalConversation.id))
+        XCTAssertFalse(viewModel.hasBackgroundPendingInteraction)
     }
 
     func testSameApprovalIDCanWaitInTwoConversationsIndependently() async {
@@ -747,10 +866,12 @@ final class NetworkRecoveryTests: XCTestCase {
 
         _ = viewModel.createConversation(for: agent)
         XCTAssertNil(viewModel.activePendingApproval)
+        XCTAssertNil(viewModel.pendingApproval)
+        XCTAssertNil(viewModel.sendTask)
 
         viewModel.allowPendingApprovalOnce(id: approvalID)
         XCTAssertTrue(transport.approvalDecisions.isEmpty)
-        XCTAssertNotNil(viewModel.pendingApproval)
+        XCTAssertTrue(viewModel.hasPendingInteraction(forConversationID: approvalConversation.id))
 
         viewModel.selectConversation(approvalConversation)
         XCTAssertEqual(viewModel.activePendingApproval?.id, approvalID)
@@ -787,8 +908,9 @@ final class NetworkRecoveryTests: XCTestCase {
         viewModel.sendPrompt()
         await waitForPendingApproval(on: viewModel)
         let conversation = viewModel.activeConversation!
+        let task = viewModel.sendTask
         viewModel.deleteConversation(conversation)
-        await viewModel.sendTask?.value
+        await task?.value
 
         XCTAssertNil(viewModel.pendingApproval)
         XCTAssertNil(viewModel.conversation(withID: conversation.id))
@@ -820,7 +942,7 @@ final class NetworkRecoveryTests: XCTestCase {
 
     func testApprovalSupportsStopAndExplain() async {
         for expected in [
-            ApprovalDecision.rejectHard(feedback: nil),
+            ApprovalDecision.rejectHard(feedback: "Approval cancelled."),
             ApprovalDecision.rejectExplain(feedback: nil),
         ] {
             let (viewModel, transport, _) = makeEnvironment()
@@ -831,7 +953,7 @@ final class NetworkRecoveryTests: XCTestCase {
             viewModel.sendPrompt()
             await waitForPendingApproval(on: viewModel)
             let id = viewModel.pendingApproval!.id
-            if expected == .rejectHard(feedback: nil) {
+            if expected == .rejectHard(feedback: "Approval cancelled.") {
                 viewModel.stopPendingApproval(id: id)
             } else {
                 viewModel.explainPendingApproval(id: id)
@@ -879,6 +1001,30 @@ final class NetworkRecoveryTests: XCTestCase {
         )
     }
 
+    func testStoppingPendingPlanReviewWaitsForResponseBeforeCancelling() async {
+        let (viewModel, transport, _) = makeEnvironment()
+        setUpAgentAndConversation(viewModel)
+        transport.planReviews = [PlanReviewRequest(planContent: "# Plan")]
+        transport.waitAfterInteractionsUntilCancelled = true
+
+        viewModel.prompt = "Plan the change"
+        viewModel.sendPrompt()
+        await waitForPlanReview(on: viewModel)
+        let conversationID = viewModel.activeConversation!.id
+        let task = viewModel.sendTask
+
+        viewModel.stopActiveResponse()
+        await task?.value
+
+        XCTAssertEqual(
+            transport.planReviewDecisions,
+            [.requestChanges(feedback: "Plan review cancelled.")]
+        )
+        XCTAssertEqual(transport.interactionResponseWaits.count, 1)
+        XCTAssertEqual(transport.interactionResponseWaits.first?.conversationID, conversationID)
+        XCTAssertFalse(viewModel.isProcessing)
+    }
+
     func testPendingPlanReviewIsScopedToItsConversation() async {
         let (viewModel, transport, _) = makeEnvironment()
         let agent = setUpAgentAndConversation(viewModel)
@@ -892,10 +1038,12 @@ final class NetworkRecoveryTests: XCTestCase {
 
         _ = viewModel.createConversation(for: agent)
         XCTAssertNil(viewModel.activePendingPlanReview)
+        XCTAssertNil(viewModel.pendingPlanReview)
+        XCTAssertNil(viewModel.sendTask)
 
         viewModel.approvePendingPlan(id: reviewID)
         XCTAssertTrue(transport.planReviewDecisions.isEmpty)
-        XCTAssertNotNil(viewModel.pendingPlanReview)
+        XCTAssertTrue(viewModel.hasPendingInteraction(forConversationID: reviewConversation.id))
 
         viewModel.selectConversation(reviewConversation)
         XCTAssertEqual(viewModel.activePendingPlanReview?.id, reviewID)
@@ -914,8 +1062,9 @@ final class NetworkRecoveryTests: XCTestCase {
         viewModel.sendPrompt()
         await waitForPlanReview(on: viewModel)
         let conversation = viewModel.activeConversation!
+        let task = viewModel.sendTask
         viewModel.deleteConversation(conversation)
-        await viewModel.sendTask?.value
+        await task?.value
 
         XCTAssertNil(viewModel.pendingPlanReview)
         XCTAssertEqual(
@@ -932,8 +1081,9 @@ final class NetworkRecoveryTests: XCTestCase {
         viewModel.prompt = "Create a file"
         viewModel.sendPrompt()
         await waitForPendingApproval(on: viewModel)
+        let task = viewModel.sendTask
         viewModel.deleteAgent(agent)
-        await viewModel.sendTask?.value
+        await task?.value
 
         XCTAssertNil(viewModel.pendingApproval)
         XCTAssertEqual(

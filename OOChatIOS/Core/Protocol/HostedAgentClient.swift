@@ -228,6 +228,8 @@ extension PlanReviewDecision {
 /// Wire-level operations the view model needs from the hosted-agent client,
 /// as a protocol so tests can substitute a scripted transport.
 protocol HostedAgentTransport {
+    var onConnectionStateChange: (@MainActor (String, ConnectionState) -> Void)? { get set }
+
     func connect(agentAddress: String, conversation: Conversation) async throws -> HostedAgentResult
     func fetchSkills(agentAddress: String) async throws -> [AgentSkill]
     func sendPrompt(
@@ -238,11 +240,18 @@ protocol HostedAgentTransport {
         onApprovalRequest: (@MainActor (ToolApprovalRequest) async -> ApprovalDecision)?,
         onPlanReview: (@MainActor (PlanReviewRequest) async -> PlanReviewDecision)?
     ) async throws -> HostedAgentResult
+    func waitForPendingInteractionResponses(agentAddress: String, conversationID: String) async
 }
 
 final class HostedAgentClient: HostedAgentTransport {
     private let connectionPool: HostedAgentConnectionPool
     private let discovery: HostedAgentDiscovery
+    private let connectionStateObserver: HostedAgentConnectionStateObserver
+
+    var onConnectionStateChange: (@MainActor (String, ConnectionState) -> Void)? {
+        get { connectionStateObserver.handler }
+        set { connectionStateObserver.handler = newValue }
+    }
 
     init(
         identityStore: IdentityStore,
@@ -257,13 +266,16 @@ final class HostedAgentClient: HostedAgentTransport {
             relayURL: relayURL,
             localEndpoints: localEndpoints
         )
+        let connectionStateObserver = HostedAgentConnectionStateObserver()
         self.discovery = discovery
+        self.connectionStateObserver = connectionStateObserver
         connectionPool = HostedAgentConnectionPool(
             identityStore: identityStore,
             session: session,
             maximumSize: poolSize,
             idleLifetime: connectionIdleLifetime,
-            discovery: discovery
+            discovery: discovery,
+            connectionStateObserver: connectionStateObserver
         )
     }
 
@@ -314,6 +326,13 @@ final class HostedAgentClient: HostedAgentTransport {
             onEvent: onEvent,
             onApprovalRequest: onApprovalRequest,
             onPlanReview: onPlanReview
+        )
+    }
+
+    func waitForPendingInteractionResponses(agentAddress: String, conversationID: String) async {
+        await connectionPool.waitForPendingInteractionResponses(
+            agentAddress: agentAddress,
+            conversationID: conversationID
         )
     }
 
@@ -368,6 +387,54 @@ final class HostedAgentClient: HostedAgentTransport {
         return routed
     }
 
+}
+
+private final class HostedAgentConnectionStateObserver: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedHandler: (@MainActor (String, ConnectionState) -> Void)?
+    private var sequenceByConversationID: [String: Int] = [:]
+
+    var handler: (@MainActor (String, ConnectionState) -> Void)? {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return storedHandler
+        }
+        set {
+            lock.lock()
+            storedHandler = newValue
+            lock.unlock()
+        }
+    }
+
+    func notify(conversationID: String, state: ConnectionState) {
+        lock.lock()
+        let sequence = (sequenceByConversationID[conversationID] ?? 0) + 1
+        sequenceByConversationID[conversationID] = sequence
+        lock.unlock()
+
+        Task { @MainActor [weak self] in
+            guard let handler = self?.currentHandler(
+                conversationID: conversationID,
+                sequence: sequence
+            ) else {
+                return
+            }
+            handler(conversationID, state)
+        }
+    }
+
+    private func currentHandler(
+        conversationID: String,
+        sequence: Int
+    ) -> (@MainActor (String, ConnectionState) -> Void)? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard sequenceByConversationID[conversationID] == sequence else {
+            return nil
+        }
+        return storedHandler
+    }
 }
 
 private struct HostedAgentConnectionKey: Hashable {
@@ -523,6 +590,7 @@ private actor HostedAgentConnectionPool {
     private let maximumSize: Int
     private let idleLifetime: TimeInterval
     private let discovery: HostedAgentDiscovery
+    private let connectionStateObserver: HostedAgentConnectionStateObserver
 
     private var connections: [HostedAgentConnectionKey: Entry] = [:]
     private var cleanupTask: Task<Void, Never>?
@@ -532,13 +600,15 @@ private actor HostedAgentConnectionPool {
         session: URLSession,
         maximumSize: Int,
         idleLifetime: TimeInterval,
-        discovery: HostedAgentDiscovery
+        discovery: HostedAgentDiscovery,
+        connectionStateObserver: HostedAgentConnectionStateObserver
     ) {
         self.identityStore = identityStore
         self.session = session
         self.maximumSize = max(1, maximumSize)
         self.idleLifetime = max(1, idleLifetime)
         self.discovery = discovery
+        self.connectionStateObserver = connectionStateObserver
     }
 
     func connect(agentAddress: String, conversation: Conversation) async throws -> HostedAgentResult {
@@ -582,6 +652,14 @@ private actor HostedAgentConnectionPool {
         }
     }
 
+    func waitForPendingInteractionResponses(agentAddress: String, conversationID: String) async {
+        let key = HostedAgentConnectionKey(agentAddress: agentAddress, conversationID: conversationID)
+        guard let connection = connections[key]?.connection else {
+            return
+        }
+        await connection.waitForPendingInteractionResponses()
+    }
+
     func closeAll() async {
         cleanupTask?.cancel()
         cleanupTask = nil
@@ -610,7 +688,8 @@ private actor HostedAgentConnectionPool {
             key: key,
             identityStore: identityStore,
             session: session,
-            discovery: discovery
+            discovery: discovery,
+            connectionStateObserver: connectionStateObserver
         )
         connections[key] = Entry(connection: connection, activeLeases: 1, lastUsedAt: Date())
         return Lease(key: key, connection: connection)
@@ -685,7 +764,7 @@ private actor HostedAgentConnectionPool {
 }
 
 private actor HostedAgentConnection {
-    private enum State {
+    private enum State: Equatable {
         case disconnected
         case connecting
         case connected
@@ -703,6 +782,7 @@ private actor HostedAgentConnection {
     private let identityStore: IdentityStore
     private let session: URLSession
     private let discovery: HostedAgentDiscovery
+    private let connectionStateObserver: HostedAgentConnectionStateObserver
     private let connectTimeout: TimeInterval = 45
     private let livenessTimeout: TimeInterval = 75
 
@@ -724,12 +804,14 @@ private actor HostedAgentConnection {
         key: HostedAgentConnectionKey,
         identityStore: IdentityStore,
         session: URLSession,
-        discovery: HostedAgentDiscovery
+        discovery: HostedAgentDiscovery,
+        connectionStateObserver: HostedAgentConnectionStateObserver
     ) {
         self.key = key
         self.identityStore = identityStore
         self.session = session
         self.discovery = discovery
+        self.connectionStateObserver = connectionStateObserver
     }
 
     func ensureConnected(conversation: Conversation) async throws -> HostedAgentResult {
@@ -748,7 +830,7 @@ private actor HostedAgentConnection {
                 guard state != .connecting else {
                     return
                 }
-                state = .connecting
+                setState(.connecting)
                 serverSession = sessionPayload(for: conversation)
                 socketGeneration += 1
                 let generation = socketGeneration
@@ -805,6 +887,13 @@ private actor HostedAgentConnection {
 
     func close() {
         disconnect(with: HostedAgentClientError.closed, closeCode: .goingAway)
+    }
+
+    func waitForPendingInteractionResponses() async {
+        let tasks = Array(interactionTasks.values)
+        for task in tasks {
+            await task.value
+        }
     }
 
     private func openConnection(conversation: Conversation, generation: Int) async {
@@ -945,7 +1034,7 @@ private actor HostedAgentConnection {
         case "CONNECTED":
             updateServerSession(from: frame)
             connectionStatus = frame["status"]?.stringValue
-            state = .connected
+            setState(.connected)
             connectTimeoutTask?.cancel()
             connectTimeoutTask = nil
             let result = HostedAgentResult(
@@ -1136,7 +1225,7 @@ private actor HostedAgentConnection {
 
     private func disconnect(with error: Error, closeCode: URLSessionWebSocketTask.CloseCode) {
         socketGeneration += 1
-        state = .disconnected
+        setState(.disconnected)
         connectionStatus = nil
 
         connectTimeoutTask?.cancel()
@@ -1161,6 +1250,23 @@ private actor HostedAgentConnection {
             waiter.resume(throwing: error)
         }
         pending?.continuation.resume(throwing: error)
+    }
+
+    private func setState(_ newState: State) {
+        guard state != newState else {
+            return
+        }
+        state = newState
+        let publicState: ConnectionState
+        switch newState {
+        case .disconnected:
+            publicState = .disconnected
+        case .connecting:
+            publicState = .reconnecting
+        case .connected:
+            publicState = .connected
+        }
+        connectionStateObserver.notify(conversationID: key.conversationID, state: publicState)
     }
 
     private func normalizedConnectionError(_ error: Error) -> Error {

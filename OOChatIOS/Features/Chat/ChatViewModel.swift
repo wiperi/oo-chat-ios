@@ -96,7 +96,6 @@ final class ChatViewModel: ObservableObject {
     @Published private var pendingApprovalsByConversationID: [String: PendingApproval] = [:]
     @Published private var pendingPlanReviewsByConversationID: [String: PendingPlanReview] = [:]
     @Published private var skillsByAgentAddress: [String: [AgentSkill]] = [:]
-    @Published private var fallbackConnectionState: ConnectionState = .disconnected
 
     var shouldShowOfflineBanner: Bool {
         isOffline && !isOfflineBannerDismissed
@@ -104,6 +103,7 @@ final class ChatViewModel: ObservableObject {
 
     private var deliveryTasksByConversationID: [String: Task<Void, Never>] = [:]
     private var activeMessageIDsByConversationID: [String: String] = [:]
+    private var pausedConversationIDs: Set<String> = []
     private(set) var recoveryTask: Task<Void, Never>?
     private(set) var probeTask: Task<Void, Never>?
     private var skillFetchTasks: [String: Task<Void, Never>] = [:]
@@ -147,19 +147,10 @@ final class ChatViewModel: ObservableObject {
     }
 
     var connectionState: ConnectionState {
-        get {
-            guard let activeConversationID else {
-                return fallbackConnectionState
-            }
-            return connectionStatesByConversationID[activeConversationID] ?? fallbackConnectionState
+        guard let activeConversationID else {
+            return .disconnected
         }
-        set {
-            guard let activeConversationID else {
-                fallbackConnectionState = newValue
-                return
-            }
-            connectionStatesByConversationID[activeConversationID] = newValue
-        }
+        return connectionState(forConversationID: activeConversationID)
     }
 
     var isProcessing: Bool {
@@ -170,19 +161,18 @@ final class ChatViewModel: ObservableObject {
     }
 
     var sendTask: Task<Void, Never>? {
-        if let activeConversationID,
-           let activeTask = deliveryTasksByConversationID[activeConversationID] {
-            return activeTask
+        guard let activeConversationID else {
+            return nil
         }
-        return deliveryTasksByConversationID.values.first
+        return deliveryTasksByConversationID[activeConversationID]
     }
 
     var pendingApproval: PendingApproval? {
-        activePendingApproval ?? pendingApprovalsByConversationID.values.first
+        activePendingApproval
     }
 
     var pendingPlanReview: PendingPlanReview? {
-        activePendingPlanReview ?? pendingPlanReviewsByConversationID.values.first
+        activePendingPlanReview
     }
 
     var activePendingApproval: PendingApproval? {
@@ -210,6 +200,12 @@ final class ChatViewModel: ObservableObject {
     func hasPendingInteraction(forConversationID conversationID: String) -> Bool {
         pendingApprovalsByConversationID[conversationID] != nil
             || pendingPlanReviewsByConversationID[conversationID] != nil
+    }
+
+    var hasBackgroundPendingInteraction: Bool {
+        let activeConversationID = activeConversationID
+        return pendingApprovalsByConversationID.keys.contains { $0 != activeConversationID }
+            || pendingPlanReviewsByConversationID.keys.contains { $0 != activeConversationID }
     }
 
     var onlineAgentCount: Int {
@@ -272,6 +268,9 @@ final class ChatViewModel: ObservableObject {
         }
         self.networkMonitor.onUpdate = { [weak self] isOnline in
             self?.handleNetworkChange(isOnline: isOnline)
+        }
+        self.client.onConnectionStateChange = { [weak self] conversationID, state in
+            self?.setConnectionState(state, forConversationID: conversationID)
         }
         self.networkMonitor.start()
     }
@@ -421,6 +420,7 @@ final class ChatViewModel: ObservableObject {
 
     func deleteConversation(_ conversation: Conversation) {
         cancelPendingInteractions(forConversationID: conversation.id)
+        pausedConversationIDs.remove(conversation.id)
         connectionStatesByConversationID[conversation.id] = nil
         conversations.removeAll { $0.id == conversation.id }
         if activeConversationID == conversation.id {
@@ -438,6 +438,7 @@ final class ChatViewModel: ObservableObject {
         let deletedConversationIDs = Set(conversations(for: agent).map(\.id))
         for conversationID in deletedConversationIDs {
             cancelPendingInteractions(forConversationID: conversationID)
+            pausedConversationIDs.remove(conversationID)
             connectionStatesByConversationID[conversationID] = nil
         }
         agents.removeAll { $0.id == agent.id }
@@ -570,6 +571,7 @@ final class ChatViewModel: ObservableObject {
         let message = ChatMessage(role: .user, content: text, deliveryState: .queued)
         conversation.messages.append(message)
         upsert(conversation)
+        pausedConversationIDs.remove(conversation.id)
 
         if !isOffline {
             startNextQueuedMessage(in: conversation.id)
@@ -591,6 +593,7 @@ final class ChatViewModel: ObservableObject {
         }
         errorMessage = nil
         upsert(conversation)
+        pausedConversationIDs.remove(conversation.id)
 
         if !isOffline {
             startNextQueuedMessage(in: conversation.id)
@@ -619,28 +622,32 @@ final class ChatViewModel: ObservableObject {
 
     func stopActiveResponse() {
         guard let conversationID = activeConversationID,
-              let task = deliveryTasksByConversationID[conversationID] else {
+              let task = deliveryTasksByConversationID[conversationID],
+              let conversation = conversation(withID: conversationID),
+              let agent = agent(for: conversation) else {
             return
         }
 
-        if let approval = pendingApprovalsByConversationID.removeValue(forKey: conversationID) {
-            approvalGate.resolve(
-                id: Self.interactionGateID(conversationID: conversationID, interactionID: approval.id),
-                with: .rejectHard(feedback: nil)
-            )
+        pausedConversationIDs.insert(conversationID)
+        guard settlePendingInteractionForStop(in: conversationID) else {
+            task.cancel()
+            return
         }
-        if let review = pendingPlanReviewsByConversationID.removeValue(forKey: conversationID) {
-            planReviewGate.resolve(
-                id: Self.interactionGateID(conversationID: conversationID, interactionID: review.id),
-                with: .requestChanges(feedback: "Plan review cancelled.")
+
+        let transport = client
+        Task {
+            await transport.waitForPendingInteractionResponses(
+                agentAddress: agent.address,
+                conversationID: conversationID
             )
+            task.cancel()
         }
-        task.cancel()
     }
 
     @discardableResult
     private func startNextQueuedMessage(in conversationID: String) -> Bool {
         guard !isOffline,
+              !pausedConversationIDs.contains(conversationID),
               deliveryTasksByConversationID[conversationID] == nil,
               let conversation = conversation(withID: conversationID),
               let message = conversation.messages.first(where: {
@@ -651,7 +658,9 @@ final class ChatViewModel: ObservableObject {
 
         activeMessageIDsByConversationID[conversationID] = message.id
         processingConversationIDs.insert(conversationID)
-        setConnectionState(.reconnecting, forConversationID: conversationID, unlessAlready: .connected)
+        if connectionState(forConversationID: conversationID) != .connected {
+            setConnectionState(.reconnecting, forConversationID: conversationID)
+        }
 
         guard let deliveryTask = makeDeliveryTask(
             messageID: message.id,
@@ -764,7 +773,7 @@ final class ChatViewModel: ObservableObject {
         deliveryTasksByConversationID[conversationID] = nil
         activeMessageIDsByConversationID[conversationID] = nil
         processingConversationIDs.remove(conversationID)
-        if !isOffline {
+        if !isOffline, !pausedConversationIDs.contains(conversationID) {
             startNextQueuedMessage(in: conversationID)
         }
     }
@@ -832,7 +841,6 @@ final class ChatViewModel: ObservableObject {
                 // Fresh drop: surface the banner again even if it was dismissed earlier.
                 isOfflineBannerDismissed = false
             }
-            fallbackConnectionState = .disconnected
             for conversationID in conversations.map(\.id) {
                 connectionStatesByConversationID[conversationID] = .disconnected
             }
@@ -961,6 +969,25 @@ final class ChatViewModel: ObservableObject {
             )
         }
         deliveryTasksByConversationID[conversationID]?.cancel()
+    }
+
+    private func settlePendingInteractionForStop(in conversationID: String) -> Bool {
+        var settledInteraction = false
+        if let approval = pendingApprovalsByConversationID.removeValue(forKey: conversationID) {
+            approvalGate.resolve(
+                id: Self.interactionGateID(conversationID: conversationID, interactionID: approval.id),
+                with: .rejectHard(feedback: "Approval cancelled.")
+            )
+            settledInteraction = true
+        }
+        if let review = pendingPlanReviewsByConversationID.removeValue(forKey: conversationID) {
+            planReviewGate.resolve(
+                id: Self.interactionGateID(conversationID: conversationID, interactionID: review.id),
+                with: .requestChanges(feedback: "Plan review cancelled.")
+            )
+            settledInteraction = true
+        }
+        return settledInteraction
     }
 
     /// The path monitor can lag well behind the actual network (especially on the
@@ -1121,18 +1148,13 @@ final class ChatViewModel: ObservableObject {
 
     private func setConnectionState(
         _ state: ConnectionState,
-        forConversationID conversationID: String,
-        unlessAlready existingState: ConnectionState? = nil
+        forConversationID conversationID: String
     ) {
-        if let existingState,
-           connectionStatesByConversationID[conversationID] == existingState {
-            return
-        }
         connectionStatesByConversationID[conversationID] = state
     }
 
     private func connectionState(forConversationID conversationID: String) -> ConnectionState {
-        connectionStatesByConversationID[conversationID] ?? fallbackConnectionState
+        connectionStatesByConversationID[conversationID] ?? .disconnected
     }
 
     private static func interactionGateID(conversationID: String, interactionID: String) -> String {

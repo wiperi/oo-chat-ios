@@ -114,9 +114,21 @@ struct ChatScreen: View {
                     onOpenSidebar()
                 } label: {
                     Image(systemName: "sidebar.left")
+                        .overlay(alignment: .topTrailing) {
+                            if viewModel.hasBackgroundPendingInteraction {
+                                Circle()
+                                    .fill(Color(.systemOrange))
+                                    .frame(width: 8, height: 8)
+                                    .offset(x: 4, y: -3)
+                            }
+                        }
                 }
                 .disabled(viewModel.agents.isEmpty)
-                .accessibilityLabel("Open sidebar")
+                .accessibilityLabel(
+                    viewModel.hasBackgroundPendingInteraction
+                        ? "Open sidebar, approval required"
+                        : "Open sidebar"
+                )
             }
         }
     }
