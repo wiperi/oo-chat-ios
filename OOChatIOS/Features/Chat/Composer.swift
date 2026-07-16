@@ -38,7 +38,7 @@ struct Composer: View {
                     } label: {
                         skillRow(skill)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(SkillSuggestionButtonStyle())
 
                     if skill.id != viewModel.slashSkillSuggestions.last?.id {
                         Divider()
@@ -47,38 +47,54 @@ struct Composer: View {
                 }
             }
         }
-        .frame(maxHeight: ComposerMetrics.skillPickerMaxHeight)
-        .background(
-            Color(.secondarySystemBackground),
-            in: RoundedRectangle(cornerRadius: ComposerMetrics.skillPickerCornerRadius, style: .continuous)
+        .frame(height: skillPickerHeight)
+        .scrollIndicators(.hidden)
+        .glassBackground(
+            in: skillPickerShape,
+            tint: Color(.secondarySystemBackground).opacity(ComposerMetrics.skillPickerGlassTintOpacity)
         )
         .overlay {
-            RoundedRectangle(cornerRadius: ComposerMetrics.skillPickerCornerRadius, style: .continuous)
-                .stroke(Color(.separator).opacity(0.35), lineWidth: 0.5)
+            skillPickerShape
+                .stroke(Color(.systemBackground).opacity(ComposerMetrics.skillPickerHighlightOpacity), lineWidth: 0.9)
         }
-        .shadow(color: .black.opacity(0.08), radius: 12, y: 4)
+        .overlay {
+            skillPickerShape
+                .stroke(Color(.separator).opacity(ComposerMetrics.skillPickerStrokeOpacity), lineWidth: 0.6)
+        }
+        .clipShape(skillPickerShape)
+        .shadow(
+            color: .black.opacity(ComposerMetrics.skillPickerShadowOpacity),
+            radius: ComposerMetrics.skillPickerShadowRadius,
+            y: ComposerMetrics.skillPickerShadowYOffset
+        )
         .accessibilityLabel("Available skills")
     }
 
     private func skillRow(_ skill: AgentSkill) -> some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: ComposerMetrics.skillRowSpacing) {
             Image(systemName: "command")
-                .font(.body.weight(.medium))
+                .font(.callout.weight(.semibold))
                 .foregroundStyle(AppTheme.primary)
-                .frame(width: 24, height: 24)
+                .frame(width: ComposerMetrics.skillIconSize, height: ComposerMetrics.skillIconSize)
+                .background(
+                    AppTheme.primary.opacity(ComposerMetrics.skillIconBackgroundOpacity),
+                    in: RoundedRectangle(cornerRadius: ComposerMetrics.skillIconCornerRadius, style: .continuous)
+                )
 
             VStack(alignment: .leading, spacing: 3) {
                 Text("/\(skill.name)")
-                    .font(.body.monospaced().weight(.semibold))
+                    .font(.body.weight(.semibold))
                     .foregroundStyle(.primary)
 
                 if !skill.description.isEmpty {
                     Text(skill.description)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
+                        .lineSpacing(1)
                         .lineLimit(2)
                 }
             }
+            .padding(.top, ComposerMetrics.skillTextTopPadding)
 
             Spacer(minLength: 0)
         }
@@ -88,6 +104,18 @@ struct Composer: View {
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityHint("Insert this skill in the message field")
+    }
+
+    private var skillPickerShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: ComposerMetrics.skillPickerCornerRadius, style: .continuous)
+    }
+
+    private var skillPickerHeight: CGFloat {
+        let rowCount = CGFloat(viewModel.slashSkillSuggestions.count)
+        return min(
+            rowCount * ComposerMetrics.skillRowEstimatedHeight,
+            ComposerMetrics.skillPickerMaxHeight
+        )
     }
 
     private var inputBar: some View {
@@ -245,7 +273,7 @@ private enum ComposerMetrics {
     static let trailingPadding: CGFloat = 7
     static let verticalPadding: CGFloat = 7
     static let cornerRadius: CGFloat = 27
-    static let stackSpacing: CGFloat = 7
+    static let stackSpacing: CGFloat = 9
     static let inputSpacing: CGFloat = 10
     static let inputVerticalPadding: CGFloat = 2
     static let inputStrokeOpacity: Double = 0.10
@@ -255,10 +283,30 @@ private enum ComposerMetrics {
     static let modeStrokeOpacity: Double = 0.08
     static let sendButtonSize: CGFloat = 40
     static let skillPickerMaxHeight: CGFloat = 260
-    static let skillPickerCornerRadius: CGFloat = 16
+    static let skillPickerCornerRadius: CGFloat = 24
+    static let skillPickerGlassTintOpacity: Double = 0.78
+    static let skillPickerHighlightOpacity: Double = 0.70
+    static let skillPickerStrokeOpacity: Double = 0.22
+    static let skillPickerShadowOpacity: Double = 0.13
+    static let skillPickerShadowRadius: CGFloat = 30
+    static let skillPickerShadowYOffset: CGFloat = 10
+    static let skillRowSpacing: CGFloat = 12
+    static let skillRowEstimatedHeight: CGFloat = 82
     static let skillRowHorizontalPadding: CGFloat = 14
-    static let skillRowVerticalPadding: CGFloat = 11
-    static let skillDividerInset: CGFloat = 50
+    static let skillRowVerticalPadding: CGFloat = 12
+    static let skillIconSize: CGFloat = 34
+    static let skillIconCornerRadius: CGFloat = 9
+    static let skillIconBackgroundOpacity: Double = 0.08
+    static let skillTextTopPadding: CGFloat = 1
+    static let skillDividerInset: CGFloat = 60
+}
+
+private struct SkillSuggestionButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(configuration.isPressed ? Color(.tertiarySystemFill) : Color.clear)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    }
 }
 
 // Presentation details for each mode, kept out of the model layer.
