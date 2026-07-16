@@ -95,6 +95,7 @@ final class ChatViewModel: ObservableObject {
     @Published private(set) var isOfflineBannerDismissed = false
     @Published private(set) var pendingApproval: PendingApproval?
     @Published private(set) var pendingPlanReview: PendingPlanReview?
+    @Published private var skillsByAgentAddress: [String: [AgentSkill]] = [:]
 
     var shouldShowOfflineBanner: Bool {
         isOffline && !isOfflineBannerDismissed
@@ -103,6 +104,7 @@ final class ChatViewModel: ObservableObject {
     private(set) var sendTask: Task<Void, Never>?
     private(set) var recoveryTask: Task<Void, Never>?
     private(set) var probeTask: Task<Void, Never>?
+    private var skillFetchTasks: [String: Task<Void, Never>] = [:]
     private let approvalGate = ContinuationGate<ApprovalDecision>(
         cancellationDecision: .rejectHard(feedback: "Approval cancelled."),
         unavailableDecision: .rejectHard(feedback: "Approval unavailable.")
@@ -162,6 +164,27 @@ final class ChatViewModel: ObservableObject {
         activePendingApproval?.id ?? activePendingPlanReview?.id
     }
 
+    var slashSkillSuggestions: [AgentSkill] {
+        guard let query = slashSkillQuery,
+              let address = activeAgent?.address else {
+            return []
+        }
+        let skills = skillsByAgentAddress[address] ?? []
+        guard !query.isEmpty else {
+            return skills
+        }
+        return skills.filter {
+            $0.name.range(
+                of: query,
+                options: [.anchored, .caseInsensitive, .diacriticInsensitive]
+            ) != nil
+        }
+    }
+
+    var shouldShowSlashSkillPicker: Bool {
+        slashSkillQuery != nil && !slashSkillSuggestions.isEmpty
+    }
+
     init(
         store: ConversationRepository? = nil,
         identityStore: IdentityStore = IdentityStore(),
@@ -200,6 +223,7 @@ final class ChatViewModel: ObservableObject {
         probeTask?.cancel()
         recoveryTask?.cancel()
         sendTask?.cancel()
+        skillFetchTasks.values.forEach { $0.cancel() }
         approvalGate.cancelAll()
         planReviewGate.cancelAll()
     }
@@ -227,6 +251,7 @@ final class ChatViewModel: ObservableObject {
             activeConversationID = conversations(for: agent).first?.id
         }
         persist()
+        loadSkillsIfNeeded(for: agent)
     }
 
     func selectConversation(_ conversation: Conversation) {
@@ -234,6 +259,7 @@ final class ChatViewModel: ObservableObject {
         if let agent = agent(for: conversation) {
             activeAgentID = agent.id
             agentAddressDraft = agent.address
+            loadSkillsIfNeeded(for: agent)
         }
         persist()
     }
@@ -315,6 +341,25 @@ final class ChatViewModel: ObservableObject {
         } else {
             _ = createConversation(for: agent)
         }
+        loadSkillsIfNeeded(for: agent)
+    }
+
+    func promptDidChange() {
+        guard slashSkillQuery != nil, let activeAgent else {
+            return
+        }
+        loadSkillsIfNeeded(for: activeAgent)
+    }
+
+    func prefetchActiveAgentSkills() {
+        guard let activeAgent else {
+            return
+        }
+        loadSkillsIfNeeded(for: activeAgent)
+    }
+
+    func selectSlashSkill(_ skill: AgentSkill) {
+        prompt = "/\(skill.name) "
     }
 
     func deleteConversation(_ conversation: Conversation) {
@@ -433,6 +478,7 @@ final class ChatViewModel: ObservableObject {
             }
             let savedAgent = upsertAgent(agent)
             ensureDefaultConversation(for: savedAgent, seed: conversation)
+            loadSkillsIfNeeded(for: savedAgent)
             connectionState = .connected
             isConnecting = false
             return savedAgent
@@ -869,6 +915,7 @@ final class ChatViewModel: ObservableObject {
                 updated.serverSession = self.session(session, applying: updated.mode, conversationID: updated.id)
                 self.upsert(updated)
             }
+            refreshSkills(for: agent)
             return true
         } catch {
             return false
@@ -912,6 +959,7 @@ final class ChatViewModel: ObservableObject {
                 updated.serverSession = self.session(session, applying: updated.mode, conversationID: updated.id)
                 self.upsert(updated)
             }
+            refreshSkills(for: agent)
             connectionState = .connected
         } catch {
             connectionState = .disconnected
@@ -1011,6 +1059,56 @@ final class ChatViewModel: ObservableObject {
         next.removeValue(forKey: "ulw_turns_used")
         next.removeValue(forKey: "skip_tool_approval")
         return next
+    }
+
+    private var slashSkillQuery: String? {
+        guard prompt.hasPrefix("/") else {
+            return nil
+        }
+        let query = String(prompt.dropFirst())
+        guard !query.contains(where: { $0.isWhitespace }) else {
+            return nil
+        }
+        return query
+    }
+
+    private func loadSkillsIfNeeded(
+        for agent: AgentConnection,
+        allowWhileOffline: Bool = false
+    ) {
+        let address = agent.address
+        guard (allowWhileOffline || !isOffline),
+              HostedAgentClient.isHostedAgentAddress(address),
+              skillsByAgentAddress[address] == nil,
+              skillFetchTasks[address] == nil else {
+            return
+        }
+
+        skillFetchTasks[address] = Task { [weak self] in
+            guard let self else {
+                return
+            }
+            defer {
+                self.skillFetchTasks[address] = nil
+            }
+            do {
+                let skills = try await self.client.fetchSkills(agentAddress: address)
+                guard !Task.isCancelled else {
+                    return
+                }
+                self.skillsByAgentAddress[address] = skills.sorted {
+                    $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+                }
+            } catch {
+                // Slash discovery is optional. Leave the command editable and retry
+                // the next time the user invokes the picker.
+            }
+        }
+    }
+
+    private func refreshSkills(for agent: AgentConnection) {
+        skillsByAgentAddress[agent.address] = nil
+        loadSkillsIfNeeded(for: agent, allowWhileOffline: true)
     }
 
     private func persist() {

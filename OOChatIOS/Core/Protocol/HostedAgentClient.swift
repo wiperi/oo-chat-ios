@@ -229,6 +229,7 @@ extension PlanReviewDecision {
 /// as a protocol so tests can substitute a scripted transport.
 protocol HostedAgentTransport {
     func connect(agentAddress: String, conversation: Conversation) async throws -> HostedAgentResult
+    func fetchSkills(agentAddress: String) async throws -> [AgentSkill]
     func sendPrompt(
         agentAddress: String,
         conversation: Conversation,
@@ -241,6 +242,7 @@ protocol HostedAgentTransport {
 
 final class HostedAgentClient: HostedAgentTransport {
     private let connectionPool: HostedAgentConnectionPool
+    private let discovery: HostedAgentDiscovery
 
     init(
         identityStore: IdentityStore,
@@ -248,13 +250,20 @@ final class HostedAgentClient: HostedAgentTransport {
         poolSize: Int = 3,
         connectionIdleLifetime: TimeInterval = 5 * 60
     ) {
+        let relayURL = "wss://oo.openonion.ai"
+        let localEndpoints = ["http://localhost:8000", "http://127.0.0.1:8000"]
+        let discovery = HostedAgentDiscovery(
+            session: session,
+            relayURL: relayURL,
+            localEndpoints: localEndpoints
+        )
+        self.discovery = discovery
         connectionPool = HostedAgentConnectionPool(
             identityStore: identityStore,
             session: session,
             maximumSize: poolSize,
             idleLifetime: connectionIdleLifetime,
-            relayURL: "wss://oo.openonion.ai",
-            localEndpoints: ["http://localhost:8000", "http://127.0.0.1:8000"]
+            discovery: discovery
         )
     }
 
@@ -274,6 +283,17 @@ final class HostedAgentClient: HostedAgentTransport {
             throw HostedAgentClientError.invalidAddress
         }
         return try await connectionPool.connect(agentAddress: agentAddress, conversation: conversation)
+    }
+
+    func fetchSkills(agentAddress: String) async throws -> [AgentSkill] {
+        guard Self.isHostedAgentAddress(agentAddress) else {
+            throw HostedAgentClientError.invalidAddress
+        }
+        let result = try await discovery.discover(agentAddress: agentAddress)
+        guard result.metadataAvailable else {
+            throw HostedAgentClientError.server("Agent skill metadata is unavailable.")
+        }
+        return result.skills
     }
 
     func sendPrompt(
@@ -355,6 +375,135 @@ private struct HostedAgentConnectionKey: Hashable {
     let conversationID: String
 }
 
+private struct HostedAgentDiscoveryResult {
+    let endpoint: ResolvedEndpoint
+    let skills: [AgentSkill]
+    let metadataAvailable: Bool
+}
+
+/// Resolves both the connection route and the public metadata advertised by an agent.
+/// Direct `/info` metadata is preferred; relay profile metadata is the fallback when
+/// the host itself cannot be reached over HTTP.
+private actor HostedAgentDiscovery {
+    private let session: URLSession
+    private let relayURL: String
+    private let localEndpoints: [String]
+
+    init(session: URLSession, relayURL: String, localEndpoints: [String]) {
+        self.session = session
+        self.relayURL = relayURL
+        self.localEndpoints = localEndpoints
+    }
+
+    func discover(agentAddress: String) async throws -> HostedAgentDiscoveryResult {
+        for httpURL in localEndpoints {
+            if let result = try await probe(httpURL: httpURL, agentAddress: agentAddress, timeout: 1.2) {
+                return result
+            }
+        }
+
+        let normalizedRelay = relayURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let relayHTTP = normalizedRelay.replacingOccurrences(of: "wss://", with: "https://")
+            .replacingOccurrences(of: "ws://", with: "http://")
+        var relaySkills: [AgentSkill] = []
+        var relayMetadataAvailable = false
+        if let url = URL(string: "\(relayHTTP)/api/relay/agents/\(agentAddress)"),
+           let relayInfo: AgentInfo = try? await fetchJSON(url: url, timeout: 3.0) {
+            relayMetadataAvailable = true
+            relaySkills = normalizedSkills(relayInfo.advertisedSkills)
+            for httpURL in sortByProximity(relayInfo.endpoints ?? []) where httpURL.hasPrefix("http") {
+                if let result = try await probe(httpURL: httpURL, agentAddress: agentAddress, timeout: 2.5) {
+                    return result
+                }
+            }
+        }
+
+        guard let relaySocketURL = URL(string: "\(normalizedRelay)/ws/input") else {
+            throw HostedAgentClientError.invalidURL("\(normalizedRelay)/ws/input")
+        }
+        return HostedAgentDiscoveryResult(
+            endpoint: ResolvedEndpoint(wsURL: relaySocketURL, kind: .relay, label: normalizedRelay),
+            skills: relaySkills,
+            metadataAvailable: relayMetadataAvailable
+        )
+    }
+
+    private func probe(
+        httpURL: String,
+        agentAddress: String,
+        timeout: TimeInterval
+    ) async throws -> HostedAgentDiscoveryResult? {
+        guard let url = URL(string: "\(httpURL)/info") else {
+            return nil
+        }
+        guard let info: AgentInfo = try? await fetchJSON(url: url, timeout: timeout),
+              info.address == agentAddress else {
+            return nil
+        }
+        guard let wsURL = URL(string: httpToWebSocket(httpURL)) else {
+            throw HostedAgentClientError.invalidURL(httpURL)
+        }
+        return HostedAgentDiscoveryResult(
+            endpoint: ResolvedEndpoint(
+                wsURL: wsURL,
+                kind: .direct,
+                label: info.name.map { "\($0) at \(httpURL)" } ?? httpURL
+            ),
+            skills: normalizedSkills(info.advertisedSkills),
+            metadataAvailable: true
+        )
+    }
+
+    private func fetchJSON<T: Decodable>(url: URL, timeout: TimeInterval) async throws -> T {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = timeout
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, 200..<300 ~= http.statusCode else {
+            throw HostedAgentClientError.server("Endpoint \(url.absoluteString) did not return OK.")
+        }
+        return try JSONDecoder().decode(T.self, from: data)
+    }
+
+    private func normalizedSkills(_ skills: [AgentSkill]) -> [AgentSkill] {
+        var seen: Set<String> = []
+        return skills.compactMap { skill in
+            let name = skill.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, seen.insert(name.lowercased()).inserted else {
+                return nil
+            }
+            return AgentSkill(
+                name: name,
+                description: skill.description.trimmingCharacters(in: .whitespacesAndNewlines),
+                location: skill.location
+            )
+        }
+    }
+
+    private func sortByProximity(_ endpoints: [String]) -> [String] {
+        endpoints.sorted { left, right in
+            priority(left) < priority(right)
+        }
+    }
+
+    private func priority(_ endpoint: String) -> Int {
+        if endpoint.contains("localhost") || endpoint.contains("127.0.0.1") {
+            return 0
+        }
+        if endpoint.contains("192.168.") || endpoint.contains("10.") || endpoint.contains("172.16.") {
+            return 1
+        }
+        return 2
+    }
+
+    private func httpToWebSocket(_ httpURL: String) -> String {
+        let base = httpURL.replacingOccurrences(of: "https://", with: "")
+            .replacingOccurrences(of: "http://", with: "")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let scheme = httpURL.hasPrefix("https://") ? "wss" : "ws"
+        return "\(scheme)://\(base)/ws"
+    }
+}
+
 /// Owns a bounded set of session-bound WebSockets. Connections that are actively
 /// running an agent or waiting for human interaction are pinned and never evicted.
 private actor HostedAgentConnectionPool {
@@ -373,8 +522,7 @@ private actor HostedAgentConnectionPool {
     private let session: URLSession
     private let maximumSize: Int
     private let idleLifetime: TimeInterval
-    private let relayURL: String
-    private let localEndpoints: [String]
+    private let discovery: HostedAgentDiscovery
 
     private var connections: [HostedAgentConnectionKey: Entry] = [:]
     private var cleanupTask: Task<Void, Never>?
@@ -384,15 +532,13 @@ private actor HostedAgentConnectionPool {
         session: URLSession,
         maximumSize: Int,
         idleLifetime: TimeInterval,
-        relayURL: String,
-        localEndpoints: [String]
+        discovery: HostedAgentDiscovery
     ) {
         self.identityStore = identityStore
         self.session = session
         self.maximumSize = max(1, maximumSize)
         self.idleLifetime = max(1, idleLifetime)
-        self.relayURL = relayURL
-        self.localEndpoints = localEndpoints
+        self.discovery = discovery
     }
 
     func connect(agentAddress: String, conversation: Conversation) async throws -> HostedAgentResult {
@@ -464,8 +610,7 @@ private actor HostedAgentConnectionPool {
             key: key,
             identityStore: identityStore,
             session: session,
-            relayURL: relayURL,
-            localEndpoints: localEndpoints
+            discovery: discovery
         )
         connections[key] = Entry(connection: connection, activeLeases: 1, lastUsedAt: Date())
         return Lease(key: key, connection: connection)
@@ -557,8 +702,7 @@ private actor HostedAgentConnection {
     private let key: HostedAgentConnectionKey
     private let identityStore: IdentityStore
     private let session: URLSession
-    private let relayURL: String
-    private let localEndpoints: [String]
+    private let discovery: HostedAgentDiscovery
     private let connectTimeout: TimeInterval = 45
     private let livenessTimeout: TimeInterval = 75
 
@@ -580,14 +724,12 @@ private actor HostedAgentConnection {
         key: HostedAgentConnectionKey,
         identityStore: IdentityStore,
         session: URLSession,
-        relayURL: String,
-        localEndpoints: [String]
+        discovery: HostedAgentDiscovery
     ) {
         self.key = key
         self.identityStore = identityStore
         self.session = session
-        self.relayURL = relayURL
-        self.localEndpoints = localEndpoints
+        self.discovery = discovery
     }
 
     func ensureConnected(conversation: Conversation) async throws -> HostedAgentResult {
@@ -1029,75 +1171,7 @@ private actor HostedAgentConnection {
     }
 
     private func resolveEndpoint(agentAddress: String) async throws -> ResolvedEndpoint {
-        for httpURL in localEndpoints {
-            if let endpoint = try await probe(httpURL: httpURL, agentAddress: agentAddress, timeout: 1.2) {
-                return endpoint
-            }
-        }
-
-        let normalizedRelay = relayURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let relayHTTP = normalizedRelay.replacingOccurrences(of: "wss://", with: "https://")
-            .replacingOccurrences(of: "ws://", with: "http://")
-        if let url = URL(string: "\(relayHTTP)/api/relay/agents/\(agentAddress)"),
-           let relayInfo: AgentInfo = try? await fetchJSON(url: url, timeout: 3.0) {
-            for httpURL in sortByProximity(relayInfo.endpoints ?? []) where httpURL.hasPrefix("http") {
-                if let endpoint = try await probe(httpURL: httpURL, agentAddress: agentAddress, timeout: 2.5) {
-                    return endpoint
-                }
-            }
-        }
-
-        guard let relaySocketURL = URL(string: "\(normalizedRelay)/ws/input") else {
-            throw HostedAgentClientError.invalidURL("\(normalizedRelay)/ws/input")
-        }
-        return ResolvedEndpoint(wsURL: relaySocketURL, kind: .relay, label: normalizedRelay)
-    }
-
-    private func probe(httpURL: String, agentAddress: String, timeout: TimeInterval) async throws -> ResolvedEndpoint? {
-        guard let url = URL(string: "\(httpURL)/info") else {
-            return nil
-        }
-        guard let info: AgentInfo = try? await fetchJSON(url: url, timeout: timeout), info.address == agentAddress else {
-            return nil
-        }
-        guard let wsURL = URL(string: httpToWebSocket(httpURL)) else {
-            throw HostedAgentClientError.invalidURL(httpURL)
-        }
-        return ResolvedEndpoint(wsURL: wsURL, kind: .direct, label: info.name.map { "\($0) at \(httpURL)" } ?? httpURL)
-    }
-
-    private func fetchJSON<T: Decodable>(url: URL, timeout: TimeInterval) async throws -> T {
-        var request = URLRequest(url: url)
-        request.timeoutInterval = timeout
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, 200..<300 ~= http.statusCode else {
-            throw HostedAgentClientError.server("Endpoint \(url.absoluteString) did not return OK.")
-        }
-        return try JSONDecoder().decode(T.self, from: data)
-    }
-
-    private func sortByProximity(_ endpoints: [String]) -> [String] {
-        endpoints.sorted { left, right in
-            priority(left) < priority(right)
-        }
-    }
-
-    private func priority(_ endpoint: String) -> Int {
-        if endpoint.contains("localhost") || endpoint.contains("127.0.0.1") {
-            return 0
-        }
-        if endpoint.contains("192.168.") || endpoint.contains("10.") || endpoint.contains("172.16.") {
-            return 1
-        }
-        return 2
-    }
-
-    private func httpToWebSocket(_ httpURL: String) -> String {
-        let base = httpURL.replacingOccurrences(of: "https://", with: "")
-            .replacingOccurrences(of: "http://", with: "")
-            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let scheme = httpURL.hasPrefix("https://") ? "wss" : "ws"
-        return "\(scheme)://\(base)/ws"
+        try await discovery.discover(agentAddress: agentAddress).endpoint
     }
 
     private func buildConnectFrame(conversation: Conversation, endpoint: ResolvedEndpoint) throws -> [String: JSONValue] {

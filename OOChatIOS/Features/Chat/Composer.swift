@@ -8,6 +8,11 @@ struct Composer: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: ComposerMetrics.stackSpacing) {
+            if viewModel.shouldShowSlashSkillPicker {
+                skillPicker
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
             modeMenu
                 .padding(.leading, ComposerMetrics.modeLeadingPadding)
 
@@ -15,6 +20,74 @@ struct Composer: View {
         }
         .padding(.horizontal, ComposerMetrics.outerHorizontalPadding)
         .padding(.bottom, ComposerMetrics.outerBottomPadding)
+        .onChange(of: viewModel.prompt) {
+            viewModel.promptDidChange()
+        }
+        .onAppear {
+            viewModel.prefetchActiveAgentSkills()
+        }
+    }
+
+    private var skillPicker: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(viewModel.slashSkillSuggestions) { skill in
+                    Button {
+                        viewModel.selectSlashSkill(skill)
+                        isPromptFocused = true
+                    } label: {
+                        skillRow(skill)
+                    }
+                    .buttonStyle(.plain)
+
+                    if skill.id != viewModel.slashSkillSuggestions.last?.id {
+                        Divider()
+                            .padding(.leading, ComposerMetrics.skillDividerInset)
+                    }
+                }
+            }
+        }
+        .frame(maxHeight: ComposerMetrics.skillPickerMaxHeight)
+        .background(
+            Color(.secondarySystemBackground),
+            in: RoundedRectangle(cornerRadius: ComposerMetrics.skillPickerCornerRadius, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: ComposerMetrics.skillPickerCornerRadius, style: .continuous)
+                .stroke(Color(.separator).opacity(0.35), lineWidth: 0.5)
+        }
+        .shadow(color: .black.opacity(0.08), radius: 12, y: 4)
+        .accessibilityLabel("Available skills")
+    }
+
+    private func skillRow(_ skill: AgentSkill) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "command")
+                .font(.body.weight(.medium))
+                .foregroundStyle(AppTheme.primary)
+                .frame(width: 24, height: 24)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("/\(skill.name)")
+                    .font(.body.monospaced().weight(.semibold))
+                    .foregroundStyle(.primary)
+
+                if !skill.description.isEmpty {
+                    Text(skill.description)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, ComposerMetrics.skillRowHorizontalPadding)
+        .padding(.vertical, ComposerMetrics.skillRowVerticalPadding)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Insert this skill in the message field")
     }
 
     private var inputBar: some View {
@@ -181,6 +254,11 @@ private enum ComposerMetrics {
     static let modeVerticalPadding: CGFloat = 5
     static let modeStrokeOpacity: Double = 0.08
     static let sendButtonSize: CGFloat = 40
+    static let skillPickerMaxHeight: CGFloat = 260
+    static let skillPickerCornerRadius: CGFloat = 16
+    static let skillRowHorizontalPadding: CGFloat = 14
+    static let skillRowVerticalPadding: CGFloat = 11
+    static let skillDividerInset: CGFloat = 50
 }
 
 // Presentation details for each mode, kept out of the model layer.

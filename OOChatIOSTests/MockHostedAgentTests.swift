@@ -52,6 +52,46 @@ final class MockHostedAgentTests: XCTestCase {
         XCTAssertEqual(agent.token, "")
     }
 
+    func testAgentInfoDecodesDirectAndRelayAdvertisedSkills() throws {
+        let direct = try JSONDecoder().decode(AgentInfo.self, from: Data("""
+        {
+          "address": "\(endpointA)",
+          "name": "Local agent",
+          "skills": [
+            {"name": "review", "description": "Review the current changes", "location": "project"}
+          ]
+        }
+        """.utf8))
+        let relay = try JSONDecoder().decode(AgentInfo.self, from: Data("""
+        {
+          "endpoints": ["https://agent.example"],
+          "profile": {
+            "alias": "Relay agent",
+            "skills": [
+              {"name": "commit", "description": "Create a commit"}
+            ]
+          }
+        }
+        """.utf8))
+
+        XCTAssertEqual(
+            direct.advertisedSkills,
+            [AgentSkill(name: "review", description: "Review the current changes", location: "project")]
+        )
+        XCTAssertEqual(
+            relay.advertisedSkills,
+            [AgentSkill(name: "commit", description: "Create a commit")]
+        )
+    }
+
+    func testAgentInfoTreatsMissingSkillDescriptionsAsEmpty() throws {
+        let info = try JSONDecoder().decode(AgentInfo.self, from: Data("""
+        {"skills": [{"name": "status"}]}
+        """.utf8))
+
+        XCTAssertEqual(info.advertisedSkills, [AgentSkill(name: "status")])
+    }
+
     func testToolCallFramesMapToCorrelatedCallAndResultEvents() {
         let arguments: [String: JSONValue] = [
             "path": .string("OOChatIOS/Features/Chat/MessageBubble.swift"),

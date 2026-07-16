@@ -31,12 +31,16 @@ final class MockAgentTransport: HostedAgentTransport {
     var streamedEvents: [HostedAgentEvent] = []
     var approvalRequests: [ToolApprovalRequest] = []
     var planReviews: [PlanReviewRequest] = []
+    var availableSkills: [AgentSkill] = []
+    var skillsByAddress: [String: [AgentSkill]] = [:]
+    var skillFetchError: Error?
     var onSend: (@MainActor () -> Void)?
 
     private(set) var connectedAddresses: [String] = []
     private(set) var sentPrompts: [String] = []
     private(set) var approvalDecisions: [ApprovalDecision] = []
     private(set) var planReviewDecisions: [PlanReviewDecision] = []
+    private(set) var fetchedSkillAddresses: [String] = []
 
     func connect(agentAddress: String, conversation: Conversation) async throws -> HostedAgentResult {
         connectedAddresses.append(agentAddress)
@@ -50,6 +54,14 @@ final class MockAgentTransport: HostedAgentTransport {
         case .fail(let error):
             throw error
         }
+    }
+
+    func fetchSkills(agentAddress: String) async throws -> [AgentSkill] {
+        fetchedSkillAddresses.append(agentAddress)
+        if let skillFetchError {
+            throw skillFetchError
+        }
+        return skillsByAddress[agentAddress] ?? availableSkills
     }
 
     func sendPrompt(
@@ -819,6 +831,84 @@ final class NetworkRecoveryTests: XCTestCase {
         return (viewModel, transport, monitor)
     }
 
+    func testSlashPickerLoadsSortsAndFiltersServerSkills() async {
+        let (viewModel, transport, _) = makeEnvironment()
+        setUpAgentAndConversation(viewModel)
+        transport.availableSkills = [
+            AgentSkill(name: "Review", description: "Review current changes"),
+            AgentSkill(name: "commit", description: "Create a commit"),
+            AgentSkill(name: "release", description: "Prepare a release"),
+        ]
+
+        viewModel.prompt = "/"
+        viewModel.promptDidChange()
+        await waitForSkillFetch(on: viewModel, transport: transport)
+
+        XCTAssertEqual(viewModel.slashSkillSuggestions.map(\.name), ["commit", "release", "Review"])
+        XCTAssertTrue(viewModel.shouldShowSlashSkillPicker)
+
+        viewModel.prompt = "/RE"
+        viewModel.promptDidChange()
+        XCTAssertEqual(viewModel.slashSkillSuggestions.map(\.name), ["release", "Review"])
+
+        viewModel.prompt = "/review details"
+        viewModel.promptDidChange()
+        XCTAssertTrue(viewModel.slashSkillSuggestions.isEmpty)
+        XCTAssertFalse(viewModel.shouldShowSlashSkillPicker)
+        XCTAssertEqual(transport.fetchedSkillAddresses.count, 1)
+    }
+
+    func testSelectingSlashSkillInsertsCommandWithArgumentSpace() async {
+        let (viewModel, transport, _) = makeEnvironment()
+        setUpAgentAndConversation(viewModel)
+        transport.availableSkills = [AgentSkill(name: "commit", description: "Create a commit")]
+        viewModel.prompt = "/"
+        viewModel.promptDidChange()
+        await waitForSkillFetch(on: viewModel, transport: transport)
+
+        viewModel.selectSlashSkill(viewModel.slashSkillSuggestions[0])
+
+        XCTAssertEqual(viewModel.prompt, "/commit ")
+        XCTAssertFalse(viewModel.shouldShowSlashSkillPicker)
+    }
+
+    func testSlashDiscoveryFailureKeepsRawCommandSendable() async {
+        let (viewModel, transport, _) = makeEnvironment()
+        setUpAgentAndConversation(viewModel)
+        transport.skillFetchError = HostedAgentClientError.server("metadata unavailable")
+        viewModel.prompt = "/unknown"
+        viewModel.promptDidChange()
+        await waitForSkillFetchAttempt(transport: transport)
+
+        XCTAssertFalse(viewModel.shouldShowSlashSkillPicker)
+        XCTAssertNil(viewModel.errorMessage)
+
+        viewModel.sendPrompt()
+        await waitForSentPrompt(transport: transport)
+        XCTAssertEqual(transport.sentPrompts, ["/unknown"])
+    }
+
+    func testSlashSuggestionsFollowActiveAgentWithoutStaleResults() async {
+        let (viewModel, transport, _) = makeEnvironment()
+        let first = setUpAgentAndConversation(viewModel)
+        let secondAddress = "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        let second = viewModel.saveAgent(name: "Second", address: secondAddress, token: "")!
+        _ = viewModel.createConversation(for: second)
+        transport.skillsByAddress = [
+            first.address: [AgentSkill(name: "first")],
+            second.address: [AgentSkill(name: "second")],
+        ]
+
+        viewModel.prompt = "/"
+        viewModel.promptDidChange()
+        await waitForSkillFetch(on: viewModel, transport: transport)
+        XCTAssertEqual(viewModel.slashSkillSuggestions.map(\.name), ["second"])
+
+        viewModel.selectAgent(first)
+        await waitForSkillFetch(on: viewModel, transport: transport, address: first.address)
+        XCTAssertEqual(viewModel.slashSkillSuggestions.map(\.name), ["first"])
+    }
+
     private func makeDefaults() -> UserDefaults {
         let suiteName = "OOChatIOSTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -846,6 +936,38 @@ final class NetworkRecoveryTests: XCTestCase {
             await Task.yield()
         }
         XCTAssertNotNil(viewModel.pendingPlanReview)
+    }
+
+    private func waitForSkillFetch(
+        on viewModel: ChatViewModel,
+        transport: MockAgentTransport,
+        address: String? = nil
+    ) async {
+        for _ in 0..<100 {
+            if let address {
+                if transport.fetchedSkillAddresses.contains(address), !viewModel.slashSkillSuggestions.isEmpty {
+                    return
+                }
+            } else if !transport.fetchedSkillAddresses.isEmpty, !viewModel.slashSkillSuggestions.isEmpty {
+                return
+            }
+            await Task.yield()
+        }
+        XCTFail("Timed out waiting for slash skills")
+    }
+
+    private func waitForSkillFetchAttempt(transport: MockAgentTransport) async {
+        for _ in 0..<100 where transport.fetchedSkillAddresses.isEmpty {
+            await Task.yield()
+        }
+        XCTAssertFalse(transport.fetchedSkillAddresses.isEmpty)
+    }
+
+    private func waitForSentPrompt(transport: MockAgentTransport) async {
+        for _ in 0..<100 where transport.sentPrompts.isEmpty {
+            await Task.yield()
+        }
+        XCTAssertFalse(transport.sentPrompts.isEmpty)
     }
 
     @discardableResult
