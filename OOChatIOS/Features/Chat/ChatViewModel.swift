@@ -84,7 +84,8 @@ final class ChatViewModel: ObservableObject {
     @Published var conversations: [Conversation]
     @Published var activeAgentID: String?
     @Published var activeConversationID: String?
-    @Published var connectionState: ConnectionState = .disconnected
+    @Published private var connectionStatesByConversationID: [String: ConnectionState] = [:]
+    @Published private var fallbackConnectionState: ConnectionState = .disconnected
     @Published var isConnecting = false
     @Published var isProcessing = false
     @Published var errorMessage: String?
@@ -144,6 +145,22 @@ final class ChatViewModel: ObservableObject {
         activeConversation?.mode ?? .safe
     }
 
+    var connectionState: ConnectionState {
+        get {
+            guard let activeConversationID else {
+                return fallbackConnectionState
+            }
+            return connectionStatesByConversationID[activeConversationID] ?? fallbackConnectionState
+        }
+        set {
+            guard let activeConversationID else {
+                fallbackConnectionState = newValue
+                return
+            }
+            connectionStatesByConversationID[activeConversationID] = newValue
+        }
+    }
+
     var activePendingApproval: PendingApproval? {
         guard let pendingApproval,
               pendingApproval.conversationID == activeConversationID else {
@@ -162,6 +179,16 @@ final class ChatViewModel: ObservableObject {
 
     var pendingInteractionID: String? {
         activePendingApproval?.id ?? activePendingPlanReview?.id
+    }
+
+    var onlineAgentCount: Int {
+        agents.filter(isAgentOnline).count
+    }
+
+    func isAgentOnline(_ agent: AgentConnection) -> Bool {
+        conversations(for: agent).contains { conversation in
+            connectionState(forConversationID: conversation.id) == .connected
+        }
     }
 
     var slashSkillSuggestions: [AgentSkill] {
@@ -757,7 +784,10 @@ final class ChatViewModel: ObservableObject {
                 // Fresh drop: surface the banner again even if it was dismissed earlier.
                 isOfflineBannerDismissed = false
             }
-            connectionState = .disconnected
+            fallbackConnectionState = .disconnected
+            for conversationID in conversations.map(\.id) {
+                connectionStatesByConversationID[conversationID] = .disconnected
+            }
             startRecoveryProbing()
             return
         }
@@ -1032,6 +1062,10 @@ final class ChatViewModel: ObservableObject {
         agents.insert(agent, at: 0)
         activeAgentID = agent.id
         agentAddressDraft = agent.address
+    }
+
+    private func connectionState(forConversationID conversationID: String) -> ConnectionState {
+        connectionStatesByConversationID[conversationID] ?? fallbackConnectionState
     }
 
     private func agent(for conversation: Conversation) -> AgentConnection? {

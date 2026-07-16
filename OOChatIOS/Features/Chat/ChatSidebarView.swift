@@ -119,7 +119,7 @@ struct ChatSidebarView: View {
 
             HStack(spacing: SidebarMetrics.statusSpacing) {
                 Circle()
-                    .fill(onlineAgentCount > 0 ? Color(.systemGreen) : Color(.tertiaryLabel))
+                    .fill(viewModel.onlineAgentCount > 0 ? Color(.systemGreen) : Color(.tertiaryLabel))
                     .frame(width: SidebarMetrics.statusDotSize, height: SidebarMetrics.statusDotSize)
 
                 Text(connectionSummary)
@@ -226,7 +226,7 @@ struct ChatSidebarView: View {
     }
 
     private func agentRow(for agent: AgentConnection) -> some View {
-        let isOnline = isAgentOnline(agent)
+        let isOnline = viewModel.isAgentOnline(agent)
         return HStack(spacing: SidebarMetrics.agentRowSpacing) {
             Button {
                 toggleAgent(agent)
@@ -334,16 +334,9 @@ struct ChatSidebarView: View {
     }
 
     private var connectionSummary: String {
-        let noun = onlineAgentCount == 1 ? "agent" : "agents"
-        return "\(onlineAgentCount) \(noun) online"
-    }
-
-    private var onlineAgentCount: Int {
-        viewModel.agents.filter(isAgentOnline).count
-    }
-
-    private func isAgentOnline(_ agent: AgentConnection) -> Bool {
-        viewModel.connectionState == .connected && viewModel.activeAgentID == agent.id
+        let count = viewModel.onlineAgentCount
+        let noun = count == 1 ? "agent" : "agents"
+        return "\(count) \(noun) online"
     }
 
     private func toggleAgent(_ agent: AgentConnection) {
