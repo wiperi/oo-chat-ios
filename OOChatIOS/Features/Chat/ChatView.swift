@@ -61,6 +61,14 @@ struct ChatScreen: View {
                                 .id("pendingPlanReview")
                                 .transition(.opacity)
                             }
+
+                            if let pending = viewModel.activePendingAskUser {
+                                AskUserCard(pending: pending) { answer in
+                                    viewModel.answerPendingAskUser(id: pending.id, answer: answer)
+                                }
+                                .id("pendingAskUser")
+                                .transition(.opacity)
+                            }
                             Color.clear
                                 .frame(height: 1)
                                 .id(bottomAnchorID)
@@ -137,7 +145,10 @@ struct ChatScreen: View {
         if interactionID == viewModel.activePendingApproval?.id {
             return "pendingApproval"
         }
-        return "pendingPlanReview"
+        if interactionID == viewModel.activePendingPlanReview?.id {
+            return "pendingPlanReview"
+        }
+        return "pendingAskUser"
     }
 
     private func shouldShowMessage(_ message: ChatMessage, in conversationID: String) -> Bool {
