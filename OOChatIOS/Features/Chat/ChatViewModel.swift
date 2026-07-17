@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import SwiftUI
 
@@ -7,73 +8,6 @@ final class WeakChatViewModelReference {
 
     init(_ value: ChatViewModel) {
         self.value = value
-    }
-}
-
-final class ContinuationGate<Decision>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var continuations: [String: CheckedContinuation<Decision, Never>] = [:]
-    private var isClosed = false
-    private let cancellationDecision: Decision
-    private let unavailableDecision: Decision
-
-    init(cancellationDecision: Decision, unavailableDecision: Decision) {
-        self.cancellationDecision = cancellationDecision
-        self.unavailableDecision = unavailableDecision
-    }
-
-    @MainActor
-    func wait(
-        for id: String,
-        present: () -> Bool,
-        dismiss: () -> Void
-    ) async -> Decision {
-        let decision = await withTaskCancellationHandler {
-            await withCheckedContinuation { continuation in
-                lock.lock()
-                if Task.isCancelled || isClosed {
-                    lock.unlock()
-                    continuation.resume(returning: cancellationDecision)
-                    return
-                }
-                let replaced = continuations.updateValue(continuation, forKey: id)
-                lock.unlock()
-                replaced?.resume(returning: cancellationDecision)
-
-                guard present() else {
-                    resolve(id: id, with: unavailableDecision)
-                    return
-                }
-            }
-        } onCancel: {
-            self.resolve(id: id, with: self.cancellationDecision)
-        }
-        dismiss()
-        return decision
-    }
-
-    @discardableResult
-    func resolve(id: String, with decision: Decision) -> Bool {
-        lock.lock()
-        let continuation = continuations.removeValue(forKey: id)
-        lock.unlock()
-        continuation?.resume(returning: decision)
-        return continuation != nil
-    }
-
-    func cancelAll() {
-        lock.lock()
-        isClosed = true
-        let pending = Array(continuations.values)
-        continuations.removeAll()
-        lock.unlock()
-        for continuation in pending {
-            continuation.resume(returning: cancellationDecision)
-        }
-    }
-
-    deinit {
-        cancelAll()
     }
 }
 
@@ -100,10 +34,6 @@ final class ChatViewModel: ObservableObject {
     @Published private(set) var isOfflineBannerDismissed = false
     @Published private var connectionStatesByConversationID: [String: ConnectionState] = [:]
     @Published private var processingConversationIDs: Set<String> = []
-    @Published private var pendingApprovalsByConversationID: [String: PendingApproval] = [:]
-    @Published private var pendingUlwCheckpointsByConversationID: [String: PendingUlwCheckpoint] = [:]
-    @Published private var pendingPlanReviewsByConversationID: [String: PendingPlanReview] = [:]
-    @Published private var pendingAskUsersByConversationID: [String: PendingAskUser] = [:]
     @Published private var skillsByAgentAddress: [String: [AgentSkill]] = [:]
 
     var shouldShowOfflineBanner: Bool {
@@ -118,22 +48,8 @@ final class ChatViewModel: ObservableObject {
     private(set) var recoveryTask: Task<Void, Never>?
     private(set) var probeTask: Task<Void, Never>?
     private var skillFetchTasks: [String: Task<Void, Never>] = [:]
-    private let approvalGate = ContinuationGate<ApprovalDecision>(
-        cancellationDecision: .rejectHard(feedback: "Approval cancelled."),
-        unavailableDecision: .rejectHard(feedback: "Approval unavailable.")
-    )
-    private let ulwCheckpointGate = ContinuationGate<UlwCheckpointDecision>(
-        cancellationDecision: .switchMode(.safe),
-        unavailableDecision: .switchMode(.safe)
-    )
-    private let planReviewGate = ContinuationGate<PlanReviewDecision>(
-        cancellationDecision: .requestChanges(feedback: "Plan review cancelled."),
-        unavailableDecision: .requestChanges(feedback: "Plan review unavailable.")
-    )
-    private let askUserGate = ContinuationGate<AskUserDecision>(
-        cancellationDecision: .cancel,
-        unavailableDecision: .cancel
-    )
+    private let interactionCoordinator = InteractionCoordinator()
+    private var interactionChangeCancellable: AnyCancellable?
 
     /// Seconds between silent reachability probes while offline. Overridable in tests.
     var probeInterval: TimeInterval = 5
@@ -203,38 +119,23 @@ final class ChatViewModel: ObservableObject {
     }
 
     var activePendingApproval: PendingApproval? {
-        guard let activeConversationID else {
-            return nil
-        }
-        return pendingApprovalsByConversationID[activeConversationID]
+        interactionCoordinator.pendingApproval(for: activeConversationID)
     }
 
     var activePendingUlwCheckpoint: PendingUlwCheckpoint? {
-        guard let activeConversationID else {
-            return nil
-        }
-        return pendingUlwCheckpointsByConversationID[activeConversationID]
+        interactionCoordinator.pendingUlwCheckpoint(for: activeConversationID)
     }
 
     var activePendingPlanReview: PendingPlanReview? {
-        guard let activeConversationID else {
-            return nil
-        }
-        return pendingPlanReviewsByConversationID[activeConversationID]
+        interactionCoordinator.pendingPlanReview(for: activeConversationID)
     }
 
     var activePendingAskUser: PendingAskUser? {
-        guard let activeConversationID else {
-            return nil
-        }
-        return pendingAskUsersByConversationID[activeConversationID]
+        interactionCoordinator.pendingAskUser(for: activeConversationID)
     }
 
     var pendingInteractionID: String? {
-        activePendingApproval?.id
-            ?? activePendingUlwCheckpoint?.id
-            ?? activePendingPlanReview?.id
-            ?? activePendingAskUser?.id
+        interactionCoordinator.pendingInteractionID(for: activeConversationID)
     }
 
     func isProcessing(conversationID: String) -> Bool {
@@ -242,18 +143,11 @@ final class ChatViewModel: ObservableObject {
     }
 
     func hasPendingInteraction(forConversationID conversationID: String) -> Bool {
-        pendingApprovalsByConversationID[conversationID] != nil
-            || pendingUlwCheckpointsByConversationID[conversationID] != nil
-            || pendingPlanReviewsByConversationID[conversationID] != nil
-            || pendingAskUsersByConversationID[conversationID] != nil
+        interactionCoordinator.hasPendingInteraction(for: conversationID)
     }
 
     var hasBackgroundPendingInteraction: Bool {
-        let activeConversationID = activeConversationID
-        return pendingApprovalsByConversationID.keys.contains { $0 != activeConversationID }
-            || pendingUlwCheckpointsByConversationID.keys.contains { $0 != activeConversationID }
-            || pendingPlanReviewsByConversationID.keys.contains { $0 != activeConversationID }
-            || pendingAskUsersByConversationID.keys.contains { $0 != activeConversationID }
+        interactionCoordinator.hasPendingInteraction(excluding: activeConversationID)
     }
 
     var onlineAgentCount: Int {
@@ -320,6 +214,9 @@ final class ChatViewModel: ObservableObject {
         self.client.onConnectionStateChange = { [weak self] conversationID, state in
             self?.setConnectionState(state, forConversationID: conversationID)
         }
+        interactionChangeCancellable = interactionCoordinator.objectWillChange.sink { [weak self] in
+            self?.objectWillChange.send()
+        }
         self.networkMonitor.start()
     }
 
@@ -329,10 +226,6 @@ final class ChatViewModel: ObservableObject {
         recoveryTask?.cancel()
         deliveryTasksByConversationID.values.forEach { $0.cancel() }
         skillFetchTasks.values.forEach { $0.cancel() }
-        approvalGate.cancelAll()
-        ulwCheckpointGate.cancelAll()
-        planReviewGate.cancelAll()
-        askUserGate.cancelAll()
     }
 
     func agent(withID id: String) -> AgentConnection? {
@@ -745,12 +638,9 @@ final class ChatViewModel: ObservableObject {
         upsert(pending)
 
         let transport = client
-        let approvalGate = approvalGate
-        let ulwCheckpointGate = ulwCheckpointGate
-        let planReviewGate = planReviewGate
-        let askUserGate = askUserGate
+        let interactionCoordinator = interactionCoordinator
         let owner = WeakChatViewModelReference(self)
-        return Task { [transport, approvalGate, ulwCheckpointGate, planReviewGate, askUserGate, owner] in
+        return Task { [transport, interactionCoordinator, owner] in
             defer {
                 owner.value?.deliveryDidFinish(
                     messageID: messageID,
@@ -765,88 +655,12 @@ final class ChatViewModel: ObservableObject {
                     onEvent: { [owner] event in
                         owner.value?.apply(event, toConversationID: conversationID)
                     },
-                    onApprovalRequest: { [approvalGate, owner] request in
-                        let gateID = Self.interactionGateID(
-                            conversationID: conversationID,
-                            interactionID: request.id
-                        )
-                        return await approvalGate.wait(for: gateID) { [owner] in
-                            guard let viewModel = owner.value,
-                                  viewModel.conversation(withID: conversationID) != nil else {
-                                return false
-                            }
-                            viewModel.pendingApprovalsByConversationID[conversationID] = PendingApproval(
-                                conversationID: conversationID,
-                                request: request
-                            )
-                            return true
-                        } dismiss: { [owner] in
-                            if owner.value?.pendingApprovalsByConversationID[conversationID]?.id == request.id {
-                                owner.value?.pendingApprovalsByConversationID[conversationID] = nil
-                            }
-                        }
-                    },
-                    onUlwCheckpoint: { [ulwCheckpointGate, owner] request in
-                        let gateID = Self.interactionGateID(
-                            conversationID: conversationID,
-                            interactionID: request.id
-                        )
-                        return await ulwCheckpointGate.wait(for: gateID) { [owner] in
-                            guard let viewModel = owner.value,
-                                  viewModel.conversation(withID: conversationID) != nil else {
-                                return false
-                            }
-                            viewModel.pendingUlwCheckpointsByConversationID[conversationID] = PendingUlwCheckpoint(
-                                conversationID: conversationID,
-                                request: request
-                            )
-                            return true
-                        } dismiss: { [owner] in
-                            if owner.value?.pendingUlwCheckpointsByConversationID[conversationID]?.id == request.id {
-                                owner.value?.pendingUlwCheckpointsByConversationID[conversationID] = nil
-                            }
-                        }
-                    },
-                    onPlanReview: { [planReviewGate, owner] request in
-                        let gateID = Self.interactionGateID(
-                            conversationID: conversationID,
-                            interactionID: request.id
-                        )
-                        return await planReviewGate.wait(for: gateID) { [owner] in
-                            guard let viewModel = owner.value,
-                                  viewModel.conversation(withID: conversationID) != nil else {
-                                return false
-                            }
-                            viewModel.pendingPlanReviewsByConversationID[conversationID] = PendingPlanReview(
-                                conversationID: conversationID,
-                                request: request
-                            )
-                            return true
-                        } dismiss: { [owner] in
-                            if owner.value?.pendingPlanReviewsByConversationID[conversationID]?.id == request.id {
-                                owner.value?.pendingPlanReviewsByConversationID[conversationID] = nil
-                            }
-                        }
-                    },
-                    onAskUser: { [askUserGate, owner] request in
-                        let gateID = Self.interactionGateID(
-                            conversationID: conversationID,
-                            interactionID: request.id
-                        )
-                        return await askUserGate.wait(for: gateID) { [owner] in
-                            guard let viewModel = owner.value,
-                                  viewModel.conversation(withID: conversationID) != nil else {
-                                return false
-                            }
-                            viewModel.pendingAskUsersByConversationID[conversationID] = PendingAskUser(
-                                conversationID: conversationID,
-                                request: request
-                            )
-                            return true
-                        } dismiss: { [owner] in
-                            if owner.value?.pendingAskUsersByConversationID[conversationID]?.id == request.id {
-                                owner.value?.pendingAskUsersByConversationID[conversationID] = nil
-                            }
+                    onInteraction: { [interactionCoordinator, owner] interaction in
+                        await interactionCoordinator.handle(
+                            interaction,
+                            conversationID: conversationID
+                        ) { [owner] in
+                            owner.value?.conversation(withID: conversationID) != nil
                         }
                     }
                 )
@@ -1052,116 +866,44 @@ final class ChatViewModel: ObservableObject {
     }
 
     func answerPendingAskUser(id: String, answer: String) {
-        guard let conversationID = activeConversationID,
-              let pendingAskUser = pendingAskUsersByConversationID[conversationID],
-              pendingAskUser.id == id else {
-            return
-        }
-        pendingAskUsersByConversationID[conversationID] = nil
-        askUserGate.resolve(
-            id: Self.interactionGateID(conversationID: conversationID, interactionID: id),
-            with: .answer(answer)
+        interactionCoordinator.resolve(
+            id: id,
+            conversationID: activeConversationID,
+            with: .askUser(.answer(answer))
         )
     }
 
     private func resolvePendingApproval(id: String, with decision: ApprovalDecision) {
-        guard let conversationID = activeConversationID,
-              let pendingApproval = pendingApprovalsByConversationID[conversationID],
-              pendingApproval.id == id else {
-            return
-        }
-        pendingApprovalsByConversationID[conversationID] = nil
-        approvalGate.resolve(
-            id: Self.interactionGateID(conversationID: conversationID, interactionID: id),
-            with: decision
+        interactionCoordinator.resolve(
+            id: id,
+            conversationID: activeConversationID,
+            with: .approval(decision)
         )
     }
 
     private func resolvePendingUlwCheckpoint(id: String, with decision: UlwCheckpointDecision) {
-        guard let conversationID = activeConversationID,
-              let pendingUlwCheckpoint = pendingUlwCheckpointsByConversationID[conversationID],
-              pendingUlwCheckpoint.id == id else {
-            return
-        }
-        pendingUlwCheckpointsByConversationID[conversationID] = nil
-        ulwCheckpointGate.resolve(
-            id: Self.interactionGateID(conversationID: conversationID, interactionID: id),
-            with: decision
+        interactionCoordinator.resolve(
+            id: id,
+            conversationID: activeConversationID,
+            with: .ulwCheckpoint(decision)
         )
     }
 
     private func resolvePendingPlanReview(id: String, with decision: PlanReviewDecision) {
-        guard let conversationID = activeConversationID,
-              let pendingPlanReview = pendingPlanReviewsByConversationID[conversationID],
-              pendingPlanReview.id == id else {
-            return
-        }
-        pendingPlanReviewsByConversationID[conversationID] = nil
-        planReviewGate.resolve(
-            id: Self.interactionGateID(conversationID: conversationID, interactionID: id),
-            with: decision
+        interactionCoordinator.resolve(
+            id: id,
+            conversationID: activeConversationID,
+            with: .planReview(decision)
         )
     }
 
     private func cancelPendingInteractions(forConversationID conversationID: String) {
-        if let pending = pendingApprovalsByConversationID.removeValue(forKey: conversationID) {
-            approvalGate.resolve(
-                id: Self.interactionGateID(conversationID: conversationID, interactionID: pending.id),
-                with: .rejectHard(feedback: "Approval cancelled.")
-            )
-        }
-        if let pending = pendingUlwCheckpointsByConversationID.removeValue(forKey: conversationID) {
-            ulwCheckpointGate.resolve(
-                id: Self.interactionGateID(conversationID: conversationID, interactionID: pending.id),
-                with: .switchMode(.safe)
-            )
-        }
-        if let pending = pendingPlanReviewsByConversationID.removeValue(forKey: conversationID) {
-            planReviewGate.resolve(
-                id: Self.interactionGateID(conversationID: conversationID, interactionID: pending.id),
-                with: .requestChanges(feedback: "Plan review cancelled.")
-            )
-        }
-        if let pending = pendingAskUsersByConversationID.removeValue(forKey: conversationID) {
-            askUserGate.resolve(
-                id: Self.interactionGateID(conversationID: conversationID, interactionID: pending.id),
-                with: .cancel
-            )
-        }
+        interactionCoordinator.cancelInteractions(for: conversationID)
         deliveryTasksByConversationID[conversationID]?.cancel()
     }
 
     private func settlePendingInteractionForStop(in conversationID: String) -> Bool {
-        var settledInteraction = false
-        if let approval = pendingApprovalsByConversationID.removeValue(forKey: conversationID) {
-            approvalGate.resolve(
-                id: Self.interactionGateID(conversationID: conversationID, interactionID: approval.id),
-                with: .rejectHard(feedback: "Approval cancelled.")
-            )
-            settledInteraction = true
-        }
-        if let review = pendingPlanReviewsByConversationID.removeValue(forKey: conversationID) {
-            planReviewGate.resolve(
-                id: Self.interactionGateID(conversationID: conversationID, interactionID: review.id),
-                with: .requestChanges(feedback: "Plan review cancelled.")
-            )
-            settledInteraction = true
-        }
-        if let checkpoint = pendingUlwCheckpointsByConversationID.removeValue(forKey: conversationID) {
-            ulwCheckpointGate.resolve(
-                id: Self.interactionGateID(conversationID: conversationID, interactionID: checkpoint.id),
-                with: .switchMode(.safe)
-            )
-            settledInteraction = true
-        }
-        if let request = pendingAskUsersByConversationID.removeValue(forKey: conversationID) {
-            askUserGate.resolve(
-                id: Self.interactionGateID(conversationID: conversationID, interactionID: request.id),
-                with: .cancel
-            )
-            settledInteraction = true
-        }
-        return settledInteraction
+        interactionCoordinator.cancelInteractions(for: conversationID)
     }
 
     /// The path monitor can lag well behind the actual network (especially on the
@@ -1342,10 +1084,6 @@ final class ChatViewModel: ObservableObject {
         isRestoringConversationDraft = true
         prompt = conversationID.flatMap { draftsByConversationID[$0] } ?? ""
         isRestoringConversationDraft = false
-    }
-
-    private static func interactionGateID(conversationID: String, interactionID: String) -> String {
-        "\(conversationID)::\(interactionID)"
     }
 
     private func agent(for conversation: Conversation) -> AgentConnection? {

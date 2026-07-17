@@ -259,6 +259,37 @@ enum AskUserDecision: Equatable {
     case cancel
 }
 
+/// A single transport-level representation for every interaction that pauses an
+/// agent turn while the app waits for a person to respond.
+enum HostedAgentInteraction: Identifiable, Equatable {
+    case approval(ToolApprovalRequest)
+    case ulwCheckpoint(UlwCheckpointRequest)
+    case planReview(PlanReviewRequest)
+    case askUser(AskUserRequest)
+
+    var id: String {
+        switch self {
+        case .approval(let request):
+            return request.id
+        case .ulwCheckpoint(let request):
+            return request.id
+        case .planReview(let request):
+            return request.id
+        case .askUser(let request):
+            return request.id
+        }
+    }
+}
+
+/// Pairs a response with its interaction kind so mismatched responses cannot
+/// accidentally be sent over the wire.
+enum HostedAgentInteractionDecision: Equatable {
+    case approval(ApprovalDecision)
+    case ulwCheckpoint(UlwCheckpointDecision)
+    case planReview(PlanReviewDecision)
+    case askUser(AskUserDecision)
+}
+
 struct PendingAskUser: Identifiable, Equatable {
     let conversationID: String
     let request: AskUserRequest

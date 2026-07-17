@@ -46,6 +46,11 @@
 		100000000000000000000139 /* ApprovalCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000044 /* ApprovalCard.swift */; };
 		100000000000000000000140 /* PlanReviewCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000045 /* PlanReviewCard.swift */; };
 		100000000000000000000146 /* AskUserCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000051 /* AskUserCard.swift */; };
+		100000000000000000000147 /* InteractionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000052 /* InteractionCoordinator.swift */; };
+		100000000000000000000148 /* HostedAgentProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000053 /* HostedAgentProtocol.swift */; };
+		100000000000000000000149 /* HostedAgentDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000054 /* HostedAgentDiscovery.swift */; };
+		100000000000000000000150 /* HostedAgentConnectionPool.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000055 /* HostedAgentConnectionPool.swift */; };
+		100000000000000000000151 /* HostedAgentConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000056 /* HostedAgentConnection.swift */; };
 		100000000000000000000141 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000046 /* Assets.xcassets */; };
 		100000000000000000000142 /* AppAppearance.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000047 /* AppAppearance.swift */; };
 		100000000000000000000143 /* ChatShellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000048 /* ChatShellView.swift */; };
@@ -106,6 +111,11 @@
 		100000000000000000000044 /* ApprovalCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalCard.swift; sourceTree = "<group>"; };
 		100000000000000000000045 /* PlanReviewCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanReviewCard.swift; sourceTree = "<group>"; };
 		100000000000000000000051 /* AskUserCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AskUserCard.swift; sourceTree = "<group>"; };
+		100000000000000000000052 /* InteractionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InteractionCoordinator.swift; sourceTree = "<group>"; };
+		100000000000000000000053 /* HostedAgentProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostedAgentProtocol.swift; sourceTree = "<group>"; };
+		100000000000000000000054 /* HostedAgentDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostedAgentDiscovery.swift; sourceTree = "<group>"; };
+		100000000000000000000055 /* HostedAgentConnectionPool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostedAgentConnectionPool.swift; sourceTree = "<group>"; };
+		100000000000000000000056 /* HostedAgentConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostedAgentConnection.swift; sourceTree = "<group>"; };
 		100000000000000000000046 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		100000000000000000000047 /* AppAppearance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppAppearance.swift; sourceTree = "<group>"; };
 		100000000000000000000048 /* ChatShellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatShellView.swift; sourceTree = "<group>"; };
@@ -229,6 +239,7 @@
 				100000000000000000000044 /* ApprovalCard.swift */,
 				100000000000000000000045 /* PlanReviewCard.swift */,
 				100000000000000000000051 /* AskUserCard.swift */,
+				100000000000000000000052 /* InteractionCoordinator.swift */,
 			);
 			path = Chat;
 			sourceTree = "<group>";
@@ -275,7 +286,11 @@
 		100000000000000000000309 /* Protocol */ = {
 			isa = PBXGroup;
 			children = (
+				100000000000000000000053 /* HostedAgentProtocol.swift */,
 				100000000000000000000009 /* HostedAgentClient.swift */,
+				100000000000000000000054 /* HostedAgentDiscovery.swift */,
+				100000000000000000000055 /* HostedAgentConnectionPool.swift */,
+				100000000000000000000056 /* HostedAgentConnection.swift */,
 				100000000000000000000005 /* CanonicalJSON.swift */,
 			);
 			path = Protocol;
@@ -467,6 +482,10 @@
 				100000000000000000000114 /* SwiftDataConversationRepository.swift in Sources */,
 				100000000000000000000116 /* ConversationRepositoryFactory.swift in Sources */,
 				100000000000000000000109 /* HostedAgentClient.swift in Sources */,
+				100000000000000000000148 /* HostedAgentProtocol.swift in Sources */,
+				100000000000000000000149 /* HostedAgentDiscovery.swift in Sources */,
+				100000000000000000000150 /* HostedAgentConnectionPool.swift in Sources */,
+				100000000000000000000151 /* HostedAgentConnection.swift in Sources */,
 				100000000000000000000117 /* AgentsView.swift in Sources */,
 				100000000000000000000118 /* AgentSessionsView.swift in Sources */,
 				100000000000000000000119 /* ChatView.swift in Sources */,
@@ -480,6 +499,7 @@
 				100000000000000000000139 /* ApprovalCard.swift in Sources */,
 				100000000000000000000140 /* PlanReviewCard.swift in Sources */,
 				100000000000000000000146 /* AskUserCard.swift in Sources */,
+				100000000000000000000147 /* InteractionCoordinator.swift in Sources */,
 				100000000000000000000122 /* SettingsView.swift in Sources */,
 				100000000000000000000123 /* StatusPill.swift in Sources */,
 				100000000000000000000124 /* ErrorBanner.swift in Sources */,

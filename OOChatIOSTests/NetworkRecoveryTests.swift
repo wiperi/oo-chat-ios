@@ -111,10 +111,7 @@ final class MockAgentTransport: HostedAgentTransport {
         conversation: Conversation,
         prompt: String,
         onEvent: (@MainActor (HostedAgentEvent) -> Void)?,
-        onApprovalRequest: (@MainActor (ToolApprovalRequest) async -> ApprovalDecision)?,
-        onUlwCheckpoint: (@MainActor (UlwCheckpointRequest) async -> UlwCheckpointDecision)?,
-        onPlanReview: (@MainActor (PlanReviewRequest) async -> PlanReviewDecision)?,
-        onAskUser: (@MainActor (AskUserRequest) async -> AskUserDecision)?
+        onInteraction: (@MainActor (HostedAgentInteraction) async -> HostedAgentInteractionDecision)?
     ) async throws -> HostedAgentResult {
         sentPrompts.append(prompt)
         let behavior = sendBehaviorsByPrompt[prompt] ?? sendBehavior
@@ -135,28 +132,32 @@ final class MockAgentTransport: HostedAgentTransport {
         }
 
         for request in approvalRequests {
-            guard let onApprovalRequest else {
+            guard let onInteraction,
+                  case .approval(let decision) = await onInteraction(.approval(request)) else {
                 throw HostedAgentClientError.badFrame
             }
-            approvalDecisions.append(await onApprovalRequest(request))
+            approvalDecisions.append(decision)
         }
         for checkpoint in ulwCheckpoints {
-            guard let onUlwCheckpoint else {
+            guard let onInteraction,
+                  case .ulwCheckpoint(let decision) = await onInteraction(.ulwCheckpoint(checkpoint)) else {
                 throw HostedAgentClientError.badFrame
             }
-            ulwDecisions.append(await onUlwCheckpoint(checkpoint))
+            ulwDecisions.append(decision)
         }
         for review in planReviews {
-            guard let onPlanReview else {
+            guard let onInteraction,
+                  case .planReview(let decision) = await onInteraction(.planReview(review)) else {
                 throw HostedAgentClientError.badFrame
             }
-            planReviewDecisions.append(await onPlanReview(review))
+            planReviewDecisions.append(decision)
         }
         for request in askUserRequests {
-            guard let onAskUser else {
+            guard let onInteraction,
+                  case .askUser(let decision) = await onInteraction(.askUser(request)) else {
                 throw HostedAgentClientError.badFrame
             }
-            askUserDecisions.append(await onAskUser(request))
+            askUserDecisions.append(decision)
         }
         if waitAfterInteractionsUntilCancelled {
             while true {
