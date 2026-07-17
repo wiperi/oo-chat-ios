@@ -134,6 +134,56 @@ final class MockHostedAgentTests: XCTestCase {
         XCTAssertEqual(CanonicalJSON.string(from: .number(1e20)), "1e+20")
     }
 
+    func testChatTimelineGroupsOnlyConsecutiveToolCalls() {
+        let firstTool = ChatMessage(
+            id: "tool-read",
+            role: .tool,
+            content: "contents",
+            toolName: "read_file",
+            toolState: .completed
+        )
+        let secondTool = ChatMessage(
+            id: "tool-edit",
+            role: .tool,
+            content: "updated",
+            toolName: "edit_file",
+            toolState: .completed
+        )
+        let reply = ChatMessage(id: "reply", role: .agent, content: "Done")
+        let finalTool = ChatMessage(
+            id: "tool-command",
+            role: .tool,
+            content: "success",
+            toolName: "exec_command",
+            toolState: .completed
+        )
+
+        let entries = ChatTimelineBuilder.entries(
+            from: [firstTool, secondTool, reply, finalTool]
+        )
+
+        XCTAssertEqual(entries.count, 3)
+        guard case .toolCallGroup(let groupedTools) = entries[0] else {
+            return XCTFail("Expected consecutive tool calls to be grouped")
+        }
+        XCTAssertEqual(groupedTools.map(\.id), ["tool-read", "tool-edit"])
+        XCTAssertEqual(entries[1], .message(reply))
+        XCTAssertEqual(entries[2], .message(finalTool))
+    }
+
+    func testToolCallGroupSummaryCombinesActionCategories() {
+        let messages = [
+            ChatMessage(role: .tool, content: "", toolName: "edit_file", toolState: .completed),
+            ChatMessage(role: .tool, content: "", toolName: "read_file", toolState: .completed),
+            ChatMessage(role: .tool, content: "", toolName: "exec_command", toolState: .completed),
+        ]
+
+        XCTAssertEqual(
+            ToolCallGroupSummary.title(for: messages),
+            "Edited a file, read a file, and ran a command"
+        )
+    }
+
     func testCanonicalJSONMatchesPythonUnicodeEscaping() {
         let value: JSONValue = .object([
             "prompt": .string("执行 tree café 🧅"),

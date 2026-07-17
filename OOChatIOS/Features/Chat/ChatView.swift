@@ -28,14 +28,10 @@ struct ChatScreen: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 20) {
-                            ForEach(conversation.messages) { message in
-                                if shouldShowMessage(message, in: conversation.id) {
-                                    MessageBubble(message: message) {
-                                        viewModel.retryMessage(message)
-                                    }
-                                    .id(message.id)
+                            ForEach(timelineEntries(for: conversation)) { entry in
+                                timelineView(for: entry)
+                                    .id(entry.id)
                                     .transition(AppMotion.materialize(reduceMotion: reduceMotion))
-                                }
                             }
 
                             if let approval = viewModel.activePendingApproval {
@@ -200,6 +196,26 @@ struct ChatScreen: View {
         !isToolCallCoveredByPendingApproval(message, in: conversationID)
     }
 
+    private func timelineEntries(for conversation: Conversation) -> [ChatTimelineEntry] {
+        ChatTimelineBuilder.entries(
+            from: conversation.messages.filter {
+                shouldShowMessage($0, in: conversation.id)
+            }
+        )
+    }
+
+    @ViewBuilder
+    private func timelineView(for entry: ChatTimelineEntry) -> some View {
+        switch entry {
+        case .message(let message):
+            MessageBubble(message: message) {
+                viewModel.retryMessage(message)
+            }
+        case .toolCallGroup(let messages):
+            ToolCallGroupView(messages: messages)
+        }
+    }
+
     private func isToolCallCoveredByPendingApproval(_ message: ChatMessage, in conversationID: String) -> Bool {
         guard let approval = viewModel.pendingApproval,
               approval.conversationID == conversationID,
@@ -263,5 +279,51 @@ struct ChatScreen: View {
             insertion: .opacity.combined(with: .offset(x: 10, y: 0)),
             removal: .opacity
         )
+    }
+}
+
+enum ChatTimelineEntry: Identifiable, Equatable {
+    case message(ChatMessage)
+    case toolCallGroup([ChatMessage])
+
+    var id: String {
+        switch self {
+        case .message(let message):
+            return message.id
+        case .toolCallGroup(let messages):
+            return messages.first?.id ?? "toolCallGroup"
+        }
+    }
+}
+
+enum ChatTimelineBuilder {
+    static func entries(from messages: [ChatMessage]) -> [ChatTimelineEntry] {
+        var entries: [ChatTimelineEntry] = []
+        var pendingToolCalls: [ChatMessage] = []
+
+        func appendPendingToolCalls() {
+            guard !pendingToolCalls.isEmpty else {
+                return
+            }
+
+            if pendingToolCalls.count == 1, let message = pendingToolCalls.first {
+                entries.append(.message(message))
+            } else {
+                entries.append(.toolCallGroup(pendingToolCalls))
+            }
+            pendingToolCalls.removeAll(keepingCapacity: true)
+        }
+
+        for message in messages {
+            if message.role == .tool {
+                pendingToolCalls.append(message)
+            } else {
+                appendPendingToolCalls()
+                entries.append(.message(message))
+            }
+        }
+
+        appendPendingToolCalls()
+        return entries
     }
 }
