@@ -231,6 +231,11 @@ struct AskUserRequest: Identifiable, Equatable {
     }
 }
 
+enum AskUserDecision: Equatable {
+    case answer(String)
+    case cancel
+}
+
 struct PendingAskUser: Identifiable, Equatable {
     let conversationID: String
     let request: AskUserRequest
@@ -305,8 +310,6 @@ struct ChatMessage: Identifiable, Codable, Equatable {
 }
 
 struct Conversation: Identifiable, Codable, Equatable {
-    static let defaultInitialMessage = "ConnectOnion native iOS session is ready."
-
     let id: String
     var title: String
     var agentID: String?
@@ -326,9 +329,7 @@ struct Conversation: Identifiable, Codable, Equatable {
         self.mode = .safe
         self.createdAt = now
         self.updatedAt = now
-        self.messages = [
-            ChatMessage(role: .agent, content: Self.defaultInitialMessage)
-        ]
+        self.messages = []
     }
 
     init(

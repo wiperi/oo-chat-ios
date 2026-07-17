@@ -24,12 +24,11 @@ final class MockHostedAgentTests: XCTestCase {
         XCTAssertFalse(message.id.isEmpty)
     }
 
-    func testNewConversationStartsWithDefaultAgentMessage() {
+    func testNewConversationStartsEmpty() {
         let conversation = Conversation()
 
-        XCTAssertEqual(conversation.messages.count, 1)
-        XCTAssertEqual(conversation.messages.first?.role, .agent)
-        XCTAssertEqual(conversation.messages.first?.content, Conversation.defaultInitialMessage)
+        XCTAssertFalse(conversation.id.isEmpty)
+        XCTAssertTrue(conversation.messages.isEmpty)
     }
 
     func testAgentConnectionDecodesLegacyPayloadWithoutToken() throws {
@@ -426,6 +425,7 @@ final class MockHostedAgentTests: XCTestCase {
                 endpoint: relayEndpoint
             ),
             [
+                "type": .string("ASK_USER_RESPONSE"),
                 "answer": .string(#"{"username":"me","password":"secret"}"#),
                 "to": .string(endpointA),
             ]
@@ -436,7 +436,10 @@ final class MockHostedAgentTests: XCTestCase {
                 agentAddress: endpointA,
                 endpoint: directEndpoint
             ),
-            ["answer": .string("red, blue")]
+            [
+                "type": .string("ASK_USER_RESPONSE"),
+                "answer": .string("red, blue"),
+            ]
         )
     }
 

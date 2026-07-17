@@ -107,6 +107,9 @@ final class AgentsFeatureTests: XCTestCase {
         XCTAssertEqual(conversation.agentID, agent.id)
         XCTAssertEqual(conversation.agentAddress, agent.address)
         XCTAssertEqual(conversation.title, "New mobile session")
+        XCTAssertFalse(conversation.id.isEmpty)
+        XCTAssertTrue(conversation.messages.isEmpty)
+        XCTAssertTrue(view.prompt.isEmpty)
         XCTAssertEqual(view.activeAgentID, agent.id)
         XCTAssertEqual(view.activeConversationID, conversation.id)
         XCTAssertEqual(repo.upsertedConversations.last?.id, conversation.id)
@@ -114,6 +117,31 @@ final class AgentsFeatureTests: XCTestCase {
             repo.savedActiveCalls.last,
             SavedActive(agentID: agent.id, conversationID: conversation.id)
         )
+    }
+
+    func testNewConversationHasBlankComposerAndPreservesPreviousDraft() {
+        let agent = makeAgent(id: "agent1", address: "0xaaa", updatedAt: seconds(1000))
+        let existing = makeConversation(id: "existing", agent: agent, updatedAt: seconds(2000))
+        let repo = SpyConversationRepository(
+            snapshot: ChatSnapshot(
+                agents: [agent],
+                conversations: [existing],
+                activeAgentID: agent.id,
+                activeConversationID: existing.id
+            )
+        )
+        let view = ChatViewModel(store: repo)
+        view.prompt = "unfinished draft"
+
+        let created = view.createConversation(for: agent)
+
+        XCTAssertEqual(view.activeConversationID, created.id)
+        XCTAssertTrue(view.prompt.isEmpty)
+        XCTAssertTrue(created.messages.isEmpty)
+
+        view.selectConversation(existing)
+
+        XCTAssertEqual(view.prompt, "unfinished draft")
     }
 
     // Mock delete current conversation delete, the chat also deletes.

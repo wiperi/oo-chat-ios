@@ -292,7 +292,7 @@ protocol HostedAgentTransport {
         onEvent: (@MainActor (HostedAgentEvent) -> Void)?,
         onApprovalRequest: (@MainActor (ToolApprovalRequest) async -> ApprovalDecision)?,
         onPlanReview: (@MainActor (PlanReviewRequest) async -> PlanReviewDecision)?,
-        onAskUser: (@MainActor (AskUserRequest) async -> String)?
+        onAskUser: (@MainActor (AskUserRequest) async -> AskUserDecision)?
     ) async throws -> HostedAgentResult
     func waitForPendingInteractionResponses(agentAddress: String, conversationID: String) async
 }
@@ -369,7 +369,7 @@ final class HostedAgentClient: HostedAgentTransport {
         onEvent: (@MainActor (HostedAgentEvent) -> Void)?,
         onApprovalRequest: (@MainActor (ToolApprovalRequest) async -> ApprovalDecision)?,
         onPlanReview: (@MainActor (PlanReviewRequest) async -> PlanReviewDecision)?,
-        onAskUser: (@MainActor (AskUserRequest) async -> String)?
+        onAskUser: (@MainActor (AskUserRequest) async -> AskUserDecision)?
     ) async throws -> HostedAgentResult {
         guard Self.isHostedAgentAddress(agentAddress) else {
             throw HostedAgentClientError.invalidAddress
@@ -436,7 +436,10 @@ final class HostedAgentClient: HostedAgentTransport {
         endpoint: ResolvedEndpoint
     ) -> [String: JSONValue] {
         routedInteractiveFrame(
-            ["answer": .string(answer)],
+            [
+                "type": .string("ASK_USER_RESPONSE"),
+                "answer": .string(answer),
+            ],
             agentAddress: agentAddress,
             endpoint: endpoint
         )
@@ -700,7 +703,7 @@ private actor HostedAgentConnectionPool {
         onEvent: (@MainActor (HostedAgentEvent) -> Void)?,
         onApprovalRequest: (@MainActor (ToolApprovalRequest) async -> ApprovalDecision)?,
         onPlanReview: (@MainActor (PlanReviewRequest) async -> PlanReviewDecision)?,
-        onAskUser: (@MainActor (AskUserRequest) async -> String)?
+        onAskUser: (@MainActor (AskUserRequest) async -> AskUserDecision)?
     ) async throws -> HostedAgentResult {
         let lease = await acquire(agentAddress: agentAddress, conversationID: conversation.id)
         do {
@@ -846,7 +849,7 @@ private actor HostedAgentConnection {
         let onEvent: (@MainActor (HostedAgentEvent) -> Void)?
         let onApprovalRequest: (@MainActor (ToolApprovalRequest) async -> ApprovalDecision)?
         let onPlanReview: (@MainActor (PlanReviewRequest) async -> PlanReviewDecision)?
-        let onAskUser: (@MainActor (AskUserRequest) async -> String)?
+        let onAskUser: (@MainActor (AskUserRequest) async -> AskUserDecision)?
     }
 
     private let key: HostedAgentConnectionKey
@@ -922,7 +925,7 @@ private actor HostedAgentConnection {
         onEvent: (@MainActor (HostedAgentEvent) -> Void)?,
         onApprovalRequest: (@MainActor (ToolApprovalRequest) async -> ApprovalDecision)?,
         onPlanReview: (@MainActor (PlanReviewRequest) async -> PlanReviewDecision)?,
-        onAskUser: (@MainActor (AskUserRequest) async -> String)?
+        onAskUser: (@MainActor (AskUserRequest) async -> AskUserDecision)?
     ) async throws -> HostedAgentResult {
         try Task.checkCancellation()
         reconnectToApplyPendingModeChangeIfNeeded(conversation: conversation)
@@ -1294,7 +1297,10 @@ private actor HostedAgentConnection {
               pending.id == promptID else {
             return
         }
-        let answer = await pending.onAskUser?(request) ?? ""
+        let decision = await pending.onAskUser?(request) ?? .cancel
+        guard case .answer(let answer) = decision else {
+            return
+        }
         guard generation == socketGeneration,
               pendingPrompt?.id == promptID,
               let socket,

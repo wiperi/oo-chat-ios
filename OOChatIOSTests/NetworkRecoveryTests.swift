@@ -67,7 +67,7 @@ final class MockAgentTransport: HostedAgentTransport {
     private(set) var sentPrompts: [String] = []
     private(set) var approvalDecisions: [ApprovalDecision] = []
     private(set) var planReviewDecisions: [PlanReviewDecision] = []
-    private(set) var askUserAnswers: [String] = []
+    private(set) var askUserDecisions: [AskUserDecision] = []
     private(set) var fetchedSkillAddresses: [String] = []
     private(set) var interactionResponseWaits: [(agentAddress: String, conversationID: String)] = []
 
@@ -111,7 +111,7 @@ final class MockAgentTransport: HostedAgentTransport {
         onEvent: (@MainActor (HostedAgentEvent) -> Void)?,
         onApprovalRequest: (@MainActor (ToolApprovalRequest) async -> ApprovalDecision)?,
         onPlanReview: (@MainActor (PlanReviewRequest) async -> PlanReviewDecision)?,
-        onAskUser: (@MainActor (AskUserRequest) async -> String)?
+        onAskUser: (@MainActor (AskUserRequest) async -> AskUserDecision)?
     ) async throws -> HostedAgentResult {
         sentPrompts.append(prompt)
         let behavior = sendBehaviorsByPrompt[prompt] ?? sendBehavior
@@ -147,7 +147,7 @@ final class MockAgentTransport: HostedAgentTransport {
             guard let onAskUser else {
                 throw HostedAgentClientError.badFrame
             }
-            askUserAnswers.append(await onAskUser(request))
+            askUserDecisions.append(await onAskUser(request))
         }
         if waitAfterInteractionsUntilCancelled {
             while true {
@@ -165,8 +165,19 @@ final class MockAgentTransport: HostedAgentTransport {
 
     func waitForPendingInteractionResponses(agentAddress: String, conversationID: String) async {
         interactionResponseWaits.append((agentAddress, conversationID))
-        for _ in 0..<100 where approvalDecisions.isEmpty && planReviewDecisions.isEmpty {
+        for _ in 0..<100 where approvalDecisions.isEmpty
+            && planReviewDecisions.isEmpty
+            && askUserDecisions.isEmpty {
             await Task.yield()
+        }
+    }
+
+    var askUserAnswers: [String] {
+        askUserDecisions.compactMap { decision in
+            guard case .answer(let answer) = decision else {
+                return nil
+            }
+            return answer
         }
     }
 
@@ -916,6 +927,51 @@ final class NetworkRecoveryTests: XCTestCase {
         XCTAssertFalse(viewModel.isProcessing)
     }
 
+    func testStoppingPendingAskUserCancelsWithoutSubmittingEmptyAnswer() async {
+        let (viewModel, transport, _) = makeEnvironment()
+        setUpAgentAndConversation(viewModel)
+        transport.askUserRequests = [
+            AskUserRequest(id: "question-1", question: "Continue?", options: ["Yes", "No"]),
+        ]
+        transport.waitAfterInteractionsUntilCancelled = true
+
+        viewModel.prompt = "Start task"
+        viewModel.sendPrompt()
+        await waitForPendingAskUser(on: viewModel)
+        let task = viewModel.sendTask
+
+        viewModel.stopActiveResponse()
+        await task?.value
+
+        XCTAssertEqual(transport.askUserDecisions, [.cancel])
+        XCTAssertTrue(transport.askUserAnswers.isEmpty)
+        XCTAssertNil(viewModel.pendingAskUser)
+        XCTAssertFalse(viewModel.isProcessing)
+    }
+
+    func testDeletingConversationCancelsAskUserWithoutSubmittingEmptyAnswer() async {
+        let (viewModel, transport, _) = makeEnvironment()
+        setUpAgentAndConversation(viewModel)
+        let conversation = viewModel.activeConversation!
+        transport.askUserRequests = [
+            AskUserRequest(id: "question-1", question: "Continue?", options: ["Yes", "No"]),
+        ]
+        transport.waitAfterInteractionsUntilCancelled = true
+
+        viewModel.prompt = "Start task"
+        viewModel.sendPrompt()
+        await waitForPendingAskUser(on: viewModel)
+        let task = viewModel.sendTask
+
+        viewModel.deleteConversation(conversation)
+        await task?.value
+
+        XCTAssertEqual(transport.askUserDecisions, [.cancel])
+        XCTAssertTrue(transport.askUserAnswers.isEmpty)
+        XCTAssertNil(viewModel.pendingAskUser)
+        XCTAssertNil(viewModel.conversation(withID: conversation.id))
+    }
+
     func testPendingAskUserIsScopedToItsConversation() async {
         let (viewModel, transport, _) = makeEnvironment()
         let agent = setUpAgentAndConversation(viewModel)
@@ -1377,6 +1433,9 @@ final class NetworkRecoveryTests: XCTestCase {
         XCTAssertEqual(viewModel.slashSkillSuggestions.map(\.name), ["second"])
 
         viewModel.selectAgent(first)
+        XCTAssertTrue(viewModel.prompt.isEmpty)
+        viewModel.prompt = "/"
+        viewModel.promptDidChange()
         await waitForSkillFetch(on: viewModel, transport: transport, address: first.address)
         XCTAssertEqual(viewModel.slashSkillSuggestions.map(\.name), ["first"])
     }

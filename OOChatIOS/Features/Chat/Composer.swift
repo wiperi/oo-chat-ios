@@ -23,6 +23,9 @@ struct Composer: View {
         .onChange(of: viewModel.prompt) {
             viewModel.promptDidChange()
         }
+        .onChange(of: viewModel.activeConversationID) {
+            isPromptFocused = viewModel.activeConversationID != nil
+        }
         .onAppear {
             viewModel.prefetchActiveAgentSkills()
         }

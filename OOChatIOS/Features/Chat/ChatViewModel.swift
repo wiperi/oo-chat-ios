@@ -88,7 +88,14 @@ final class ChatViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var connectionFailureMessage: String?
     @Published var agentAddressDraft = ""
-    @Published var prompt = ""
+    @Published var prompt = "" {
+        didSet {
+            guard !isRestoringConversationDraft, let activeConversationID else {
+                return
+            }
+            draftsByConversationID[activeConversationID] = prompt
+        }
+    }
     @Published private(set) var isOffline = false
     @Published private(set) var isOfflineBannerDismissed = false
     @Published private var connectionStatesByConversationID: [String: ConnectionState] = [:]
@@ -105,6 +112,8 @@ final class ChatViewModel: ObservableObject {
     private var deliveryTasksByConversationID: [String: Task<Void, Never>] = [:]
     private var activeMessageIDsByConversationID: [String: String] = [:]
     private var pausedConversationIDs: Set<String> = []
+    private var draftsByConversationID: [String: String] = [:]
+    private var isRestoringConversationDraft = false
     private(set) var recoveryTask: Task<Void, Never>?
     private(set) var probeTask: Task<Void, Never>?
     private var skillFetchTasks: [String: Task<Void, Never>] = [:]
@@ -116,9 +125,9 @@ final class ChatViewModel: ObservableObject {
         cancellationDecision: .requestChanges(feedback: "Plan review cancelled."),
         unavailableDecision: .requestChanges(feedback: "Plan review unavailable.")
     )
-    private let askUserGate = ContinuationGate<String>(
-        cancellationDecision: "",
-        unavailableDecision: ""
+    private let askUserGate = ContinuationGate<AskUserDecision>(
+        cancellationDecision: .cancel,
+        unavailableDecision: .cancel
     )
 
     /// Seconds between silent reachability probes while offline. Overridable in tests.
@@ -322,16 +331,16 @@ final class ChatViewModel: ObservableObject {
         activeAgentID = agent.id
         agentAddressDraft = agent.address
         if let activeConversation, !conversationBelongsToAgent(activeConversation, agent) {
-            activeConversationID = conversations(for: agent).first?.id
+            activateConversation(withID: conversations(for: agent).first?.id)
         } else if activeConversation == nil {
-            activeConversationID = conversations(for: agent).first?.id
+            activateConversation(withID: conversations(for: agent).first?.id)
         }
         persist()
         loadSkillsIfNeeded(for: agent)
     }
 
     func selectConversation(_ conversation: Conversation) {
-        activeConversationID = conversation.id
+        activateConversation(withID: conversation.id)
         if let agent = agent(for: conversation) {
             activeAgentID = agent.id
             agentAddressDraft = agent.address
@@ -352,7 +361,7 @@ final class ChatViewModel: ObservableObject {
         conversation.title = "New mobile session"
         conversations.insert(conversation, at: 0)
         activeAgentID = agent.id
-        activeConversationID = conversation.id
+        activateConversation(withID: conversation.id)
         connectionStatesByConversationID[conversation.id] = .disconnected
         agentAddressDraft = agent.address
         store.upsertConversation(conversation)
@@ -411,7 +420,7 @@ final class ChatViewModel: ObservableObject {
         activeAgentID = agent.id
         agentAddressDraft = agent.address
         if let conversation = conversations(for: agent).first {
-            activeConversationID = conversation.id
+            activateConversation(withID: conversation.id)
             persist()
         } else {
             _ = createConversation(for: agent)
@@ -444,11 +453,12 @@ final class ChatViewModel: ObservableObject {
         conversations.removeAll { $0.id == conversation.id }
         if activeConversationID == conversation.id {
             if let activeAgent {
-                activeConversationID = conversations(for: activeAgent).first?.id
+                activateConversation(withID: conversations(for: activeAgent).first?.id)
             } else {
-                activeConversationID = nil
+                activateConversation(withID: nil)
             }
         }
+        draftsByConversationID[conversation.id] = nil
         store.deleteConversation(id: conversation.id)
         persist()
     }
@@ -469,10 +479,13 @@ final class ChatViewModel: ObservableObject {
         }
         if let activeConversationID, deletedConversationIDs.contains(activeConversationID) {
             if let activeAgent {
-                self.activeConversationID = conversations(for: activeAgent).first?.id
+                activateConversation(withID: conversations(for: activeAgent).first?.id)
             } else {
-                self.activeConversationID = nil
+                activateConversation(withID: nil)
             }
+        }
+        for conversationID in deletedConversationIDs {
+            draftsByConversationID[conversationID] = nil
         }
         deletedConversationIDs.forEach { store.deleteConversation(id: $0) }
         store.deleteAgent(id: agent.id)
@@ -979,7 +992,7 @@ final class ChatViewModel: ObservableObject {
         pendingAskUsersByConversationID[conversationID] = nil
         askUserGate.resolve(
             id: Self.interactionGateID(conversationID: conversationID, interactionID: id),
-            with: answer
+            with: .answer(answer)
         )
     }
 
@@ -1025,7 +1038,7 @@ final class ChatViewModel: ObservableObject {
         if let pending = pendingAskUsersByConversationID.removeValue(forKey: conversationID) {
             askUserGate.resolve(
                 id: Self.interactionGateID(conversationID: conversationID, interactionID: pending.id),
-                with: ""
+                with: .cancel
             )
         }
         deliveryTasksByConversationID[conversationID]?.cancel()
@@ -1050,7 +1063,7 @@ final class ChatViewModel: ObservableObject {
         if let request = pendingAskUsersByConversationID.removeValue(forKey: conversationID) {
             askUserGate.resolve(
                 id: Self.interactionGateID(conversationID: conversationID, interactionID: request.id),
-                with: ""
+                with: .cancel
             )
             settledInteraction = true
         }
@@ -1173,7 +1186,7 @@ final class ChatViewModel: ObservableObject {
             }
             existing.agentID = agent.id
             existing.agentAddress = agent.address
-            activeConversationID = existing.id
+            activateConversation(withID: existing.id)
             upsert(existing)
             return
         }
@@ -1182,7 +1195,7 @@ final class ChatViewModel: ObservableObject {
         conversation.agentID = agent.id
         conversation.agentAddress = agent.address
         conversations.insert(conversation, at: 0)
-        activeConversationID = conversation.id
+        activateConversation(withID: conversation.id)
         store.upsertConversation(conversation)
         persist()
     }
@@ -1222,6 +1235,19 @@ final class ChatViewModel: ObservableObject {
 
     private func connectionState(forConversationID conversationID: String) -> ConnectionState {
         connectionStatesByConversationID[conversationID] ?? .disconnected
+    }
+
+    private func activateConversation(withID conversationID: String?) {
+        guard activeConversationID != conversationID else {
+            return
+        }
+        if let activeConversationID {
+            draftsByConversationID[activeConversationID] = prompt
+        }
+        activeConversationID = conversationID
+        isRestoringConversationDraft = true
+        prompt = conversationID.flatMap { draftsByConversationID[$0] } ?? ""
+        isRestoringConversationDraft = false
     }
 
     private static func interactionGateID(conversationID: String, interactionID: String) -> String {
