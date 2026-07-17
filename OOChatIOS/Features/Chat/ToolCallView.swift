@@ -101,20 +101,26 @@ struct ToolCallView: View {
                 .truncationMode(.middle)
         } else {
             VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 5) {
+                if toolState == .completed {
                     Text(toolTitle)
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
+                } else {
+                    HStack(spacing: 5) {
+                        Text(toolTitle)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
 
-                    Text("·")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
+                        Text("·")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
 
-                    Text(statusLabel)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(statusTint)
+                        Text(statusLabel)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(statusTint)
+                    }
+                    .lineLimit(1)
                 }
-                .lineLimit(1)
 
                 Text(summary)
                     .font(.subheadline.weight(.medium))
@@ -145,8 +151,8 @@ struct ToolCallView: View {
     private var statusIcon: some View {
         ToolCallStatusIcon(
             state: toolState,
-            size: iconSize,
-            cornerRadius: ToolCallMetrics.iconCornerRadius
+            completedSystemName: ToolCallIconography.systemName(for: message),
+            size: iconSize
         )
     }
 
@@ -166,7 +172,7 @@ struct ToolCallView: View {
         case .running:
             return AppTheme.primary
         case .completed:
-            return .green
+            return Color(.secondaryLabel)
         case .failed:
             return AppTheme.destructive
         }
@@ -283,8 +289,8 @@ struct ToolCallGroupView: View {
     private var groupStatusIcon: some View {
         ToolCallStatusIcon(
             state: aggregateState,
-            size: ToolCallGroupMetrics.iconSize,
-            cornerRadius: ToolCallGroupMetrics.iconCornerRadius
+            completedSystemName: ToolCallIconography.systemName(for: messages.first),
+            size: ToolCallGroupMetrics.iconSize
         )
     }
 
@@ -311,43 +317,60 @@ struct ToolCallGroupView: View {
 
 private struct ToolCallStatusIcon: View {
     let state: ToolCallState
+    let completedSystemName: String
     let size: CGFloat
-    let cornerRadius: CGFloat
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .fill(tint.opacity(0.11))
-
-            switch state {
-            case .running:
-                ProgressView()
-                    .controlSize(.small)
-                    .tint(tint)
-            case .completed:
-                Image(systemName: "checkmark")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(tint)
-            case .failed:
-                Image(systemName: "exclamationmark")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(tint)
-            }
+            statusGlyph
+                .id(state.rawValue)
+                .transition(.opacity)
         }
         .frame(width: size, height: size)
-        .transition(.scale(scale: 0.88).combined(with: .opacity))
+        .animation(.easeOut(duration: 0.16), value: state.rawValue)
         .accessibilityHidden(true)
     }
 
-    private var tint: Color {
+    @ViewBuilder
+    private var statusGlyph: some View {
         switch state {
         case .running:
-            return AppTheme.primary
+            ProgressView()
+                .controlSize(.small)
+                .tint(AppTheme.primary)
         case .completed:
-            return .green
+            Image(systemName: completedSystemName)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(Color(.secondaryLabel))
         case .failed:
-            return AppTheme.destructive
+            Image(systemName: "exclamationmark.circle.fill")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(AppTheme.destructive)
         }
+    }
+}
+
+private enum ToolCallIconography {
+    static func systemName(for message: ChatMessage?) -> String {
+        let name = (message?.toolName ?? "").lowercased()
+
+        if name.contains("edit") || name.contains("patch") || name.contains("write") {
+            return "pencil"
+        }
+        if name.contains("read") {
+            return "doc.text"
+        }
+        if name.contains("command") || name.contains("exec") || name.contains("shell")
+            || name.contains("bash") || name.contains("terminal") {
+            return "terminal"
+        }
+        if name.contains("search") || name.contains("find") || name.contains("grep") {
+            return "magnifyingglass"
+        }
+        if name.contains("list") || name.contains("glob") {
+            return "folder"
+        }
+        return "wrench.and.screwdriver"
     }
 }
 
@@ -478,7 +501,6 @@ private enum ToolCallMetrics {
     static let chevronWidth: CGFloat = 16
     static let iconSize: CGFloat = 28
     static let groupedIconSize: CGFloat = 24
-    static let iconCornerRadius: CGFloat = 8
     static let detailSpacing: CGFloat = 12
     static let detailPadding: CGFloat = 12
     static let detailVerticalPadding: CGFloat = 10
@@ -495,7 +517,6 @@ private enum ToolCallGroupMetrics {
     static let minimumTrailingSpacing: CGFloat = 8
     static let chevronWidth: CGFloat = 16
     static let iconSize: CGFloat = 28
-    static let iconCornerRadius: CGFloat = 8
     static let dividerInset: CGFloat = headerHorizontalPadding + iconSize + headerSpacing
     static let itemDividerInset: CGFloat = 24 + ToolCallMetrics.headerSpacing
     static let contentHorizontalPadding: CGFloat = 12

@@ -21,6 +21,7 @@ struct AgentFormDraft: Identifiable {
 }
 
 struct AgentFormView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var draft: AgentFormDraft
     @State private var validationMessage: String?
     @State private var isPresentingScanner = false
@@ -65,6 +66,7 @@ struct AgentFormView: View {
                         Text(validationMessage)
                             .font(.footnote)
                             .foregroundStyle(.red)
+                            .transition(AppMotion.materialize(reduceMotion: reduceMotion, edge: .top))
                     }
                     SecureField("Token (stored only)", text: $draft.token)
                         .textInputAutocapitalization(.never)
@@ -74,6 +76,10 @@ struct AgentFormView: View {
                         .foregroundStyle(.secondary)
                 }
                 .listRowBackground(Color(.secondarySystemGroupedBackground))
+                .animation(
+                    AppMotion.contentArrival(reduceMotion: reduceMotion),
+                    value: validationMessage
+                )
             }
             .scrollContentBackground(.hidden)
             .background(Color(.systemGroupedBackground))

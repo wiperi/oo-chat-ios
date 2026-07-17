@@ -17,7 +17,7 @@ struct ErrorBanner: View {
                     Image(systemName: "xmark.circle.fill")
                         .imageScale(.medium)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(AppPressButtonStyle())
                 .accessibilityLabel("Close error")
             }
             .padding(.horizontal, 14)

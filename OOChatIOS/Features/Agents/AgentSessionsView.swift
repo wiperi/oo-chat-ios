@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AgentSessionsView<Model: AgentsFeatureModel>: View {
     @ObservedObject var viewModel: Model
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let agentID: String
     let switchToChat: () -> Void
 
@@ -57,13 +58,22 @@ struct AgentSessionsView<Model: AgentsFeatureModel>: View {
                                 }
                             }
                         } label: {
-                            HStack {
-                                if viewModel.isConnecting {
-                                    ProgressView()
-                                }
+                            HStack(spacing: 8) {
                                 Label("Connect", systemImage: "bolt.horizontal.circle")
                                     .fontWeight(.semibold)
+
+                                ZStack {
+                                    if viewModel.isConnecting {
+                                        ProgressView()
+                                            .transition(connectingIndicatorTransition)
+                                    }
+                                }
+                                .frame(width: 20, height: 20)
                             }
+                            .animation(
+                                AppMotion.stateChange(reduceMotion: reduceMotion),
+                                value: viewModel.isConnecting
+                            )
                         }
                         .foregroundStyle(AppTheme.primary)
                         .disabled(viewModel.isConnecting)
@@ -175,6 +185,12 @@ struct AgentSessionsView<Model: AgentsFeatureModel>: View {
 
     private var isDeleting: Binding<Bool> {
         Binding(get: { deleteTarget != nil }, set: { if !$0 { deleteTarget = nil } })
+    }
+
+    private var connectingIndicatorTransition: AnyTransition {
+        reduceMotion
+            ? .opacity
+            : .opacity.combined(with: .scale(scale: 0.985))
     }
 }
 

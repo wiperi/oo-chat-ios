@@ -2,6 +2,7 @@ import SwiftUI
 // Sidebar view for the chat shell.
 struct ChatSidebarView: View {
     @ObservedObject var viewModel: ChatViewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let safeAreaInsets: EdgeInsets
     let selection: ChatSidebarSelection?
     let onSelectConversation: (Conversation) -> Void
@@ -103,6 +104,10 @@ struct ChatSidebarView: View {
         .listSectionSpacing(.compact)
         .scrollContentBackground(.hidden)
         .environment(\.defaultMinListRowHeight, SidebarMetrics.minimumRowHeight)
+        .animation(
+            AppMotion.stateChange(reduceMotion: reduceMotion),
+            value: expandedAgentIDs
+        )
     }
 
     private var header: some View {
@@ -215,12 +220,14 @@ struct ChatSidebarView: View {
                 Text("No chat sessions")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                    .transition(AppMotion.disclosure(reduceMotion: reduceMotion))
                     .listRowInsets(SidebarMetrics.emptySessionRowInsets)
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
             } else {
                 ForEach(conversations) { conversation in
                     conversationButton(conversation)
+                        .transition(AppMotion.disclosure(reduceMotion: reduceMotion))
                 }
             }
         }
@@ -228,21 +235,17 @@ struct ChatSidebarView: View {
 
     private func agentRow(for agent: AgentConnection) -> some View {
         let isOnline = viewModel.isAgentOnline(agent)
-        return HStack(spacing: SidebarMetrics.agentRowSpacing) {
-            Button {
-                toggleAgent(agent)
-            } label: {
-                Image(systemName: expandedAgentIDs.contains(agent.id) ? "chevron.down" : "chevron.forward")
+        return Button {
+            toggleAgent(agent)
+        } label: {
+            HStack(spacing: SidebarMetrics.agentRowSpacing) {
+                Image(systemName: "chevron.forward")
                     .imageScale(.small)
                     .fontWeight(.semibold)
                     .foregroundStyle(.secondary)
                     .frame(width: SidebarMetrics.chevronWidth, height: SidebarMetrics.agentRowHeight)
-            }
-            .buttonStyle(.plain)
+                    .rotationEffect(.degrees(expandedAgentIDs.contains(agent.id) ? 90 : 0))
 
-            Button {
-                toggleAgent(agent)
-            } label: {
                 HStack(spacing: SidebarMetrics.agentAvatarSpacing) {
                     Text(agentInitial(for: agent))
                         .font(.subheadline.weight(.semibold))
@@ -265,9 +268,9 @@ struct ChatSidebarView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .buttonStyle(.plain)
+            .contentShape(Rectangle())
         }
-        .contentShape(Rectangle())
+        .buttonStyle(AppPressButtonStyle(pressedScale: 0.985, pressedOpacity: 0.90))
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             Button {
                 focusedAgentID = agent.id
@@ -352,10 +355,12 @@ struct ChatSidebarView: View {
 
     private func toggleAgent(_ agent: AgentConnection) {
         focusedAgentID = agent.id
-        if expandedAgentIDs.contains(agent.id) {
-            expandedAgentIDs.remove(agent.id)
-        } else {
-            expandedAgentIDs.insert(agent.id)
+        withAnimation(AppMotion.stateChange(reduceMotion: reduceMotion)) {
+            if expandedAgentIDs.contains(agent.id) {
+                expandedAgentIDs.remove(agent.id)
+            } else {
+                expandedAgentIDs.insert(agent.id)
+            }
         }
     }
 

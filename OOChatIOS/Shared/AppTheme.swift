@@ -65,15 +65,15 @@ enum AppTheme {
 enum AppMotion {
     static let press = Animation.easeOut(duration: 0.12)
 
-    static func drawer(reduceMotion: Bool) -> Animation {
+    static func drawer(reduceMotion: Bool) -> Animation? {
         reduceMotion
-            ? .easeOut(duration: 0.18)
+            ? nil
             : .spring(response: 0.32, dampingFraction: 0.84, blendDuration: 0.12)
     }
 
-    static func stateChange(reduceMotion: Bool) -> Animation {
+    static func stateChange(reduceMotion: Bool) -> Animation? {
         reduceMotion
-            ? .easeOut(duration: 0.16)
+            ? nil
             : .spring(response: 0.30, dampingFraction: 0.96)
     }
 
@@ -95,17 +95,28 @@ enum AppMotion {
             removal: .opacity
         )
     }
+
+    static func disclosure(reduceMotion: Bool) -> AnyTransition {
+        guard !reduceMotion else {
+            return .opacity
+        }
+
+        return .opacity
+            .combined(with: .scale(scale: 0.99, anchor: .top))
+            .combined(with: .offset(x: 0, y: -6))
+    }
 }
 
 struct AppPressButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var pressedScale: CGFloat = 0.97
     var pressedOpacity: Double = 0.82
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed ? pressedScale : 1)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? pressedScale : 1)
             .opacity(isEnabled ? (configuration.isPressed ? pressedOpacity : 1) : 0.38)
             .animation(AppMotion.press, value: configuration.isPressed)
             .animation(AppMotion.press, value: isEnabled)

@@ -252,7 +252,11 @@ struct Composer: View {
                 Image(systemName: "checkmark")
                     .font(.body.weight(.semibold))
                     .foregroundStyle(AppTheme.primary)
-                    .transition(.scale(scale: 0.92).combined(with: .opacity))
+                    .transition(
+                        reduceMotion
+                            ? .opacity
+                            : .scale(scale: 0.92).combined(with: .opacity)
+                    )
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -331,10 +335,12 @@ private enum ComposerMetrics {
 }
 
 private struct SkillSuggestionButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .background(configuration.isPressed ? Color(.tertiarySystemFill) : Color.clear)
-            .scaleEffect(configuration.isPressed ? 0.99 : 1)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.99 : 1)
             .animation(AppMotion.press, value: configuration.isPressed)
     }
 }

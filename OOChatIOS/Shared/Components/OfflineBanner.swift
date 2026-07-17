@@ -13,7 +13,7 @@ struct OfflineBanner: View {
                 onRetry()
             }
             .font(.footnote.weight(.bold))
-            .buttonStyle(.plain)
+            .buttonStyle(AppPressButtonStyle())
             .accessibilityLabel("Retry connection")
             Button {
                 onDismiss()
@@ -21,7 +21,7 @@ struct OfflineBanner: View {
                 Image(systemName: "xmark.circle.fill")
                     .imageScale(.medium)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(AppPressButtonStyle())
             .accessibilityLabel("Dismiss offline banner")
         }
         .padding(.horizontal, 14)
