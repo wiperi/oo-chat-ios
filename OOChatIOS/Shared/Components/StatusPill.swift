@@ -7,11 +7,12 @@ struct StatusPill: View {
         HStack(spacing: 5) {
             Circle()
                 .fill(statusColor)
-                .frame(width: 8, height: 8)
+                .frame(width: 6, height: 6)
 
             Text(label)
+                .lineLimit(1)
         }
-        .font(.subheadline)
+        .font(.caption)
         .foregroundStyle(statusColor)
         .accessibilityLabel("Connection status: \(label)")
     }

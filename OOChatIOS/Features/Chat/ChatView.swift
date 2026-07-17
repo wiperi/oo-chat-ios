@@ -19,6 +19,7 @@ struct ChatView: View {
 struct ChatScreen: View {
     @ObservedObject var viewModel: ChatViewModel
     let onOpenSidebar: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private let bottomAnchorID = "chat.bottomAnchor"
 
     var body: some View {
@@ -33,6 +34,7 @@ struct ChatScreen: View {
                                         viewModel.retryMessage(message)
                                     }
                                     .id(message.id)
+                                    .transition(AppMotion.materialize(reduceMotion: reduceMotion))
                                 }
                             }
 
@@ -49,7 +51,7 @@ struct ChatScreen: View {
                                     viewModel.explainPendingApproval(id: approval.id)
                                 }
                                 .id("pendingApproval")
-                                .transition(.opacity)
+                                .transition(AppMotion.materialize(reduceMotion: reduceMotion))
                             }
 
                             if let checkpoint = viewModel.activePendingUlwCheckpoint {
@@ -61,7 +63,7 @@ struct ChatScreen: View {
                                     viewModel.switchModeFromUlwCheckpoint(id: checkpoint.id, to: .safe)
                                 }
                                 .id("pendingUlwCheckpoint")
-                                .transition(.opacity)
+                                .transition(AppMotion.materialize(reduceMotion: reduceMotion))
                             }
 
                             if let review = viewModel.activePendingPlanReview {
@@ -71,7 +73,7 @@ struct ChatScreen: View {
                                     viewModel.requestPlanChanges(id: review.id, feedback: feedback)
                                 }
                                 .id("pendingPlanReview")
-                                .transition(.opacity)
+                                .transition(AppMotion.materialize(reduceMotion: reduceMotion))
                             }
 
                             if let pending = viewModel.activePendingAskUser {
@@ -79,14 +81,24 @@ struct ChatScreen: View {
                                     viewModel.answerPendingAskUser(id: pending.id, answer: answer)
                                 }
                                 .id("pendingAskUser")
-                                .transition(.opacity)
+                                .transition(AppMotion.materialize(reduceMotion: reduceMotion))
                             }
                             Color.clear
                                 .frame(height: 1)
                                 .id(bottomAnchorID)
                         }
+                        .id(conversation.id)
+                        .transition(conversationTransition)
                         .padding(.horizontal)
                         .padding(.vertical, 16)
+                        .animation(
+                            AppMotion.contentArrival(reduceMotion: reduceMotion),
+                            value: conversation.messages.map(\.id)
+                        )
+                        .animation(
+                            AppMotion.contentArrival(reduceMotion: reduceMotion),
+                            value: viewModel.pendingInteractionID
+                        )
                     }
                     .scrollDismissesKeyboard(.interactively)
                     .onAppear {
@@ -97,7 +109,7 @@ struct ChatScreen: View {
                     }
                     .onChange(of: viewModel.pendingInteractionID) {
                         if let interactionID = viewModel.pendingInteractionID {
-                            withAnimation {
+                            withAnimation(AppMotion.contentArrival(reduceMotion: reduceMotion)) {
                                 proxy.scrollTo(scrollTarget(for: interactionID), anchor: .bottom)
                             }
                         }
@@ -124,9 +136,28 @@ struct ChatScreen: View {
                     Text(viewModel.activeConversation?.title ?? "Chat")
                         .font(.headline)
                         .lineLimit(1)
+                        .contentTransition(.opacity)
 
-                    StatusPill(state: viewModel.connectionState)
+                    HStack(spacing: 5) {
+                        if let agentName = viewModel.activeAgent?.name {
+                            Text(agentName)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+
+                            Text("·")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
+
+                        StatusPill(state: viewModel.connectionState)
+                    }
+                    .contentTransition(.opacity)
                 }
+                .animation(
+                    AppMotion.stateChange(reduceMotion: reduceMotion),
+                    value: viewModel.activeConversationID
+                )
             }
 
             ToolbarItem(placement: .topBarLeading) {
@@ -214,12 +245,23 @@ struct ChatScreen: View {
     private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool = true) {
         DispatchQueue.main.async {
             if animated {
-                withAnimation(.easeOut(duration: 0.2)) {
+                withAnimation(AppMotion.stateChange(reduceMotion: reduceMotion)) {
                     proxy.scrollTo(bottomAnchorID, anchor: .bottom)
                 }
             } else {
                 proxy.scrollTo(bottomAnchorID, anchor: .bottom)
             }
         }
+    }
+
+    private var conversationTransition: AnyTransition {
+        guard !reduceMotion else {
+            return .opacity
+        }
+
+        return .asymmetric(
+            insertion: .opacity.combined(with: .offset(x: 10, y: 0)),
+            removal: .opacity
+        )
     }
 }

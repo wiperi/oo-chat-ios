@@ -3,6 +3,8 @@ import UIKit
 
 struct ChatShellView: View {
     @ObservedObject var viewModel: ChatViewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var isSidebarOpen = false
     @State private var dragOffset: CGFloat = 0
     @State private var activeContent: SidebarContent = .chat
@@ -42,6 +44,8 @@ struct ChatShellView: View {
                     }
                 )
                 .frame(width: drawerWidth)
+                .offset(x: reduceMotion ? 0 : -SidebarShellMetrics.sidebarParallax * (1 - progress))
+                .opacity(reduceMotion ? 1 : SidebarShellMetrics.sidebarRestingOpacity + ((1 - SidebarShellMetrics.sidebarRestingOpacity) * progress))
                 .zIndex(0)
 
                 contentView(for: activeContent)
@@ -75,8 +79,11 @@ struct ChatShellView: View {
                 }
 
                 if isSidebarOpen {
-                    Color.clear
-                        .frame(width: proxy.size.width - contentOffset, height: proxy.size.height)
+                    Color.black.opacity(
+                        (reduceTransparency ? SidebarShellMetrics.reducedTransparencyScrimOpacity : SidebarShellMetrics.scrimOpacity)
+                            * progress
+                    )
+                        .frame(width: max(0, proxy.size.width - contentOffset), height: proxy.size.height)
                         .contentShape(Rectangle())
                         .offset(x: contentOffset)
                         .onTapGesture {
@@ -137,7 +144,7 @@ struct ChatShellView: View {
     }
 
     private func showContent(_ content: SidebarContent) {
-        withAnimation(.spring(response: 0.30, dampingFraction: 0.90)) {
+        withAnimation(AppMotion.stateChange(reduceMotion: reduceMotion)) {
             activeContent = content
             isSidebarOpen = false
             dragOffset = 0
@@ -172,14 +179,14 @@ struct ChatShellView: View {
             return
         }
 
-        withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+        withAnimation(AppMotion.drawer(reduceMotion: reduceMotion)) {
             isSidebarOpen = true
             dragOffset = 0
         }
     }
 
     private func closeSidebar() {
-        withAnimation(.spring(response: 0.30, dampingFraction: 0.90)) {
+        withAnimation(AppMotion.drawer(reduceMotion: reduceMotion)) {
             isSidebarOpen = false
             dragOffset = 0
         }
@@ -187,14 +194,22 @@ struct ChatShellView: View {
 
     private func contentOffset(openOffset: CGFloat) -> CGFloat {
         let baseOffset = isSidebarOpen ? openOffset : CGFloat.zero
-        return min(openOffset, max(0, baseOffset + dragOffset))
+        let rawOffset = baseOffset + dragOffset
+
+        if rawOffset < 0 {
+            return -rubberBand(-rawOffset, dimension: openOffset)
+        }
+        if rawOffset > openOffset {
+            return openOffset + rubberBand(rawOffset - openOffset, dimension: openOffset)
+        }
+        return rawOffset
     }
 
     private func sidebarProgress(openOffset: CGFloat) -> CGFloat {
         guard openOffset > 0 else {
             return 0
         }
-        return contentOffset(openOffset: openOffset) / openOffset
+        return min(1, max(0, contentOffset(openOffset: openOffset) / openOffset))
     }
 
     private var canOpenSidebar: Bool {
@@ -244,11 +259,19 @@ struct ChatShellView: View {
                         && value.predictedEndTranslation.width > openOffset * SidebarShellMetrics.openThreshold
                 }
 
-                withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                withAnimation(AppMotion.drawer(reduceMotion: reduceMotion)) {
                     isSidebarOpen = shouldOpen
                     dragOffset = 0
                 }
             }
+    }
+
+    private func rubberBand(_ overshoot: CGFloat, dimension: CGFloat) -> CGFloat {
+        guard dimension > 0 else {
+            return 0
+        }
+        let constant = SidebarShellMetrics.rubberBandConstant
+        return (overshoot * dimension * constant) / (dimension + (constant * overshoot))
     }
 
     private var windowSafeAreaInsets: EdgeInsets {
@@ -286,8 +309,13 @@ private enum SidebarShellMetrics {
     static let shadowOpacity: Double = 0.08
     static let shadowRadius: CGFloat = 16
     static let shadowOffset = CGSize(width: -2, height: 0)
+    static let sidebarParallax: CGFloat = 18
+    static let sidebarRestingOpacity: Double = 0.86
+    static let scrimOpacity: Double = 0.025
+    static let reducedTransparencyScrimOpacity: Double = 0.05
     static let dragMinimumDistance: CGFloat = 16
     static let openEdgeWidth: CGFloat = 24
     static let closeThreshold: CGFloat = 0.40
     static let openThreshold: CGFloat = 0.33
+    static let rubberBandConstant: CGFloat = 0.42
 }

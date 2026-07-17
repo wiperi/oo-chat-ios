@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ToolCallView: View {
     let message: ChatMessage
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isExpanded = false
 
     var body: some View {
@@ -24,6 +25,7 @@ struct ToolCallView: View {
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 10)
+                .transition(AppMotion.materialize(reduceMotion: reduceMotion))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -40,7 +42,7 @@ struct ToolCallView: View {
 
     private var headerButton: some View {
         Button {
-            withAnimation(.easeInOut(duration: 0.18)) {
+            withAnimation(AppMotion.stateChange(reduceMotion: reduceMotion)) {
                 isExpanded.toggle()
             }
         } label: {
@@ -65,13 +67,14 @@ struct ToolCallView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .frame(width: 16)
+                    .contentTransition(.symbolEffect(.replace))
                     .accessibilityHidden(true)
             }
             .contentShape(Rectangle())
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(AppPressButtonStyle(pressedScale: 0.99, pressedOpacity: 0.88))
         .accessibilityLabel("Tool call: \(message.toolName ?? "Tool")")
         .accessibilityValue("\(statusLabel), \(isExpanded ? "expanded" : "collapsed")")
     }

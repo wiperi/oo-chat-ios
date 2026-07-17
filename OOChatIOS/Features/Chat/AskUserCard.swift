@@ -72,7 +72,7 @@ struct AskUserCard: View {
                             in: RoundedRectangle(cornerRadius: 12, style: .continuous)
                         )
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(AppPressButtonStyle(pressedScale: 0.985, pressedOpacity: 0.86))
                 .accessibilityIdentifier("askUser.option.\(request.id).\(index)")
             }
         }
@@ -102,7 +102,7 @@ struct AskUserCard: View {
                         in: RoundedRectangle(cornerRadius: 12, style: .continuous)
                     )
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(AppPressButtonStyle(pressedScale: 0.985, pressedOpacity: 0.86))
                 .accessibilityIdentifier("askUser.multiOption.\(request.id).\(index)")
             }
 
@@ -169,7 +169,7 @@ struct AskUserCard: View {
                     in: RoundedRectangle(cornerRadius: 12, style: .continuous)
                 )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(AppPressButtonStyle(pressedScale: 0.98, pressedOpacity: 0.88))
         .accessibilityIdentifier("askUser.submit.\(request.id)")
     }
 

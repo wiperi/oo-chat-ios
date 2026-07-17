@@ -2,6 +2,7 @@ import SwiftUI
 // Handle the chat input, mode selection and send button.
 struct Composer: View {
     @ObservedObject var viewModel: ChatViewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var isPromptFocused: Bool
     @State private var showModeMenu = false
     @State private var sheetHeight: CGFloat = 400
@@ -10,7 +11,7 @@ struct Composer: View {
         VStack(alignment: .leading, spacing: ComposerMetrics.stackSpacing) {
             if viewModel.shouldShowSlashSkillPicker {
                 skillPicker
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .transition(AppMotion.materialize(reduceMotion: reduceMotion))
             }
 
             modeMenu
@@ -20,6 +21,10 @@ struct Composer: View {
         }
         .padding(.horizontal, ComposerMetrics.outerHorizontalPadding)
         .padding(.bottom, ComposerMetrics.outerBottomPadding)
+        .animation(
+            AppMotion.contentArrival(reduceMotion: reduceMotion),
+            value: viewModel.shouldShowSlashSkillPicker
+        )
         .onChange(of: viewModel.prompt) {
             viewModel.promptDidChange()
         }
@@ -142,8 +147,19 @@ struct Composer: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: ComposerMetrics.cornerRadius, style: .continuous)
-                .stroke(Color(.separator).opacity(ComposerMetrics.inputStrokeOpacity), lineWidth: 0.5)
+                .stroke(
+                    isPromptFocused
+                        ? AppTheme.primary.opacity(ComposerMetrics.focusedInputStrokeOpacity)
+                        : Color(.separator).opacity(ComposerMetrics.inputStrokeOpacity),
+                    lineWidth: isPromptFocused ? 1 : 0.5
+                )
         )
+        .shadow(
+            color: AppTheme.primary.opacity(isPromptFocused ? ComposerMetrics.focusedInputShadowOpacity : 0),
+            radius: ComposerMetrics.focusedInputShadowRadius,
+            y: ComposerMetrics.focusedInputShadowYOffset
+        )
+        .animation(AppMotion.press, value: isPromptFocused)
     }
 
     private var modeMenu: some View {
@@ -170,7 +186,7 @@ struct Composer: View {
                     .stroke(Color(.separator).opacity(ComposerMetrics.modeStrokeOpacity), lineWidth: 0.5)
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(AppPressButtonStyle(pressedScale: 0.96, pressedOpacity: 0.88))
         .disabled(viewModel.activeConversation == nil || viewModel.isProcessing)
         .accessibilityLabel("Chat mode: \(viewModel.activeMode.label)")
         .sheet(isPresented: $showModeMenu) {
@@ -196,7 +212,7 @@ struct Composer: View {
                 } label: {
                     modeRow(for: mode)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(AppPressButtonStyle(pressedScale: 0.985, pressedOpacity: 0.86))
             }
         }
         .padding(.top, 12)
@@ -236,6 +252,7 @@ struct Composer: View {
                 Image(systemName: "checkmark")
                     .font(.body.weight(.semibold))
                     .foregroundStyle(AppTheme.primary)
+                    .transition(.scale(scale: 0.92).combined(with: .opacity))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -262,7 +279,9 @@ struct Composer: View {
                     interactive: true,
                     tint: AppTheme.primary
                 )
+                .contentTransition(.symbolEffect(.replace))
         }
+        .buttonStyle(AppPressButtonStyle(pressedScale: 0.92, pressedOpacity: 0.90))
         .disabled(
             !viewModel.isProcessing
                 && viewModel.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -283,6 +302,10 @@ private enum ComposerMetrics {
     static let inputSpacing: CGFloat = 10
     static let inputVerticalPadding: CGFloat = 2
     static let inputStrokeOpacity: Double = 0.10
+    static let focusedInputStrokeOpacity: Double = 0.32
+    static let focusedInputShadowOpacity: Double = 0.08
+    static let focusedInputShadowRadius: CGFloat = 10
+    static let focusedInputShadowYOffset: CGFloat = 2
     static let modeLeadingPadding: CGFloat = 8
     static let modeHorizontalPadding: CGFloat = 10
     static let modeVerticalPadding: CGFloat = 5
@@ -311,7 +334,8 @@ private struct SkillSuggestionButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .background(configuration.isPressed ? Color(.tertiarySystemFill) : Color.clear)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .scaleEffect(configuration.isPressed ? 0.99 : 1)
+            .animation(AppMotion.press, value: configuration.isPressed)
     }
 }
 

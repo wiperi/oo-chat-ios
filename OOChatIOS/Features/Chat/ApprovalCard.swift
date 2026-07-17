@@ -7,6 +7,7 @@ struct ApprovalCard: View {
     var onReject: () -> Void
     var onStop: () -> Void
     var onExplain: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isCommandExpanded = false
     private static let commandArgumentKeys: Set<String> = ["cmd", "command", "script"]
 
@@ -56,13 +57,13 @@ struct ApprovalCard: View {
     private var header: some View {
         if commandArgument != nil {
             Button {
-                withAnimation(.easeInOut(duration: 0.18)) {
+                withAnimation(AppMotion.stateChange(reduceMotion: reduceMotion)) {
                     isCommandExpanded.toggle()
                 }
             } label: {
                 headerContent
             }
-            .buttonStyle(.plain)
+            .buttonStyle(AppPressButtonStyle(pressedScale: 0.99, pressedOpacity: 0.88))
             .accessibilityValue(isCommandExpanded ? "expanded" : "collapsed")
         } else {
             headerContent
@@ -140,6 +141,7 @@ struct ApprovalCard: View {
                 Color(.tertiarySystemBackground),
                 in: RoundedRectangle(cornerRadius: 16, style: .continuous)
             )
+            .transition(AppMotion.materialize(reduceMotion: reduceMotion))
         }
     }
 
@@ -157,6 +159,7 @@ struct ApprovalCard: View {
                     Color(.tertiarySystemBackground),
                     in: RoundedRectangle(cornerRadius: 16, style: .continuous)
                 )
+                .transition(AppMotion.materialize(reduceMotion: reduceMotion))
         }
     }
 
@@ -175,7 +178,7 @@ struct ApprovalCard: View {
                         in: RoundedRectangle(cornerRadius: 16, style: .continuous)
                     )
             }
-            .buttonStyle(.plain)
+            .buttonStyle(AppPressButtonStyle(pressedScale: 0.98, pressedOpacity: 0.88))
             .accessibilityIdentifier("approval.allowOnce.\(request.id)")
 
             Button {
@@ -204,7 +207,7 @@ struct ApprovalCard: View {
                     in: RoundedRectangle(cornerRadius: 16, style: .continuous)
                 )
             }
-            .buttonStyle(.plain)
+            .buttonStyle(AppPressButtonStyle(pressedScale: 0.98, pressedOpacity: 0.88))
             .accessibilityIdentifier("approval.trustSession.\(request.id)")
 
             HStack(spacing: 0) {
@@ -217,7 +220,7 @@ struct ApprovalCard: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 9)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(AppPressButtonStyle(pressedScale: 0.97, pressedOpacity: 0.78))
                 .accessibilityIdentifier("approval.reject.\(request.id)")
 
                 Divider()
@@ -232,7 +235,7 @@ struct ApprovalCard: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 9)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(AppPressButtonStyle(pressedScale: 0.97, pressedOpacity: 0.78))
                 .accessibilityIdentifier("approval.stop.\(request.id)")
 
                 Divider()
@@ -247,7 +250,7 @@ struct ApprovalCard: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 9)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(AppPressButtonStyle(pressedScale: 0.97, pressedOpacity: 0.78))
                 .accessibilityIdentifier("approval.explain.\(request.id)")
             }
             .background(

@@ -58,3 +58,56 @@ enum AppTheme {
 
     static let destructive = Color(uiColor: .systemRed)
 }
+
+// A small, shared motion vocabulary keeps the chat workflow cohesive. Springs
+// are reserved for interruptible, spatial changes; frequent press feedback is
+// deliberately short and restrained.
+enum AppMotion {
+    static let press = Animation.easeOut(duration: 0.12)
+
+    static func drawer(reduceMotion: Bool) -> Animation {
+        reduceMotion
+            ? .easeOut(duration: 0.18)
+            : .spring(response: 0.32, dampingFraction: 0.84, blendDuration: 0.12)
+    }
+
+    static func stateChange(reduceMotion: Bool) -> Animation {
+        reduceMotion
+            ? .easeOut(duration: 0.16)
+            : .spring(response: 0.30, dampingFraction: 0.96)
+    }
+
+    static func contentArrival(reduceMotion: Bool) -> Animation {
+        reduceMotion
+            ? .easeOut(duration: 0.16)
+            : .spring(response: 0.32, dampingFraction: 0.94)
+    }
+
+    static func materialize(reduceMotion: Bool, edge: Edge = .bottom) -> AnyTransition {
+        guard !reduceMotion else {
+            return .opacity
+        }
+
+        return .asymmetric(
+            insertion: .opacity
+                .combined(with: .scale(scale: 0.985, anchor: edge == .top ? .top : .bottom))
+                .combined(with: .offset(x: 0, y: edge == .top ? -6 : 6)),
+            removal: .opacity
+        )
+    }
+}
+
+struct AppPressButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    var pressedScale: CGFloat = 0.97
+    var pressedOpacity: Double = 0.82
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? pressedScale : 1)
+            .opacity(isEnabled ? (configuration.isPressed ? pressedOpacity : 1) : 0.38)
+            .animation(AppMotion.press, value: configuration.isPressed)
+            .animation(AppMotion.press, value: isEnabled)
+    }
+}

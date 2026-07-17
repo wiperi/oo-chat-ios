@@ -14,7 +14,8 @@ struct SidebarPressedRowButtonStyle: ButtonStyle {
                 }
             }
             .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed || isHighlighted)
+            .scaleEffect(configuration.isPressed ? 0.985 : 1)
+            .animation(AppMotion.press, value: configuration.isPressed || isHighlighted)
     }
 }
 
@@ -23,9 +24,10 @@ struct SidebarFooterButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .opacity(isEnabled ? (configuration.isPressed ? 0.55 : 1) : 0.35)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
-            .animation(.easeOut(duration: 0.12), value: isEnabled)
+            .scaleEffect(configuration.isPressed ? 0.96 : 1)
+            .opacity(isEnabled ? (configuration.isPressed ? 0.82 : 1) : 0.35)
+            .animation(AppMotion.press, value: configuration.isPressed)
+            .animation(AppMotion.press, value: isEnabled)
     }
 }
 
@@ -47,8 +49,9 @@ struct SidebarConversationButtonStyle: ButtonStyle {
                 }
             }
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .scaleEffect(configuration.isPressed ? 0.985 : 1)
             .opacity(isEnabled ? 1 : 0.45)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
-            .animation(.easeOut(duration: 0.12), value: isSelected)
+            .animation(AppMotion.press, value: configuration.isPressed)
+            .animation(AppMotion.press, value: isSelected)
     }
 }
