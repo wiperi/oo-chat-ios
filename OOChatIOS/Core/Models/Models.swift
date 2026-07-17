@@ -18,6 +18,7 @@ enum ChatMode: String, CaseIterable, Codable, Identifiable, Equatable {
     case safe
     case plan
     case accept = "accept_edits"
+    case ulw
 
     var id: String {
         rawValue
@@ -31,12 +32,10 @@ enum ChatMode: String, CaseIterable, Codable, Identifiable, Equatable {
             return "Plan"
         case .accept:
             return "Accept Edits"
+        case .ulw:
+            return "Ultra Work"
         }
     }
-}
-
-enum ClientSessionMetadata {
-    static let pendingModeChange = "_client_pending_mode_change"
 }
 
 struct AgentConnection: Identifiable, Codable, Equatable {
@@ -165,6 +164,30 @@ struct PendingApproval: Identifiable, Equatable {
     var id: String {
         request.id
     }
+}
+
+struct UlwCheckpointRequest: Identifiable, Equatable {
+    let id: String
+    let turnsUsed: Int
+    let maxTurns: Int
+
+    init(id: String = UUID().uuidString, turnsUsed: Int, maxTurns: Int) {
+        self.id = id
+        self.turnsUsed = turnsUsed
+        self.maxTurns = maxTurns
+    }
+}
+
+enum UlwCheckpointDecision: Equatable {
+    case continueWork(turns: Int)
+    case switchMode(ChatMode)
+}
+
+struct PendingUlwCheckpoint: Identifiable, Equatable {
+    let conversationID: String
+    let request: UlwCheckpointRequest
+
+    var id: String { request.id }
 }
 
 struct PlanReviewRequest: Identifiable, Equatable {

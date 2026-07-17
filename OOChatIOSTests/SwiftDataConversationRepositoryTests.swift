@@ -131,14 +131,26 @@ final class SwiftDataConversationRepositoryTests: XCTestCase {
     func testUpsertPreservesConversationModeAndServerSession() throws {
         let repository = try makeRepository()
         var conversation = makeConversation(agentID: "a1", address: "0xabc", title: "t", updatedAt: seconds(1000))
-        conversation.mode = .safe
-        conversation.serverSession = ["session_id": .string("s1")]
+        conversation.mode = .ulw
+        conversation.serverSession = [
+            "session_id": .string("s1"),
+            "plugin_state": .object([
+                "ulw": .object([
+                    "turns": .number(100),
+                    "turns_used": .number(7),
+                ]),
+            ]),
+        ]
         repository.upsertConversation(conversation)
 
         let loaded = repository.load().conversations.first
 
-        XCTAssertEqual(loaded?.mode, .safe)
+        XCTAssertEqual(loaded?.mode, .ulw)
         XCTAssertEqual(loaded?.serverSession?["session_id"]?.stringValue, "s1")
+        XCTAssertEqual(
+            loaded?.serverSession?["plugin_state"],
+            conversation.serverSession?["plugin_state"]
+        )
     }
 
     func testUpsertConversationInsertsThenUpdatesOneRow() throws {

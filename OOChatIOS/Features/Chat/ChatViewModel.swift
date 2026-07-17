@@ -101,6 +101,7 @@ final class ChatViewModel: ObservableObject {
     @Published private var connectionStatesByConversationID: [String: ConnectionState] = [:]
     @Published private var processingConversationIDs: Set<String> = []
     @Published private var pendingApprovalsByConversationID: [String: PendingApproval] = [:]
+    @Published private var pendingUlwCheckpointsByConversationID: [String: PendingUlwCheckpoint] = [:]
     @Published private var pendingPlanReviewsByConversationID: [String: PendingPlanReview] = [:]
     @Published private var pendingAskUsersByConversationID: [String: PendingAskUser] = [:]
     @Published private var skillsByAgentAddress: [String: [AgentSkill]] = [:]
@@ -120,6 +121,10 @@ final class ChatViewModel: ObservableObject {
     private let approvalGate = ContinuationGate<ApprovalDecision>(
         cancellationDecision: .rejectHard(feedback: "Approval cancelled."),
         unavailableDecision: .rejectHard(feedback: "Approval unavailable.")
+    )
+    private let ulwCheckpointGate = ContinuationGate<UlwCheckpointDecision>(
+        cancellationDecision: .switchMode(.safe),
+        unavailableDecision: .switchMode(.safe)
     )
     private let planReviewGate = ContinuationGate<PlanReviewDecision>(
         cancellationDecision: .requestChanges(feedback: "Plan review cancelled."),
@@ -185,6 +190,10 @@ final class ChatViewModel: ObservableObject {
         activePendingApproval
     }
 
+    var pendingUlwCheckpoint: PendingUlwCheckpoint? {
+        activePendingUlwCheckpoint
+    }
+
     var pendingPlanReview: PendingPlanReview? {
         activePendingPlanReview
     }
@@ -198,6 +207,13 @@ final class ChatViewModel: ObservableObject {
             return nil
         }
         return pendingApprovalsByConversationID[activeConversationID]
+    }
+
+    var activePendingUlwCheckpoint: PendingUlwCheckpoint? {
+        guard let activeConversationID else {
+            return nil
+        }
+        return pendingUlwCheckpointsByConversationID[activeConversationID]
     }
 
     var activePendingPlanReview: PendingPlanReview? {
@@ -215,7 +231,10 @@ final class ChatViewModel: ObservableObject {
     }
 
     var pendingInteractionID: String? {
-        activePendingApproval?.id ?? activePendingPlanReview?.id ?? activePendingAskUser?.id
+        activePendingApproval?.id
+            ?? activePendingUlwCheckpoint?.id
+            ?? activePendingPlanReview?.id
+            ?? activePendingAskUser?.id
     }
 
     func isProcessing(conversationID: String) -> Bool {
@@ -224,6 +243,7 @@ final class ChatViewModel: ObservableObject {
 
     func hasPendingInteraction(forConversationID conversationID: String) -> Bool {
         pendingApprovalsByConversationID[conversationID] != nil
+            || pendingUlwCheckpointsByConversationID[conversationID] != nil
             || pendingPlanReviewsByConversationID[conversationID] != nil
             || pendingAskUsersByConversationID[conversationID] != nil
     }
@@ -231,6 +251,7 @@ final class ChatViewModel: ObservableObject {
     var hasBackgroundPendingInteraction: Bool {
         let activeConversationID = activeConversationID
         return pendingApprovalsByConversationID.keys.contains { $0 != activeConversationID }
+            || pendingUlwCheckpointsByConversationID.keys.contains { $0 != activeConversationID }
             || pendingPlanReviewsByConversationID.keys.contains { $0 != activeConversationID }
             || pendingAskUsersByConversationID.keys.contains { $0 != activeConversationID }
     }
@@ -309,6 +330,7 @@ final class ChatViewModel: ObservableObject {
         deliveryTasksByConversationID.values.forEach { $0.cancel() }
         skillFetchTasks.values.forEach { $0.cancel() }
         approvalGate.cancelAll()
+        ulwCheckpointGate.cancelAll()
         planReviewGate.cancelAll()
         askUserGate.cancelAll()
     }
@@ -528,7 +550,6 @@ final class ChatViewModel: ObservableObject {
         conversation.mode = mode
         conversation.serverSession = session(conversation.serverSession, applying: mode, conversationID: conversation.id)
         conversation.serverSession?["updated"] = .number(Date().timeIntervalSince1970)
-        conversation.serverSession?[ClientSessionMetadata.pendingModeChange] = .string(mode.rawValue)
         upsert(conversation)
     }
 
@@ -566,7 +587,12 @@ final class ChatViewModel: ObservableObject {
         do {
             let result = try await client.connect(agentAddress: address, conversation: conversation)
             if let session = result.serverSession {
-                conversation.serverSession = self.session(session, applying: conversation.mode, conversationID: conversation.id)
+                conversation.mode = serverMode(from: session, fallback: conversation.mode)
+                conversation.serverSession = self.session(
+                    session,
+                    applying: conversation.mode,
+                    conversationID: conversation.id
+                )
             }
             let savedAgent = upsertAgent(agent)
             ensureDefaultConversation(for: savedAgent, seed: conversation)
@@ -720,10 +746,11 @@ final class ChatViewModel: ObservableObject {
 
         let transport = client
         let approvalGate = approvalGate
+        let ulwCheckpointGate = ulwCheckpointGate
         let planReviewGate = planReviewGate
         let askUserGate = askUserGate
         let owner = WeakChatViewModelReference(self)
-        return Task { [transport, approvalGate, planReviewGate, askUserGate, owner] in
+        return Task { [transport, approvalGate, ulwCheckpointGate, planReviewGate, askUserGate, owner] in
             defer {
                 owner.value?.deliveryDidFinish(
                     messageID: messageID,
@@ -756,6 +783,27 @@ final class ChatViewModel: ObservableObject {
                         } dismiss: { [owner] in
                             if owner.value?.pendingApprovalsByConversationID[conversationID]?.id == request.id {
                                 owner.value?.pendingApprovalsByConversationID[conversationID] = nil
+                            }
+                        }
+                    },
+                    onUlwCheckpoint: { [ulwCheckpointGate, owner] request in
+                        let gateID = Self.interactionGateID(
+                            conversationID: conversationID,
+                            interactionID: request.id
+                        )
+                        return await ulwCheckpointGate.wait(for: gateID) { [owner] in
+                            guard let viewModel = owner.value,
+                                  viewModel.conversation(withID: conversationID) != nil else {
+                                return false
+                            }
+                            viewModel.pendingUlwCheckpointsByConversationID[conversationID] = PendingUlwCheckpoint(
+                                conversationID: conversationID,
+                                request: request
+                            )
+                            return true
+                        } dismiss: { [owner] in
+                            if owner.value?.pendingUlwCheckpointsByConversationID[conversationID]?.id == request.id {
+                                owner.value?.pendingUlwCheckpointsByConversationID[conversationID] = nil
                             }
                         }
                     },
@@ -845,6 +893,7 @@ final class ChatViewModel: ObservableObject {
             updated.messages[index].deliveryState = .sent
         }
         if let session = result.serverSession {
+            updated.mode = serverMode(from: session, fallback: updated.mode)
             updated.serverSession = self.session(
                 session,
                 applying: updated.mode,
@@ -947,6 +996,13 @@ final class ChatViewModel: ObservableObject {
                     )
                 )
             }
+        case .modeChanged(let mode):
+            conversation.mode = mode
+            conversation.serverSession = session(
+                conversation.serverSession,
+                applying: mode,
+                conversationID: conversationID
+            )
         }
 
         upsert(conversation)
@@ -973,6 +1029,18 @@ final class ChatViewModel: ObservableObject {
 
     func explainPendingApproval(id: String) {
         resolvePendingApproval(id: id, with: .rejectExplain(feedback: nil))
+    }
+
+    func continueUlw(id: String, turns: Int = 100) {
+        resolvePendingUlwCheckpoint(id: id, with: .continueWork(turns: turns))
+    }
+
+    func switchModeFromUlwCheckpoint(id: String, to mode: ChatMode) {
+        guard activePendingUlwCheckpoint?.id == id else {
+            return
+        }
+        setMode(mode)
+        resolvePendingUlwCheckpoint(id: id, with: .switchMode(mode))
     }
 
     func approvePendingPlan(id: String) {
@@ -1009,6 +1077,19 @@ final class ChatViewModel: ObservableObject {
         )
     }
 
+    private func resolvePendingUlwCheckpoint(id: String, with decision: UlwCheckpointDecision) {
+        guard let conversationID = activeConversationID,
+              let pendingUlwCheckpoint = pendingUlwCheckpointsByConversationID[conversationID],
+              pendingUlwCheckpoint.id == id else {
+            return
+        }
+        pendingUlwCheckpointsByConversationID[conversationID] = nil
+        ulwCheckpointGate.resolve(
+            id: Self.interactionGateID(conversationID: conversationID, interactionID: id),
+            with: decision
+        )
+    }
+
     private func resolvePendingPlanReview(id: String, with decision: PlanReviewDecision) {
         guard let conversationID = activeConversationID,
               let pendingPlanReview = pendingPlanReviewsByConversationID[conversationID],
@@ -1027,6 +1108,12 @@ final class ChatViewModel: ObservableObject {
             approvalGate.resolve(
                 id: Self.interactionGateID(conversationID: conversationID, interactionID: pending.id),
                 with: .rejectHard(feedback: "Approval cancelled.")
+            )
+        }
+        if let pending = pendingUlwCheckpointsByConversationID.removeValue(forKey: conversationID) {
+            ulwCheckpointGate.resolve(
+                id: Self.interactionGateID(conversationID: conversationID, interactionID: pending.id),
+                with: .switchMode(.safe)
             )
         }
         if let pending = pendingPlanReviewsByConversationID.removeValue(forKey: conversationID) {
@@ -1057,6 +1144,13 @@ final class ChatViewModel: ObservableObject {
             planReviewGate.resolve(
                 id: Self.interactionGateID(conversationID: conversationID, interactionID: review.id),
                 with: .requestChanges(feedback: "Plan review cancelled.")
+            )
+            settledInteraction = true
+        }
+        if let checkpoint = pendingUlwCheckpointsByConversationID.removeValue(forKey: conversationID) {
+            ulwCheckpointGate.resolve(
+                id: Self.interactionGateID(conversationID: conversationID, interactionID: checkpoint.id),
+                with: .switchMode(.safe)
             )
             settledInteraction = true
         }
@@ -1277,8 +1371,17 @@ final class ChatViewModel: ObservableObject {
         next["mode"] = .string(mode.rawValue)
         next.removeValue(forKey: "ulw_turns")
         next.removeValue(forKey: "ulw_turns_used")
+        next.removeValue(forKey: "ulw_prompt")
         next.removeValue(forKey: "skip_tool_approval")
         return next
+    }
+
+    private func serverMode(from session: [String: JSONValue], fallback: ChatMode) -> ChatMode {
+        guard let rawMode = session["mode"]?.stringValue,
+              let mode = ChatMode(rawValue: rawMode) else {
+            return fallback
+        }
+        return mode
     }
 
     private var slashSkillQuery: String? {

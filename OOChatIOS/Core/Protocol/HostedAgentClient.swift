@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 enum HostedAgentClientError: LocalizedError {
@@ -32,10 +33,20 @@ enum HostedAgentClientError: LocalizedError {
 enum HostedAgentEvent: Equatable {
     case toolCall(id: String, name: String, arguments: [String: JSONValue])
     case toolResult(id: String, name: String?, output: String, state: ToolCallState)
+    case modeChanged(ChatMode)
 
     static func from(_ frame: [String: JSONValue]) -> HostedAgentEvent? {
-        guard let type = frame["type"]?.stringValue,
-              let id = frame["tool_id"]?.stringValue ?? frame["id"]?.stringValue,
+        guard let type = frame["type"]?.stringValue else {
+            return nil
+        }
+
+        if type == "mode_changed",
+           let rawMode = frame["mode"]?.stringValue,
+           let mode = ChatMode(rawValue: rawMode) {
+            return .modeChanged(mode)
+        }
+
+        guard let id = frame["tool_id"]?.stringValue ?? frame["id"]?.stringValue,
               !id.isEmpty else {
             return nil
         }
@@ -193,6 +204,40 @@ extension ApprovalDecision {
     }
 }
 
+extension UlwCheckpointRequest {
+    static func from(_ frame: [String: JSONValue]) -> UlwCheckpointRequest? {
+        guard frame["type"]?.stringValue?.lowercased() == "ulw_turns_reached",
+              let turnsUsed = frame["turns_used"]?.numberValue,
+              let maxTurns = frame["max_turns"]?.numberValue else {
+            return nil
+        }
+        return UlwCheckpointRequest(
+            id: frame["id"]?.stringValue ?? UUID().uuidString,
+            turnsUsed: Int(turnsUsed),
+            maxTurns: Int(maxTurns)
+        )
+    }
+}
+
+extension UlwCheckpointDecision {
+    var responseFrame: [String: JSONValue] {
+        switch self {
+        case .continueWork(let turns):
+            return [
+                "type": .string("ULW_RESPONSE"),
+                "action": .string("continue"),
+                "turns": .number(Double(turns)),
+            ]
+        case .switchMode(let mode):
+            return [
+                "type": .string("ULW_RESPONSE"),
+                "action": .string("switch_mode"),
+                "mode": .string(mode.rawValue),
+            ]
+        }
+    }
+}
+
 extension PlanReviewRequest {
     static func from(_ frame: [String: JSONValue]) -> PlanReviewRequest? {
         guard frame["type"]?.stringValue?.lowercased() == "plan_review",
@@ -291,6 +336,7 @@ protocol HostedAgentTransport {
         prompt: String,
         onEvent: (@MainActor (HostedAgentEvent) -> Void)?,
         onApprovalRequest: (@MainActor (ToolApprovalRequest) async -> ApprovalDecision)?,
+        onUlwCheckpoint: (@MainActor (UlwCheckpointRequest) async -> UlwCheckpointDecision)?,
         onPlanReview: (@MainActor (PlanReviewRequest) async -> PlanReviewDecision)?,
         onAskUser: (@MainActor (AskUserRequest) async -> AskUserDecision)?
     ) async throws -> HostedAgentResult
@@ -344,6 +390,53 @@ final class HostedAgentClient: HostedAgentTransport {
         address.range(of: #"^0x[0-9a-fA-F]{64}$"#, options: .regularExpression) != nil
     }
 
+    static func connectSignaturePayload(
+        agentAddress: String,
+        conversationID: String,
+        session: [String: JSONValue],
+        timestamp: Double
+    ) -> [String: JSONValue] {
+        [
+            "action": .string("session.connect"),
+            "to": .string(agentAddress),
+            "timestamp": .number(timestamp),
+            "session_id": .string(conversationID),
+            "session_sha256": .string(canonicalSHA256(.object(session))),
+        ]
+    }
+
+    static func inputSignaturePayload(
+        agentAddress: String,
+        conversationID: String,
+        inputID: String,
+        prompt: String,
+        mode: ChatMode,
+        timestamp: Double
+    ) -> [String: JSONValue] {
+        [
+            "action": .string("session.input"),
+            "to": .string(agentAddress),
+            "timestamp": .number(timestamp),
+            "session_id": .string(conversationID),
+            "input_id": .string(inputID),
+            "prompt": .string(prompt),
+            "mode": .string(mode.rawValue),
+            "attachments_sha256": .string(
+                canonicalSHA256(
+                    .object([
+                        "images": .array([]),
+                        "files": .array([]),
+                    ])
+                )
+            ),
+        ]
+    }
+
+    private static func canonicalSHA256(_ value: JSONValue) -> String {
+        let digest = SHA256.hash(data: Data(CanonicalJSON.string(from: value).utf8))
+        return Hex.encode(Data(digest))
+    }
+
     func connect(agentAddress: String, conversation: Conversation) async throws -> HostedAgentResult {
         guard Self.isHostedAgentAddress(agentAddress) else {
             throw HostedAgentClientError.invalidAddress
@@ -368,6 +461,7 @@ final class HostedAgentClient: HostedAgentTransport {
         prompt: String,
         onEvent: (@MainActor (HostedAgentEvent) -> Void)?,
         onApprovalRequest: (@MainActor (ToolApprovalRequest) async -> ApprovalDecision)?,
+        onUlwCheckpoint: (@MainActor (UlwCheckpointRequest) async -> UlwCheckpointDecision)?,
         onPlanReview: (@MainActor (PlanReviewRequest) async -> PlanReviewDecision)?,
         onAskUser: (@MainActor (AskUserRequest) async -> AskUserDecision)?
     ) async throws -> HostedAgentResult {
@@ -380,6 +474,7 @@ final class HostedAgentClient: HostedAgentTransport {
             prompt: prompt,
             onEvent: onEvent,
             onApprovalRequest: onApprovalRequest,
+            onUlwCheckpoint: onUlwCheckpoint,
             onPlanReview: onPlanReview,
             onAskUser: onAskUser
         )
@@ -401,20 +496,16 @@ final class HostedAgentClient: HostedAgentTransport {
         return decision.responseFrame(to: recipient)
     }
 
-    static func pendingModeChangeFrame(
-        for conversation: Conversation,
-        connectionStatus: String?
-    ) -> [String: JSONValue]? {
-        guard connectionStatus == "running",
-              let rawMode = conversation.serverSession?[ClientSessionMetadata.pendingModeChange]?.stringValue,
-              let mode = ChatMode(rawValue: rawMode) else {
-            return nil
-        }
-        var frame: [String: JSONValue] = [
-            "type": .string("mode_change"),
-            "mode": .string(mode.rawValue),
-        ]
-        return frame
+    static func ulwResponseFrame(
+        decision: UlwCheckpointDecision,
+        agentAddress: String,
+        endpoint: ResolvedEndpoint
+    ) -> [String: JSONValue] {
+        routedInteractiveFrame(
+            decision.responseFrame,
+            agentAddress: agentAddress,
+            endpoint: endpoint
+        )
     }
 
     static func planReviewResponseFrame(
@@ -702,6 +793,7 @@ private actor HostedAgentConnectionPool {
         prompt: String,
         onEvent: (@MainActor (HostedAgentEvent) -> Void)?,
         onApprovalRequest: (@MainActor (ToolApprovalRequest) async -> ApprovalDecision)?,
+        onUlwCheckpoint: (@MainActor (UlwCheckpointRequest) async -> UlwCheckpointDecision)?,
         onPlanReview: (@MainActor (PlanReviewRequest) async -> PlanReviewDecision)?,
         onAskUser: (@MainActor (AskUserRequest) async -> AskUserDecision)?
     ) async throws -> HostedAgentResult {
@@ -712,6 +804,7 @@ private actor HostedAgentConnectionPool {
                 prompt: prompt,
                 onEvent: onEvent,
                 onApprovalRequest: onApprovalRequest,
+                onUlwCheckpoint: onUlwCheckpoint,
                 onPlanReview: onPlanReview,
                 onAskUser: onAskUser
             )
@@ -848,6 +941,7 @@ private actor HostedAgentConnection {
         let continuation: CheckedContinuation<HostedAgentResult, Error>
         let onEvent: (@MainActor (HostedAgentEvent) -> Void)?
         let onApprovalRequest: (@MainActor (ToolApprovalRequest) async -> ApprovalDecision)?
+        let onUlwCheckpoint: (@MainActor (UlwCheckpointRequest) async -> UlwCheckpointDecision)?
         let onPlanReview: (@MainActor (PlanReviewRequest) async -> PlanReviewDecision)?
         let onAskUser: (@MainActor (AskUserRequest) async -> AskUserDecision)?
     }
@@ -924,11 +1018,11 @@ private actor HostedAgentConnection {
         prompt: String,
         onEvent: (@MainActor (HostedAgentEvent) -> Void)?,
         onApprovalRequest: (@MainActor (ToolApprovalRequest) async -> ApprovalDecision)?,
+        onUlwCheckpoint: (@MainActor (UlwCheckpointRequest) async -> UlwCheckpointDecision)?,
         onPlanReview: (@MainActor (PlanReviewRequest) async -> PlanReviewDecision)?,
         onAskUser: (@MainActor (AskUserRequest) async -> AskUserDecision)?
     ) async throws -> HostedAgentResult {
         try Task.checkCancellation()
-        reconnectToApplyPendingModeChangeIfNeeded(conversation: conversation)
         _ = try await ensureConnected(conversation: conversation)
         try Task.checkCancellation()
         guard pendingPrompt == nil else {
@@ -943,6 +1037,7 @@ private actor HostedAgentConnection {
                     continuation: continuation,
                     onEvent: onEvent,
                     onApprovalRequest: onApprovalRequest,
+                    onUlwCheckpoint: onUlwCheckpoint,
                     onPlanReview: onPlanReview,
                     onAskUser: onAskUser
                 )
@@ -988,7 +1083,7 @@ private actor HostedAgentConnection {
             startReceiveLoop(socket: socket, generation: generation)
             startLivenessMonitor(generation: generation)
 
-            let connectFrame = try buildConnectFrame(conversation: conversation, endpoint: endpoint)
+            let connectFrame = try buildConnectFrame(conversation: conversation)
             try await send(connectFrame, over: socket)
         } catch {
             failConnection(error, generation: generation)
@@ -1057,17 +1152,11 @@ private actor HostedAgentConnection {
 
     private func transmitPrompt(_ prompt: String, conversation: Conversation, promptID: UUID) async {
         let generation = socketGeneration
-        guard pendingPrompt?.id == promptID, let socket, let endpoint else {
+        guard pendingPrompt?.id == promptID, let socket else {
             return
         }
         do {
-            if let modeChange = HostedAgentClient.pendingModeChangeFrame(
-                for: conversation,
-                connectionStatus: connectionStatus
-            ) {
-                try await send(modeChange, over: socket)
-            }
-            let inputFrame = try buildInputFrame(prompt: prompt, endpoint: endpoint)
+            let inputFrame = try buildInputFrame(prompt: prompt, conversation: conversation)
             try await send(inputFrame, over: socket)
         } catch {
             failConnection(error, generation: generation)
@@ -1138,7 +1227,7 @@ private actor HostedAgentConnection {
                     serverSession: serverSession
                 )
             )
-        case "tool_call", "tool_result":
+        case "tool_call", "tool_result", "mode_changed":
             guard let pending = pendingPrompt, let event = HostedAgentEvent.from(frame) else {
                 return
             }
@@ -1150,6 +1239,13 @@ private actor HostedAgentConnection {
                 return
             }
             startApprovalTask(request: request, promptID: pending.id, generation: generation)
+        case "ulw_turns_reached":
+            guard let pending = pendingPrompt,
+                  let request = UlwCheckpointRequest.from(frame) else {
+                failConnection(HostedAgentClientError.badFrame, generation: generation)
+                return
+            }
+            startUlwCheckpointTask(request: request, promptID: pending.id, generation: generation)
         case "plan_review":
             guard let pending = pendingPrompt,
                   let request = PlanReviewRequest.from(frame) else {
@@ -1211,6 +1307,53 @@ private actor HostedAgentConnection {
         do {
             try await send(
                 HostedAgentClient.approvalResponseFrame(
+                    decision: decision,
+                    agentAddress: key.agentAddress,
+                    endpoint: endpoint
+                ),
+                over: socket
+            )
+        } catch {
+            failConnection(error, generation: generation)
+        }
+    }
+
+    private func startUlwCheckpointTask(request: UlwCheckpointRequest, promptID: UUID, generation: Int) {
+        let taskID = UUID()
+        interactionTasks[taskID] = Task { [weak self] in
+            await self?.processUlwCheckpoint(
+                request: request,
+                promptID: promptID,
+                generation: generation,
+                taskID: taskID
+            )
+        }
+    }
+
+    private func processUlwCheckpoint(
+        request: UlwCheckpointRequest,
+        promptID: UUID,
+        generation: Int,
+        taskID: UUID
+    ) async {
+        defer {
+            interactionTasks.removeValue(forKey: taskID)
+        }
+        guard generation == socketGeneration,
+              let pending = pendingPrompt,
+              pending.id == promptID else {
+            return
+        }
+        let decision = await pending.onUlwCheckpoint?(request) ?? .switchMode(.safe)
+        guard generation == socketGeneration,
+              pendingPrompt?.id == promptID,
+              let socket,
+              let endpoint else {
+            return
+        }
+        do {
+            try await send(
+                HostedAgentClient.ulwResponseFrame(
                     decision: decision,
                     agentAddress: key.agentAddress,
                     endpoint: endpoint
@@ -1321,15 +1464,6 @@ private actor HostedAgentConnection {
         }
     }
 
-    private func reconnectToApplyPendingModeChangeIfNeeded(conversation: Conversation) {
-        guard conversation.serverSession?[ClientSessionMetadata.pendingModeChange] != nil,
-              state == .connected,
-              pendingPrompt == nil else {
-            return
-        }
-        disconnect(with: HostedAgentClientError.closed, closeCode: .normalClosure)
-    }
-
     private func cancelInteractionTasks() {
         let tasks = Array(interactionTasks.values)
         interactionTasks.removeAll()
@@ -1413,47 +1547,50 @@ private actor HostedAgentConnection {
         try await discovery.discover(agentAddress: agentAddress).endpoint
     }
 
-    private func buildConnectFrame(conversation: Conversation, endpoint: ResolvedEndpoint) throws -> [String: JSONValue] {
+    private func buildConnectFrame(conversation: Conversation) throws -> [String: JSONValue] {
         let timestamp = Double(Int(Date().timeIntervalSince1970))
-        let payload: [String: JSONValue] = [
-            "timestamp": .number(timestamp),
-            "to": .string(key.agentAddress),
-        ]
+        let session = sessionPayload(for: conversation)
+        let payload = HostedAgentClient.connectSignaturePayload(
+            agentAddress: key.agentAddress,
+            conversationID: conversation.id,
+            session: session,
+            timestamp: timestamp
+        )
         var frame = try identityStore.signedEnvelope(type: "CONNECT", payload: payload)
+        frame["to"] = .string(key.agentAddress)
         frame["session_id"] = .string(conversation.id)
-        frame["session"] = .object(sessionPayload(for: conversation))
-        if endpoint.kind == .relay {
-            frame["to"] = .string(key.agentAddress)
-        }
+        frame["session"] = .object(session)
         return frame
     }
 
     private func sessionPayload(for conversation: Conversation) -> [String: JSONValue] {
         var session = conversation.serverSession ?? [:]
-        session.removeValue(forKey: ClientSessionMetadata.pendingModeChange)
         session["session_id"] = .string(conversation.id)
         session["mode"] = .string(conversation.mode.rawValue)
         session.removeValue(forKey: "skip_tool_approval")
         session.removeValue(forKey: "ulw_turns")
         session.removeValue(forKey: "ulw_turns_used")
+        session.removeValue(forKey: "ulw_prompt")
         return session
     }
 
-    private func buildInputFrame(prompt: String, endpoint: ResolvedEndpoint) throws -> [String: JSONValue] {
+    private func buildInputFrame(prompt: String, conversation: Conversation) throws -> [String: JSONValue] {
         let timestamp = Double(Int(Date().timeIntervalSince1970))
-        var payload: [String: JSONValue] = [
-            "prompt": .string(prompt),
-            "timestamp": .number(timestamp),
-        ]
-        if endpoint.kind == .relay {
-            payload["to"] = .string(key.agentAddress)
-        }
+        let inputID = UUID().uuidString
+        let payload = HostedAgentClient.inputSignaturePayload(
+            agentAddress: key.agentAddress,
+            conversationID: conversation.id,
+            inputID: inputID,
+            prompt: prompt,
+            mode: conversation.mode,
+            timestamp: timestamp
+        )
         var frame = try identityStore.signedEnvelope(type: "INPUT", payload: payload)
-        frame["input_id"] = .string(UUID().uuidString)
+        frame["to"] = .string(key.agentAddress)
+        frame["session_id"] = .string(conversation.id)
+        frame["input_id"] = .string(inputID)
         frame["prompt"] = .string(prompt)
-        if endpoint.kind == .relay {
-            frame["to"] = .string(key.agentAddress)
-        }
+        frame["mode"] = .string(conversation.mode.rawValue)
         return frame
     }
 

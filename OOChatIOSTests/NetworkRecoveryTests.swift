@@ -55,6 +55,7 @@ final class MockAgentTransport: HostedAgentTransport {
     var sendBehaviorsByPrompt: [String: Behavior] = [:]
     var streamedEvents: [HostedAgentEvent] = []
     var approvalRequests: [ToolApprovalRequest] = []
+    var ulwCheckpoints: [UlwCheckpointRequest] = []
     var planReviews: [PlanReviewRequest] = []
     var askUserRequests: [AskUserRequest] = []
     var availableSkills: [AgentSkill] = []
@@ -66,6 +67,7 @@ final class MockAgentTransport: HostedAgentTransport {
     private(set) var connectedAddresses: [String] = []
     private(set) var sentPrompts: [String] = []
     private(set) var approvalDecisions: [ApprovalDecision] = []
+    private(set) var ulwDecisions: [UlwCheckpointDecision] = []
     private(set) var planReviewDecisions: [PlanReviewDecision] = []
     private(set) var askUserDecisions: [AskUserDecision] = []
     private(set) var fetchedSkillAddresses: [String] = []
@@ -110,6 +112,7 @@ final class MockAgentTransport: HostedAgentTransport {
         prompt: String,
         onEvent: (@MainActor (HostedAgentEvent) -> Void)?,
         onApprovalRequest: (@MainActor (ToolApprovalRequest) async -> ApprovalDecision)?,
+        onUlwCheckpoint: (@MainActor (UlwCheckpointRequest) async -> UlwCheckpointDecision)?,
         onPlanReview: (@MainActor (PlanReviewRequest) async -> PlanReviewDecision)?,
         onAskUser: (@MainActor (AskUserRequest) async -> AskUserDecision)?
     ) async throws -> HostedAgentResult {
@@ -136,6 +139,12 @@ final class MockAgentTransport: HostedAgentTransport {
                 throw HostedAgentClientError.badFrame
             }
             approvalDecisions.append(await onApprovalRequest(request))
+        }
+        for checkpoint in ulwCheckpoints {
+            guard let onUlwCheckpoint else {
+                throw HostedAgentClientError.badFrame
+            }
+            ulwDecisions.append(await onUlwCheckpoint(checkpoint))
         }
         for review in planReviews {
             guard let onPlanReview else {
@@ -166,6 +175,7 @@ final class MockAgentTransport: HostedAgentTransport {
     func waitForPendingInteractionResponses(agentAddress: String, conversationID: String) async {
         interactionResponseWaits.append((agentAddress, conversationID))
         for _ in 0..<100 where approvalDecisions.isEmpty
+            && ulwDecisions.isEmpty
             && planReviewDecisions.isEmpty
             && askUserDecisions.isEmpty {
             await Task.yield()
@@ -1060,6 +1070,52 @@ final class NetworkRecoveryTests: XCTestCase {
         }
     }
 
+    func testSelectingUlwDoesNotForgeServerOwnedCapabilityState() {
+        let (viewModel, _, _) = makeEnvironment()
+        setUpAgentAndConversation(viewModel)
+        let selectedAt = Date().timeIntervalSince1970
+
+        viewModel.setMode(.ulw)
+
+        let session = viewModel.activeConversation?.serverSession
+        XCTAssertEqual(session?["mode"], .string("ulw"))
+        XCTAssertNil(session?["skip_tool_approval"])
+        XCTAssertNil(session?["ulw_turns"])
+        XCTAssertNil(session?["ulw_turns_used"])
+        XCTAssertGreaterThanOrEqual(session?["updated"]?.numberValue ?? 0, selectedAt)
+    }
+
+    func testLeavingUlwClearsAutonomousSessionState() {
+        let (viewModel, _, _) = makeEnvironment()
+        setUpAgentAndConversation(viewModel)
+        viewModel.setMode(.ulw)
+        var conversation = viewModel.activeConversation!
+        conversation.serverSession?["skip_tool_approval"] = .bool(true)
+        viewModel.conversations[viewModel.conversations.firstIndex(where: { $0.id == conversation.id })!] = conversation
+
+        viewModel.setMode(.safe)
+
+        let session = viewModel.activeConversation?.serverSession
+        XCTAssertEqual(session?["mode"], .string("safe"))
+        XCTAssertNil(session?["ulw_turns"])
+        XCTAssertNil(session?["ulw_turns_used"])
+        XCTAssertNil(session?["skip_tool_approval"])
+    }
+
+    func testServerModeChangedEventEndsUlwLocally() async {
+        let (viewModel, transport, _) = makeEnvironment()
+        setUpAgentAndConversation(viewModel)
+        viewModel.setMode(.ulw)
+        transport.streamedEvents = [.modeChanged(.safe)]
+
+        viewModel.prompt = "Keep working"
+        viewModel.sendPrompt()
+        await viewModel.sendTask?.value
+
+        XCTAssertEqual(viewModel.activeMode, .safe)
+        XCTAssertEqual(viewModel.activeConversation?.serverSession?["mode"], .string("safe"))
+    }
+
     func testApprovalSupportsStopAndExplain() async {
         for expected in [
             ApprovalDecision.rejectHard(feedback: "Approval cancelled."),
@@ -1082,6 +1138,40 @@ final class NetworkRecoveryTests: XCTestCase {
 
             XCTAssertEqual(transport.approvalDecisions, [expected])
         }
+    }
+
+    func testUlwCheckpointWaitsForContinueDecision() async {
+        let (viewModel, transport, _) = makeEnvironment()
+        setUpAgentAndConversation(viewModel)
+        viewModel.setMode(.ulw)
+        transport.ulwCheckpoints = [UlwCheckpointRequest(turnsUsed: 100, maxTurns: 100)]
+
+        viewModel.prompt = "Keep working"
+        viewModel.sendPrompt()
+        await waitForUlwCheckpoint(on: viewModel)
+        XCTAssertTrue(transport.ulwDecisions.isEmpty)
+
+        viewModel.continueUlw(id: viewModel.pendingUlwCheckpoint!.id)
+        await viewModel.sendTask?.value
+
+        XCTAssertEqual(transport.ulwDecisions, [.continueWork(turns: 100)])
+        XCTAssertEqual(viewModel.activeMode, .ulw)
+    }
+
+    func testUlwCheckpointCanSwitchToAcceptEdits() async {
+        let (viewModel, transport, _) = makeEnvironment()
+        setUpAgentAndConversation(viewModel)
+        viewModel.setMode(.ulw)
+        transport.ulwCheckpoints = [UlwCheckpointRequest(turnsUsed: 100, maxTurns: 100)]
+
+        viewModel.prompt = "Keep working"
+        viewModel.sendPrompt()
+        await waitForUlwCheckpoint(on: viewModel)
+        viewModel.switchModeFromUlwCheckpoint(id: viewModel.pendingUlwCheckpoint!.id, to: .accept)
+        await viewModel.sendTask?.value
+
+        XCTAssertEqual(transport.ulwDecisions, [.switchMode(.accept)])
+        XCTAssertEqual(viewModel.activeMode, .accept)
     }
 
     func testPlanReviewWaitsForApproval() async {
@@ -1171,6 +1261,23 @@ final class NetworkRecoveryTests: XCTestCase {
         await viewModel.sendTask?.value
 
         XCTAssertEqual(transport.planReviewDecisions, [.approve])
+    }
+
+    func testDeletingConversationCancelsUlwCheckpoint() async {
+        let (viewModel, transport, _) = makeEnvironment()
+        setUpAgentAndConversation(viewModel)
+        transport.ulwCheckpoints = [UlwCheckpointRequest(turnsUsed: 100, maxTurns: 100)]
+
+        viewModel.prompt = "Keep working"
+        viewModel.sendPrompt()
+        await waitForUlwCheckpoint(on: viewModel)
+        let conversation = viewModel.activeConversation!
+        let task = viewModel.sendTask
+        viewModel.deleteConversation(conversation)
+        await task?.value
+
+        XCTAssertNil(viewModel.pendingUlwCheckpoint)
+        XCTAssertEqual(transport.ulwDecisions, [.switchMode(.safe)])
     }
 
     func testDeletingConversationCancelsPlanReview() async {
@@ -1467,6 +1574,13 @@ final class NetworkRecoveryTests: XCTestCase {
             await Task.yield()
         }
         XCTAssertNotNil(viewModel.activePendingApproval)
+    }
+
+    private func waitForUlwCheckpoint(on viewModel: ChatViewModel) async {
+        for _ in 0..<100 where viewModel.pendingUlwCheckpoint == nil {
+            await Task.yield()
+        }
+        XCTAssertNotNil(viewModel.pendingUlwCheckpoint)
     }
 
     private func waitForPendingAskUser(on viewModel: ChatViewModel) async {

@@ -134,6 +134,51 @@ final class MockHostedAgentTests: XCTestCase {
         XCTAssertEqual(CanonicalJSON.string(from: .number(1e20)), "1e+20")
     }
 
+    func testCanonicalJSONMatchesPythonUnicodeEscaping() {
+        let value: JSONValue = .object([
+            "prompt": .string("执行 tree café 🧅"),
+        ])
+
+        XCTAssertEqual(
+            CanonicalJSON.string(from: value),
+            #"{"prompt":"\u6267\u884c tree caf\u00e9 \ud83e\uddc5"}"#
+        )
+    }
+
+    func testSignedInputPayloadEscapesUnicodePrompt() {
+        let payload = HostedAgentClient.inputSignaturePayload(
+            agentAddress: "0xagent",
+            conversationID: "conversation-1",
+            inputID: "input-1",
+            prompt: "执行 tree",
+            mode: .ulw,
+            timestamp: 1_700_000_000
+        )
+
+        let canonical = CanonicalJSON.string(from: .object(payload))
+        XCTAssertTrue(canonical.contains(#""prompt":"\u6267\u884c tree""#))
+        XCTAssertFalse(canonical.contains("执行"))
+    }
+
+    func testConnectSessionDigestMatchesPythonForUnicodeSnapshot() {
+        let session: [String: JSONValue] = [
+            "session_id": .string("conversation-1"),
+            "title": .string("执行 🧅"),
+        ]
+
+        let payload = HostedAgentClient.connectSignaturePayload(
+            agentAddress: "0xagent",
+            conversationID: "conversation-1",
+            session: session,
+            timestamp: 1_700_000_000
+        )
+
+        XCTAssertEqual(
+            payload["session_sha256"],
+            .string("c66eb933da064fb9182052583a28b2ac146860bd7f81245a49cb81c7623bdb3e")
+        )
+    }
+
     func testToolResultUsesErrorStateAndMessageFallback() {
         let event = HostedAgentEvent.from([
             "type": .string("tool_result"),
@@ -174,6 +219,53 @@ final class MockHostedAgentTests: XCTestCase {
             "type": .string("tool_call"),
             "name": .string("read_file"),
         ]))
+    }
+
+    func testModeChangedFrameMapsToModeEvent() {
+        XCTAssertEqual(
+            HostedAgentEvent.from([
+                "type": .string("mode_changed"),
+                "mode": .string("safe"),
+                "triggered_by": .string("ulw_checkpoint"),
+            ]),
+            .modeChanged(.safe)
+        )
+    }
+
+    func testModernSessionPayloadsBindUlwToSignedInput() {
+        let session: [String: JSONValue] = [
+            "session_id": .string("conversation-1"),
+        ]
+        let connectPayload = HostedAgentClient.connectSignaturePayload(
+            agentAddress: endpointA,
+            conversationID: "conversation-1",
+            session: session,
+            timestamp: 1_700_000_000
+        )
+        let inputPayload = HostedAgentClient.inputSignaturePayload(
+            agentAddress: endpointA,
+            conversationID: "conversation-1",
+            inputID: "input-1",
+            prompt: "Refactor the project",
+            mode: .ulw,
+            timestamp: 1_700_000_001
+        )
+
+        XCTAssertEqual(connectPayload["action"], .string("session.connect"))
+        XCTAssertEqual(
+            connectPayload["session_sha256"],
+            .string("690da7698c586c4daf8d4c507971707dfd7cb385acf0748d42a148198b0380fa")
+        )
+        XCTAssertEqual(inputPayload["action"], .string("session.input"))
+        XCTAssertEqual(inputPayload["to"], .string(endpointA))
+        XCTAssertEqual(inputPayload["session_id"], .string("conversation-1"))
+        XCTAssertEqual(inputPayload["input_id"], .string("input-1"))
+        XCTAssertEqual(inputPayload["mode"], .string("ulw"))
+        XCTAssertEqual(
+            inputPayload["attachments_sha256"],
+            .string("5675eee946de112f65f01d6f509a96b9e444811b7705bae7ec0b66ec4ac2c821")
+        )
+        XCTAssertNil(inputPayload["skip_tool_approval"])
     }
 
     func testApprovalFrameMapsToRequest() {
@@ -321,6 +413,43 @@ final class MockHostedAgentTests: XCTestCase {
             agentAddress: endpointA,
             endpoint: directEndpoint
         )["to"])
+    }
+
+    func testUlwCheckpointFramesMatchUpstreamContract() {
+        let request = UlwCheckpointRequest.from([
+            "type": .string("ulw_turns_reached"),
+            "turns_used": .number(100),
+            "max_turns": .number(100),
+        ])
+        XCTAssertEqual(request?.turnsUsed, 100)
+        XCTAssertEqual(request?.maxTurns, 100)
+
+        let relay = ResolvedEndpoint(
+            wsURL: URL(string: "wss://relay.example/ws/input")!,
+            kind: .relay,
+            label: "relay"
+        )
+        XCTAssertEqual(
+            HostedAgentClient.ulwResponseFrame(
+                decision: .continueWork(turns: 100),
+                agentAddress: endpointA,
+                endpoint: relay
+            ),
+            [
+                "type": .string("ULW_RESPONSE"),
+                "action": .string("continue"),
+                "turns": .number(100),
+                "to": .string(endpointA),
+            ]
+        )
+        XCTAssertEqual(
+            UlwCheckpointDecision.switchMode(.accept).responseFrame,
+            [
+                "type": .string("ULW_RESPONSE"),
+                "action": .string("switch_mode"),
+                "mode": .string("accept_edits"),
+            ]
+        )
     }
 
     func testPlanReviewFramesMatchUpstreamContract() {

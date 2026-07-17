@@ -47,8 +47,19 @@ enum CanonicalJSON {
                 result += "\\t"
             case 0x00...0x1f:
                 result += String(format: "\\u%04x", scalar.value)
-            default:
+            case 0x20...0x7f:
                 result.append(String(scalar))
+            case 0x80...0xffff:
+                result += String(format: "\\u%04x", scalar.value)
+            default:
+                let value = scalar.value - 0x10000
+                let highSurrogate = 0xd800 + (value >> 10)
+                let lowSurrogate = 0xdc00 + (value & 0x3ff)
+                result += String(
+                    format: "\\u%04x\\u%04x",
+                    highSurrogate,
+                    lowSurrogate
+                )
             }
         }
         result += "\""
