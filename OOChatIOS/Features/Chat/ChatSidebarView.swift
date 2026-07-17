@@ -3,6 +3,7 @@ import SwiftUI
 struct ChatSidebarView: View {
     @ObservedObject var viewModel: ChatViewModel
     let safeAreaInsets: EdgeInsets
+    let selection: ChatSidebarSelection?
     let onSelectConversation: (Conversation) -> Void
     let onNewChat: (AgentConnection) -> Void
     let onManageAgents: () -> Void
@@ -75,7 +76,7 @@ struct ChatSidebarView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .foregroundStyle(.primary)
-                .buttonStyle(SidebarPressedRowButtonStyle())
+                .buttonStyle(SidebarPressedRowButtonStyle(isHighlighted: selection == .agents))
                 .listRowInsets(SidebarMetrics.primaryRowInsets)
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.clear)
@@ -287,7 +288,7 @@ struct ChatSidebarView: View {
     }
 
     private func conversationButton(_ conversation: Conversation) -> some View {
-        let isSelected = viewModel.activeConversationID == conversation.id
+        let isSelected = selection == .conversation(conversation.id)
 
         return Button {
             focusedAgentID = conversation.agentID
@@ -368,6 +369,11 @@ struct ChatSidebarView: View {
     private var isDeleting: Binding<Bool> {
         Binding(get: { deleteTarget != nil }, set: { if !$0 { deleteTarget = nil } })
     }
+}
+
+enum ChatSidebarSelection: Equatable {
+    case agents
+    case conversation(String)
 }
 
 // Sidebar metrics and constants.

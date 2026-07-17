@@ -7,7 +7,8 @@ enum AgentRoute: Hashable {
 struct AgentsView: View {
     @ObservedObject var viewModel: ChatViewModel
     let switchToChat: () -> Void
-    var onClose: (() -> Void)?
+    var onOpenSidebar: (() -> Void)?
+    var onRootStateChange: ((Bool) -> Void)?
     @State private var path: [AgentRoute] = []
     @State private var agentDraft: AgentFormDraft?
     @State private var pendingDeleteAgent: AgentConnection?
@@ -58,23 +59,23 @@ struct AgentsView: View {
                 }
             }
             .toolbar {
+                if let onOpenSidebar, path.isEmpty {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button {
+                            onOpenSidebar()
+                        } label: {
+                            Image(systemName: "sidebar.left")
+                        }
+                        .accessibilityLabel("Open sidebar")
+                    }
+                }
+
                 ToolbarItem(placement: .principal) {
                     Text("ConnectOnion")
                         .font(.largeTitle.bold())
                         .foregroundStyle(AppTheme.primary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.80)
-                }
-                if let onClose {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button {
-                            onClose()
-                        } label: {
-                            Image(systemName: "xmark")
-                        }
-                        .accessibilityLabel("Close")
-                        .tint(.primary)
-                    }
                 }
             }
             .overlay(alignment: .bottomTrailing) {
@@ -133,6 +134,12 @@ struct AgentsView: View {
                 } onCancel: {
                     agentDraft = nil
                 }
+            }
+            .onAppear {
+                onRootStateChange?(path.isEmpty)
+            }
+            .onChange(of: path) {
+                onRootStateChange?(path.isEmpty)
             }
         }
     }

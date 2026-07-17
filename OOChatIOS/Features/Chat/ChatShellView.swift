@@ -5,8 +5,8 @@ struct ChatShellView: View {
     @ObservedObject var viewModel: ChatViewModel
     @State private var isSidebarOpen = false
     @State private var dragOffset: CGFloat = 0
-    @State private var isPresentingAgents = false
-    @State private var isPresentingSettings = false
+    @State private var activeContent: SidebarContent = .chat
+    @State private var isActiveContentAtRoot = true
 
     var body: some View {
         GeometryReader { proxy in
@@ -20,30 +20,29 @@ struct ChatShellView: View {
                 ChatSidebarView(
                     viewModel: viewModel,
                     safeAreaInsets: windowSafeAreaInsets,
+                    selection: sidebarSelection,
                     onSelectConversation: { conversation in
                         viewModel.selectConversation(conversation)
-                        closeSidebar()
+                        showContentFromSidebar(.chat)
                     },
                     onNewChat: { agent in
                         _ = viewModel.createConversation(for: agent)
-                        closeSidebar()
+                        showContentFromSidebar(.chat)
                     },
                     onManageAgents: {
-                        isPresentingAgents = true
+                        showContentFromSidebar(.agents)
                     },
                     onSettings: {
-                        isPresentingSettings = true
+                        showContentFromSidebar(.settings)
                     }
                 )
                 .frame(width: drawerWidth)
                 .zIndex(0)
 
-                ChatView(viewModel: viewModel) {
-                    openSidebar()
-                }
+                contentView(for: activeContent)
                 .frame(width: proxy.size.width, height: proxy.size.height)
                 .background(Color(.systemBackground))
-                .disabled(isSidebarOpen)
+                .allowsHitTesting(progress == 0)
                 .clipShape(
                     UnevenRoundedRectangle(
                         topLeadingRadius: cornerRadius,
@@ -61,7 +60,16 @@ struct ChatShellView: View {
                 .offset(x: contentOffset)
                 .zIndex(1)
 
-                if progress > 0 {
+                if canOpenSidebar && !isSidebarOpen {
+                    Color.clear
+                        .frame(width: SidebarShellMetrics.openEdgeWidth, height: proxy.size.height)
+                        .contentShape(Rectangle())
+                        .gesture(sidebarDrag(openOffset: openOffset))
+                        .accessibilityHidden(true)
+                        .zIndex(2)
+                }
+
+                if isSidebarOpen {
                     Color.clear
                         .frame(width: proxy.size.width - contentOffset, height: proxy.size.height)
                         .contentShape(Rectangle())
@@ -69,32 +77,85 @@ struct ChatShellView: View {
                         .onTapGesture {
                             closeSidebar()
                         }
+                        .gesture(sidebarDrag(openOffset: openOffset))
+                        .accessibilityHidden(true)
                         .zIndex(2)
                 }
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
             .background(Color(.systemBackground))
             .clipped()
-            .contentShape(Rectangle())
-            .simultaneousGesture(sidebarDrag(openOffset: openOffset))
         }
         .ignoresSafeArea()
-        .fullScreenCover(isPresented: $isPresentingAgents) {
-            AgentsView(viewModel: viewModel) {
-                isPresentingAgents = false
-                closeSidebar()
-            } onClose: {
-                isPresentingAgents = false
+    }
+
+    @ViewBuilder
+    private func contentView(for content: SidebarContent) -> some View {
+        switch content {
+        case .chat:
+            ChatView(viewModel: viewModel) {
+                openSidebar()
             }
-        }
-        .fullScreenCover(isPresented: $isPresentingSettings) {
+        case .agents:
+            AgentsView(
+                viewModel: viewModel,
+                switchToChat: {
+                    showChat()
+                },
+                onOpenSidebar: {
+                    openSidebar()
+                },
+                onRootStateChange: { isAtRoot in
+                    isActiveContentAtRoot = isAtRoot
+                }
+            )
+        case .settings:
             SettingsView(viewModel: viewModel) {
-                isPresentingSettings = false
+                showContent(.chat)
             }
         }
     }
 
+    private func showChat() {
+        showContent(.chat)
+    }
+
+    private func showContent(_ content: SidebarContent) {
+        withAnimation(.spring(response: 0.30, dampingFraction: 0.90)) {
+            activeContent = content
+            isSidebarOpen = false
+            dragOffset = 0
+            isActiveContentAtRoot = true
+        }
+    }
+
+    private func showContentFromSidebar(_ content: SidebarContent) {
+        guard isSidebarOpen else {
+            showContent(content)
+            return
+        }
+
+        guard activeContent != content else {
+            closeSidebar()
+            return
+        }
+
+        withTransaction(Transaction(animation: nil)) {
+            activeContent = content
+            dragOffset = 0
+            isActiveContentAtRoot = true
+        }
+
+        DispatchQueue.main.async {
+            closeSidebar()
+        }
+    }
+
     private func openSidebar() {
+        guard canOpenSidebar else {
+            return
+        }
+
         withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
             isSidebarOpen = true
             dragOffset = 0
@@ -120,6 +181,29 @@ struct ChatShellView: View {
         return contentOffset(openOffset: openOffset) / openOffset
     }
 
+    private var canOpenSidebar: Bool {
+        switch activeContent {
+        case .chat, .settings:
+            return true
+        case .agents:
+            return isActiveContentAtRoot
+        }
+    }
+
+    private var sidebarSelection: ChatSidebarSelection? {
+        switch activeContent {
+        case .chat:
+            guard let conversationID = viewModel.activeConversationID else {
+                return nil
+            }
+            return .conversation(conversationID)
+        case .agents:
+            return .agents
+        case .settings:
+            return nil
+        }
+    }
+
     private func sidebarDrag(openOffset: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: SidebarShellMetrics.dragMinimumDistance, coordinateSpace: .global)
             .onChanged { value in
@@ -129,7 +213,7 @@ struct ChatShellView: View {
                         return
                     }
                     dragOffset = min(0, value.translation.width)
-                } else if value.startLocation.x <= SidebarShellMetrics.openEdgeWidth {
+                } else if canOpenSidebar, value.startLocation.x <= SidebarShellMetrics.openEdgeWidth {
                     dragOffset = max(0, min(openOffset, value.translation.width))
                 }
             }
@@ -139,7 +223,8 @@ struct ChatShellView: View {
                     shouldOpen = value.startLocation.x < openOffset
                         || value.predictedEndTranslation.width > -openOffset * SidebarShellMetrics.closeThreshold
                 } else {
-                    shouldOpen = value.startLocation.x <= SidebarShellMetrics.openEdgeWidth
+                    shouldOpen = canOpenSidebar
+                        && value.startLocation.x <= SidebarShellMetrics.openEdgeWidth
                         && value.predictedEndTranslation.width > openOffset * SidebarShellMetrics.openThreshold
                 }
 
@@ -168,6 +253,12 @@ struct ChatShellView: View {
             trailing: insets.right
         )
     }
+}
+
+private enum SidebarContent {
+    case chat
+    case agents
+    case settings
 }
 
 // Sidebar metrics and constants.

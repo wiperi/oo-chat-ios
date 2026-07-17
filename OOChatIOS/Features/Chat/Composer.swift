@@ -260,7 +260,7 @@ struct Composer: View {
                 .glassBackground(
                     in: Circle(),
                     interactive: true,
-                    tint: viewModel.isProcessing ? Color(.systemRed) : AppTheme.primary
+                    tint: AppTheme.primary
                 )
         }
         .disabled(
