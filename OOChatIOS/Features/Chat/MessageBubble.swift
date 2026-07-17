@@ -41,14 +41,9 @@ struct MessageBubble: View {
     }
 
     private var thinkingMessage: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "sparkle")
-            Text(message.content)
-                .italic()
-        }
-        .font(.subheadline)
-        .foregroundStyle(.secondary)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        ClaudeCodeThinkingIndicator(text: message.content)
+            .font(.subheadline)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var toolMessage: some View {
@@ -142,6 +137,89 @@ struct UlwCheckpointCard: View {
         .background(
             Color(.secondarySystemBackground),
             in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+        )
+    }
+}
+
+private struct ClaudeCodeThinkingIndicator: View {
+    private static let glyphFrames = ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"]
+    private static let glyphFrameDuration = 0.12
+    private static let shimmerFrameDuration = 0.2
+    private static let shimmerBandWidth = 4
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var startedAt = Date()
+
+    let text: String
+
+    var body: some View {
+        if reduceMotion {
+            content(glyph: "✻", shimmerFrame: nil)
+        } else {
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
+                let elapsed = max(0, context.date.timeIntervalSince(startedAt))
+                let glyphFrame = Int(elapsed / Self.glyphFrameDuration)
+                let shimmerFrame = Int(elapsed / Self.shimmerFrameDuration)
+
+                content(
+                    glyph: Self.glyphFrames[glyphFrame % Self.glyphFrames.count],
+                    shimmerFrame: shimmerFrame
+                )
+            }
+        }
+    }
+
+    private func content(glyph: String, shimmerFrame: Int?) -> some View {
+        HStack(spacing: 6) {
+            Text(glyph)
+                .font(.system(size: 15, weight: .semibold, design: .monospaced))
+                .foregroundStyle(AppTheme.primary)
+                .frame(width: 16, height: 16)
+                .accessibilityHidden(true)
+
+            Text(shimmeredText(frame: shimmerFrame))
+        }
+    }
+
+    private func shimmeredText(frame: Int?) -> AttributedString {
+        var attributed = AttributedString(text)
+        let characterCount = attributed.characters.count
+
+        guard let frame, characterCount > 0 else {
+            attributed.foregroundColor = AppTheme.primary
+            return attributed
+        }
+
+        let cycleLength = characterCount + Self.shimmerBandWidth * 2
+        let position = cycleLength - 1 - (frame % cycleLength)
+
+        for (offset, index) in attributed.characters.indices.enumerated() {
+            let nextIndex = attributed.characters.index(after: index)
+            let distance = abs(offset - position)
+            let amount = max(0, 1 - Double(distance) / Double(Self.shimmerBandWidth))
+            attributed[index..<nextIndex].foregroundColor = shimmerColor(blending: amount)
+        }
+
+        return attributed
+    }
+
+    private func shimmerColor(blending amount: Double) -> Color {
+        let clampedAmount = min(max(amount, 0), 1)
+        let baseRGB = colorScheme == .dark
+            ? (red: 139.0, green: 92.0, blue: 246.0)
+            : (red: 109.0, green: 40.0, blue: 217.0)
+        let highlightRGB = colorScheme == .dark
+            ? (red: 196.0, green: 181.0, blue: 253.0)
+            : (red: 139.0, green: 92.0, blue: 246.0)
+        let red = baseRGB.red + (highlightRGB.red - baseRGB.red) * clampedAmount
+        let green = baseRGB.green + (highlightRGB.green - baseRGB.green) * clampedAmount
+        let blue = baseRGB.blue + (highlightRGB.blue - baseRGB.blue) * clampedAmount
+
+        return Color(
+            red: red / 255.0,
+            green: green / 255.0,
+            blue: blue / 255.0
         )
     }
 }

@@ -33,6 +33,7 @@ final class SwiftDataConversationRepository: ConversationRepository {
         }
         context = ModelContext(container)
         repairLegacyMessageIDs()
+        removeLegacyInitialMessages()
     }
 
     /// Stores written before `StoredMessage.messageID` existed carry the raw server ID in
@@ -52,6 +53,21 @@ final class SwiftDataConversationRepository: ConversationRepository {
                 messageID: message.messageID
             )
         }
+        save()
+    }
+
+    /// Older app versions inserted a synthetic assistant message into every new chat.
+    /// Remove only that exact legacy bubble so existing conversations open cleanly while
+    /// preserving user-authored messages that happen to mention ConnectOnion.
+    private func removeLegacyInitialMessages() {
+        let messages = (try? context.fetch(FetchDescriptor<StoredMessage>(
+            predicate: #Predicate {
+                $0.roleRaw == "agent"
+                    && $0.content == "ConnectOnion native iOS session is ready."
+            }
+        ))) ?? []
+        guard !messages.isEmpty else { return }
+        messages.forEach(context.delete)
         save()
     }
 

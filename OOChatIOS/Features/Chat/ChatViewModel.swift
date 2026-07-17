@@ -741,7 +741,7 @@ final class ChatViewModel: ObservableObject {
             return nil
         }
         var pending = conversation
-        pending.messages.append(ChatMessage(role: .thinking, content: "Waiting for hosted agent..."))
+        pending.messages.append(ChatMessage(role: .thinking, content: "Waiting for hosted agent…"))
         upsert(pending)
 
         let transport = client

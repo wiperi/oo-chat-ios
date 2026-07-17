@@ -110,6 +110,44 @@ final class SwiftDataConversationRepositoryTests: XCTestCase {
         XCTAssertEqual(repository.load(), .empty)
     }
 
+    func testReopeningStoreRemovesLegacyInitialAssistantMessage() throws {
+        let storeURL = try makeScratchStoreURL()
+        defer { try? FileManager.default.removeItem(at: storeURL.deletingLastPathComponent()) }
+        let repository = try SwiftDataConversationRepository(storeURL: storeURL, defaults: defaults)
+        var conversation = makeConversation(
+            agentID: "a1",
+            address: "0xabc",
+            title: "Existing chat",
+            updatedAt: seconds(1000)
+        )
+        conversation.messages = [
+            ChatMessage(
+                id: "legacy-ready",
+                role: .agent,
+                content: "ConnectOnion native iOS session is ready.",
+                createdAt: seconds(1001)
+            ),
+            ChatMessage(
+                id: "real-reply",
+                role: .agent,
+                content: "How can I help?",
+                createdAt: seconds(1002)
+            ),
+            ChatMessage(
+                id: "quoted-by-user",
+                role: .user,
+                content: "ConnectOnion native iOS session is ready.",
+                createdAt: seconds(1003)
+            ),
+        ]
+        repository.upsertConversation(conversation)
+
+        let reopened = try SwiftDataConversationRepository(storeURL: storeURL, defaults: defaults)
+        let messages = try XCTUnwrap(reopened.load().conversations.first).messages
+
+        XCTAssertEqual(messages.map(\.id), ["real-reply", "quoted-by-user"])
+    }
+
     func testUpsertsThenLoadRestoresAgentsConversationsAndActiveIDs() throws {
         let repository = try makeRepository()
         let agent = AgentConnection(address: "0xabc", createdAt: seconds(1000), updatedAt: seconds(1000))
