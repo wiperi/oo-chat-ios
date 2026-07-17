@@ -8,6 +8,11 @@ struct ChatShellView: View {
     @State private var activeContent: SidebarContent = .chat
     @State private var isActiveContentAtRoot = true
 
+    init(viewModel: ChatViewModel, startsOnAgents: Bool = false) {
+        self.viewModel = viewModel
+        _activeContent = State(initialValue: startsOnAgents ? .agents : .chat)
+    }
+
     var body: some View {
         GeometryReader { proxy in
             let drawerWidth = min(proxy.size.width * SidebarShellMetrics.drawerWidthRatio, SidebarShellMetrics.maxDrawerWidth)
@@ -87,6 +92,17 @@ struct ChatShellView: View {
             .clipped()
         }
         .ignoresSafeArea()
+        .onAppear {
+            if viewModel.agents.isEmpty {
+                activeContent = .agents
+                isActiveContentAtRoot = true
+            }
+        }
+        .onChange(of: viewModel.agents.isEmpty) {
+            if viewModel.agents.isEmpty {
+                showContent(.agents)
+            }
+        }
     }
 
     @ViewBuilder

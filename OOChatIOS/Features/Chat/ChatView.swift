@@ -143,7 +143,6 @@ struct ChatScreen: View {
                             }
                         }
                 }
-                .disabled(viewModel.agents.isEmpty)
                 .accessibilityLabel(
                     viewModel.hasBackgroundPendingInteraction
                         ? "Open sidebar, approval required"
