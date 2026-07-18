@@ -14,7 +14,6 @@ final class ChatViewModel: ObservableObject {
             conversationState.updateActiveDraft(prompt)
         }
     }
-    @Published private var skillsByAgentAddress: [String: [AgentSkill]] = [:]
 
     var isOffline: Bool {
         recoveryCoordinator.isOffline
@@ -36,13 +35,14 @@ final class ChatViewModel: ObservableObject {
         recoveryCoordinator.probeTask
     }
 
-    private var skillFetchTasks: [String: Task<Void, Never>] = [:]
     private let interactionCoordinator: InteractionCoordinator
     private let deliveryCoordinator: MessageDeliveryCoordinator
     private let recoveryCoordinator: ConnectionRecoveryCoordinator
+    private let skillCoordinator: SkillLoadingCoordinator
     private var interactionChangeCancellable: AnyCancellable?
     private var deliveryChangeCancellable: AnyCancellable?
     private var recoveryChangeCancellable: AnyCancellable?
+    private var skillChangeCancellable: AnyCancellable?
     private var conversationStateChangeCancellable: AnyCancellable?
     private var persistenceErrorCancellable: AnyCancellable?
 
@@ -56,7 +56,6 @@ final class ChatViewModel: ObservableObject {
     }
 
     private let conversationState: ConversationState
-    private let identityStore: IdentityStore
     private var client: HostedAgentTransport
 
     var agents: [AgentConnection] {
@@ -169,24 +168,17 @@ final class ChatViewModel: ObservableObject {
     }
 
     var slashSkillSuggestions: [AgentSkill] {
-        guard let query = slashSkillQuery,
-              let address = activeAgent?.address else {
-            return []
-        }
-        let skills = skillsByAgentAddress[address] ?? []
-        guard !query.isEmpty else {
-            return skills
-        }
-        return skills.filter {
-            $0.name.range(
-                of: query,
-                options: [.anchored, .caseInsensitive, .diacriticInsensitive]
-            ) != nil
-        }
+        skillCoordinator.suggestions(
+            prompt: prompt,
+            agentAddress: activeAgent?.address
+        )
     }
 
     var shouldShowSlashSkillPicker: Bool {
-        slashSkillQuery != nil && !slashSkillSuggestions.isEmpty
+        skillCoordinator.shouldShowSuggestions(
+            prompt: prompt,
+            agentAddress: activeAgent?.address
+        )
     }
 
     init(
@@ -204,6 +196,7 @@ final class ChatViewModel: ObservableObject {
             interactionCoordinator: interactionCoordinator,
             transport: transport
         )
+        let skillCoordinator = SkillLoadingCoordinator(transport: transport)
         let recoveryCoordinator = ConnectionRecoveryCoordinator(
             conversationState: conversationState,
             deliveryCoordinator: deliveryCoordinator,
@@ -214,7 +207,7 @@ final class ChatViewModel: ObservableObject {
         self.interactionCoordinator = interactionCoordinator
         self.deliveryCoordinator = deliveryCoordinator
         self.recoveryCoordinator = recoveryCoordinator
-        self.identityStore = identityStore
+        self.skillCoordinator = skillCoordinator
         self.client = transport
         self.agentAddressDraft = conversationState.activeAgent?.address ?? ""
         do {
@@ -232,7 +225,7 @@ final class ChatViewModel: ObservableObject {
             self?.errorMessage = message
         }
         recoveryCoordinator.onReconnect = { [weak self] agent in
-            self?.refreshSkills(for: agent)
+            self?.skillCoordinator.refreshSkills(for: agent)
         }
         deliveryCoordinator.onDeliveryError = { [weak self] conversationID, message in
             guard self?.activeConversationID == conversationID else {
@@ -249,6 +242,9 @@ final class ChatViewModel: ObservableObject {
         recoveryChangeCancellable = recoveryCoordinator.objectWillChange.sink { [weak self] in
             self?.objectWillChange.send()
         }
+        skillChangeCancellable = skillCoordinator.objectWillChange.sink { [weak self] in
+            self?.objectWillChange.send()
+        }
         conversationStateChangeCancellable = conversationState.objectWillChange.sink { [weak self] in
             self?.objectWillChange.send()
         }
@@ -258,10 +254,6 @@ final class ChatViewModel: ObservableObject {
                 self?.errorMessage = error.localizedDescription
             }
         recoveryCoordinator.start()
-    }
-
-    deinit {
-        skillFetchTasks.values.forEach { $0.cancel() }
     }
 
     func agent(withID id: String) -> AgentConnection? {
@@ -280,7 +272,7 @@ final class ChatViewModel: ObservableObject {
         conversationState.selectAgent(agent, currentDraft: prompt)
         prompt = conversationState.activeDraft
         agentAddressDraft = agent.address
-        loadSkillsIfNeeded(for: agent)
+        skillCoordinator.loadSkillsIfNeeded(for: agent, isOffline: isOffline)
     }
 
     func selectConversation(_ conversation: Conversation) {
@@ -288,7 +280,7 @@ final class ChatViewModel: ObservableObject {
         prompt = conversationState.activeDraft
         if let agent = agent(for: conversation) {
             agentAddressDraft = agent.address
-            loadSkillsIfNeeded(for: agent)
+            skillCoordinator.loadSkillsIfNeeded(for: agent, isOffline: isOffline)
         }
     }
 
@@ -336,21 +328,21 @@ final class ChatViewModel: ObservableObject {
         } else {
             _ = createConversation(for: agent)
         }
-        loadSkillsIfNeeded(for: agent)
+        skillCoordinator.loadSkillsIfNeeded(for: agent, isOffline: isOffline)
     }
 
     func promptDidChange() {
-        guard slashSkillQuery != nil, let activeAgent else {
+        guard skillCoordinator.isSlashQuery(prompt), let activeAgent else {
             return
         }
-        loadSkillsIfNeeded(for: activeAgent)
+        skillCoordinator.loadSkillsIfNeeded(for: activeAgent, isOffline: isOffline)
     }
 
     func prefetchActiveAgentSkills() {
         guard let activeAgent else {
             return
         }
-        loadSkillsIfNeeded(for: activeAgent)
+        skillCoordinator.loadSkillsIfNeeded(for: activeAgent, isOffline: isOffline)
     }
 
     func selectSlashSkill(_ skill: AgentSkill) {
@@ -450,7 +442,7 @@ final class ChatViewModel: ObservableObject {
             }
             let savedAgent = upsertAgent(agent)
             ensureDefaultConversation(for: savedAgent, seed: conversation)
-            loadSkillsIfNeeded(for: savedAgent)
+            skillCoordinator.loadSkillsIfNeeded(for: savedAgent, isOffline: isOffline)
             recoveryCoordinator.setConnectionState(.connected, forConversationID: conversation.id)
             isConnecting = false
             return savedAgent
@@ -631,56 +623,6 @@ final class ChatViewModel: ObservableObject {
 
     private func conversationBelongsToAgent(_ conversation: Conversation, _ agent: AgentConnection) -> Bool {
         conversationState.conversationBelongsToAgent(conversation, agent)
-    }
-
-    private var slashSkillQuery: String? {
-        guard prompt.hasPrefix("/") else {
-            return nil
-        }
-        let query = String(prompt.dropFirst())
-        guard !query.contains(where: { $0.isWhitespace }) else {
-            return nil
-        }
-        return query
-    }
-
-    private func loadSkillsIfNeeded(
-        for agent: AgentConnection,
-        allowWhileOffline: Bool = false
-    ) {
-        let address = agent.address
-        guard (allowWhileOffline || !isOffline),
-              HostedAgentClient.isHostedAgentAddress(address),
-              skillsByAgentAddress[address] == nil,
-              skillFetchTasks[address] == nil else {
-            return
-        }
-
-        skillFetchTasks[address] = Task { [weak self] in
-            guard let self else {
-                return
-            }
-            defer {
-                self.skillFetchTasks[address] = nil
-            }
-            do {
-                let skills = try await self.client.fetchSkills(agentAddress: address)
-                guard !Task.isCancelled else {
-                    return
-                }
-                self.skillsByAgentAddress[address] = skills.sorted {
-                    $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
-                }
-            } catch {
-                // Slash discovery is optional. Leave the command editable and retry
-                // the next time the user invokes the picker.
-            }
-        }
-    }
-
-    private func refreshSkills(for agent: AgentConnection) {
-        skillsByAgentAddress[agent.address] = nil
-        loadSkillsIfNeeded(for: agent, allowWhileOffline: true)
     }
 
 }

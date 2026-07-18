@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 @testable import OOChatIOS
 
@@ -1549,6 +1550,23 @@ final class NetworkRecoveryTests: XCTestCase {
         XCTAssertTrue(viewModel.slashSkillSuggestions.isEmpty)
         XCTAssertFalse(viewModel.shouldShowSlashSkillPicker)
         XCTAssertEqual(transport.fetchedSkillAddresses.count, 1)
+    }
+
+    func testSkillLoadingPublishesThroughViewModelFacade() async {
+        let (viewModel, transport, _) = makeEnvironment()
+        setUpAgentAndConversation(viewModel)
+        transport.availableSkills = [AgentSkill(name: "review")]
+        viewModel.prompt = "/"
+        var didPublish = false
+        let cancellable = viewModel.objectWillChange.sink {
+            didPublish = true
+        }
+
+        viewModel.promptDidChange()
+        await waitForSkillFetch(on: viewModel, transport: transport)
+
+        XCTAssertTrue(didPublish)
+        withExtendedLifetime(cancellable) {}
     }
 
     func testSelectingSlashSkillInsertsCommandWithArgumentSpace() async {

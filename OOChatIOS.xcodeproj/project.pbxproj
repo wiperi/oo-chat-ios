@@ -13,6 +13,7 @@
 		100000000000000000000154 /* ConversationState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000059 /* ConversationState.swift */; };
 		100000000000000000000155 /* MessageDeliveryCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000060 /* MessageDeliveryCoordinator.swift */; };
 		100000000000000000000156 /* ConnectionRecoveryCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000061 /* ConnectionRecoveryCoordinator.swift */; };
+		100000000000000000000157 /* SkillLoadingCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000062 /* SkillLoadingCoordinator.swift */; };
 		100000000000000000000104 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000004 /* Models.swift */; };
 		100000000000000000000105 /* CanonicalJSON.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000005 /* CanonicalJSON.swift */; };
 		100000000000000000000106 /* Hex.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000006 /* Hex.swift */; };
@@ -80,6 +81,7 @@
 		100000000000000000000059 /* ConversationState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationState.swift; sourceTree = "<group>"; };
 		100000000000000000000060 /* MessageDeliveryCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageDeliveryCoordinator.swift; sourceTree = "<group>"; };
 		100000000000000000000061 /* ConnectionRecoveryCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionRecoveryCoordinator.swift; sourceTree = "<group>"; };
+		100000000000000000000062 /* SkillLoadingCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkillLoadingCoordinator.swift; sourceTree = "<group>"; };
 		100000000000000000000004 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		100000000000000000000005 /* CanonicalJSON.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanonicalJSON.swift; sourceTree = "<group>"; };
 		100000000000000000000006 /* Hex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Hex.swift; sourceTree = "<group>"; };
@@ -241,6 +243,7 @@
 				100000000000000000000059 /* ConversationState.swift */,
 				100000000000000000000060 /* MessageDeliveryCoordinator.swift */,
 				100000000000000000000061 /* ConnectionRecoveryCoordinator.swift */,
+				100000000000000000000062 /* SkillLoadingCoordinator.swift */,
 				100000000000000000000023 /* ChatView.swift */,
 				100000000000000000000048 /* ChatShellView.swift */,
 				100000000000000000000049 /* ChatSidebarView.swift */,
@@ -491,6 +494,7 @@
 				100000000000000000000154 /* ConversationState.swift in Sources */,
 				100000000000000000000155 /* MessageDeliveryCoordinator.swift in Sources */,
 				100000000000000000000156 /* ConnectionRecoveryCoordinator.swift in Sources */,
+				100000000000000000000157 /* SkillLoadingCoordinator.swift in Sources */,
 				100000000000000000000104 /* Models.swift in Sources */,
 				100000000000000000000105 /* CanonicalJSON.swift in Sources */,
 				100000000000000000000106 /* Hex.swift in Sources */,
