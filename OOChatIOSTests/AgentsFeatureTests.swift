@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 @testable import OOChatIOS
 
@@ -256,6 +257,30 @@ final class AgentsFeatureTests: XCTestCase {
 
         XCTAssertEqual(view.conversations.first?.title, "con1")
         XCTAssertTrue(repo.upsertedConversations.isEmpty)
+    }
+
+    func testConversationStateChangesPublishThroughFacade() {
+        let agent = makeAgent(id: "agent1", address: "0xaaa", updatedAt: seconds(1000))
+        let conversation = makeConversation(id: "con1", agent: agent, updatedAt: seconds(1000))
+        let repo = SpyConversationRepository(
+            snapshot: ChatSnapshot(
+                agents: [agent],
+                conversations: [conversation],
+                activeAgentID: agent.id,
+                activeConversationID: conversation.id
+            )
+        )
+        let view = ChatViewModel(store: repo)
+        var changeCount = 0
+        let cancellable = view.objectWillChange.sink {
+            changeCount += 1
+        }
+
+        view.renameConversation(conversation, to: "Published title")
+
+        XCTAssertGreaterThan(changeCount, 0)
+        XCTAssertEqual(view.activeConversation?.title, "Published title")
+        withExtendedLifetime(cancellable) {}
     }
 
     // Search forwards the query to the store and returns its results unfiltered.

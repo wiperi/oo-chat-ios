@@ -2,12 +2,6 @@ import Combine
 import Foundation
 import SwiftUI
 
-private enum ConversationPersistence {
-    case full
-    case message(id: String)
-    case metadata
-}
-
 @MainActor
 final class WeakChatViewModelReference {
     weak var value: ChatViewModel?
@@ -20,20 +14,13 @@ final class WeakChatViewModelReference {
 @MainActor
 final class ChatViewModel: ObservableObject {
     @Published var identity: StoredIdentity?
-    @Published var agents: [AgentConnection]
-    @Published var conversations: [Conversation]
-    @Published var activeAgentID: String?
-    @Published var activeConversationID: String?
     @Published var isConnecting = false
     @Published var errorMessage: String?
     @Published var connectionFailureMessage: String?
     @Published var agentAddressDraft = ""
     @Published var prompt = "" {
         didSet {
-            guard !isRestoringConversationDraft, let activeConversationID else {
-                return
-            }
-            draftsByConversationID[activeConversationID] = prompt
+            conversationState.updateActiveDraft(prompt)
         }
     }
     @Published private(set) var isOffline = false
@@ -49,38 +36,50 @@ final class ChatViewModel: ObservableObject {
     private var deliveryTasksByConversationID: [String: Task<Void, Never>] = [:]
     private var activeMessageIDsByConversationID: [String: String] = [:]
     private var pausedConversationIDs: Set<String> = []
-    private var draftsByConversationID: [String: String] = [:]
-    private var isRestoringConversationDraft = false
     private(set) var recoveryTask: Task<Void, Never>?
     private(set) var probeTask: Task<Void, Never>?
     private var skillFetchTasks: [String: Task<Void, Never>] = [:]
     private let interactionCoordinator = InteractionCoordinator()
     private var interactionChangeCancellable: AnyCancellable?
+    private var conversationStateChangeCancellable: AnyCancellable?
+    private var persistenceErrorCancellable: AnyCancellable?
 
     /// Seconds between silent reachability probes while offline. Overridable in tests.
     var probeInterval: TimeInterval = 5
 
-    private let store: ConversationRepository
+    private let conversationState: ConversationState
     private let identityStore: IdentityStore
     private let networkMonitor: NetworkPathMonitoring
     private let injectedClient: HostedAgentTransport?
     private lazy var client: HostedAgentTransport = injectedClient ?? HostedAgentClient(identityStore: identityStore)
 
+    var agents: [AgentConnection] {
+        conversationState.agents
+    }
+
+    var conversations: [Conversation] {
+        get {
+            conversationState.conversations
+        }
+        set {
+            conversationState.replaceConversations(newValue)
+        }
+    }
+
+    var activeAgentID: String? {
+        conversationState.activeAgentID
+    }
+
+    var activeConversationID: String? {
+        conversationState.activeConversationID
+    }
+
     var activeAgent: AgentConnection? {
-        if let activeAgentID, let agent = agent(withID: activeAgentID) {
-            return agent
-        }
-        if let activeConversation, let agent = agent(for: activeConversation) {
-            return agent
-        }
-        return agents.first
+        conversationState.activeAgent
     }
 
     var activeConversation: Conversation? {
-        guard let activeConversationID else {
-            return nil
-        }
-        return conversations.first { $0.id == activeConversationID }
+        conversationState.activeConversation
     }
 
     var activeMode: ChatMode {
@@ -194,28 +193,18 @@ final class ChatViewModel: ObservableObject {
         networkMonitor: NetworkPathMonitoring? = nil
     ) {
         let store = store ?? ConversationRepositoryFactory.make()
-        self.store = store
+        let conversationState = ConversationState(store: store)
+        self.conversationState = conversationState
         self.identityStore = identityStore
         self.injectedClient = client
         self.networkMonitor = networkMonitor ?? NetworkMonitor()
-        let snapshotResult = store.loadResult()
-        let snapshot = (try? snapshotResult.get()) ?? .empty
-        self.agents = snapshot.agents
-        self.conversations = snapshot.conversations
-        self.activeConversationID = snapshot.activeConversationID
-        let activeConversationAgentID = snapshot.activeConversationID.flatMap { activeConversationID in
-            snapshot.conversations.first { $0.id == activeConversationID }?.agentID
-        }
-        self.activeAgentID = snapshot.activeAgentID
-            ?? activeConversationAgentID
-            ?? snapshot.agents.first?.id
-        self.agentAddressDraft = snapshot.agents.first { $0.id == self.activeAgentID }?.address ?? ""
+        self.agentAddressDraft = conversationState.activeAgent?.address ?? ""
         do {
             self.identity = try identityStore.loadOrCreateIdentity()
         } catch {
             self.errorMessage = error.localizedDescription
         }
-        if case .failure(let error) = snapshotResult {
+        if let error = conversationState.persistenceError {
             self.errorMessage = error.localizedDescription
         }
         self.networkMonitor.onUpdate = { [weak self] isOnline in
@@ -227,6 +216,14 @@ final class ChatViewModel: ObservableObject {
         interactionChangeCancellable = interactionCoordinator.objectWillChange.sink { [weak self] in
             self?.objectWillChange.send()
         }
+        conversationStateChangeCancellable = conversationState.objectWillChange.sink { [weak self] in
+            self?.objectWillChange.send()
+        }
+        persistenceErrorCancellable = conversationState.$persistenceError
+            .compactMap { $0 }
+            .sink { [weak self] error in
+                self?.errorMessage = error.localizedDescription
+            }
         self.networkMonitor.start()
     }
 
@@ -239,39 +236,31 @@ final class ChatViewModel: ObservableObject {
     }
 
     func agent(withID id: String) -> AgentConnection? {
-        agents.first { $0.id == id }
+        conversationState.agent(withID: id)
     }
 
     func conversation(withID id: String) -> Conversation? {
-        conversations.first { $0.id == id }
+        conversationState.conversation(withID: id)
     }
 
     func conversations(for agent: AgentConnection) -> [Conversation] {
-        conversations
-            .filter { conversationBelongsToAgent($0, agent) }
-            .sorted { $0.updatedAt > $1.updatedAt }
+        conversationState.conversations(for: agent)
     }
 
     func selectAgent(_ agent: AgentConnection) {
-        activeAgentID = agent.id
+        conversationState.selectAgent(agent, currentDraft: prompt)
+        prompt = conversationState.activeDraft
         agentAddressDraft = agent.address
-        if let activeConversation, !conversationBelongsToAgent(activeConversation, agent) {
-            activateConversation(withID: conversations(for: agent).first?.id)
-        } else if activeConversation == nil {
-            activateConversation(withID: conversations(for: agent).first?.id)
-        }
-        persist()
         loadSkillsIfNeeded(for: agent)
     }
 
     func selectConversation(_ conversation: Conversation) {
-        activateConversation(withID: conversation.id)
+        conversationState.selectConversation(conversation, currentDraft: prompt)
+        prompt = conversationState.activeDraft
         if let agent = agent(for: conversation) {
-            activeAgentID = agent.id
             agentAddressDraft = agent.address
             loadSkillsIfNeeded(for: agent)
         }
-        persist()
     }
 
     func selectConversation(withID id: String) {
@@ -282,15 +271,10 @@ final class ChatViewModel: ObservableObject {
     }
 
     func createConversation(for agent: AgentConnection) -> Conversation {
-        var conversation = Conversation(agentID: agent.id, agentAddress: agent.address)
-        conversation.title = "New mobile session"
-        conversations.insert(conversation, at: 0)
-        activeAgentID = agent.id
-        activateConversation(withID: conversation.id)
+        let conversation = conversationState.createConversation(for: agent, currentDraft: prompt)
+        prompt = conversationState.activeDraft
         connectionStatesByConversationID[conversation.id] = .disconnected
         agentAddressDraft = agent.address
-        recordPersistence(store.upsertConversationResult(conversation))
-        persist()
         return conversation
     }
 
@@ -304,49 +288,22 @@ final class ChatViewModel: ObservableObject {
             errorMessage = "That doesn't look like an agent address. It should start with 0x followed by 64 characters."
             return nil
         }
-        let existing = id.flatMap(agent(withID:))
-        let now = Date()
-        let shouldResetSessions = existing.map {
-            $0.address != trimmedAddress || $0.token != trimmedToken
-        } ?? false
-        var next = AgentConnection(
-            id: existing?.id ?? UUID().uuidString,
-            address: trimmedAddress,
-            name: trimmedName.isEmpty ? nil : trimmedName,
-            token: trimmedToken,
-            createdAt: existing?.createdAt ?? now,
-            updatedAt: now
-        )
-        next.updatedAt = now
-
-        if let existing {
-            for index in conversations.indices where conversationBelongsToAgent(conversations[index], existing) {
-                conversations[index].agentID = next.id
-                conversations[index].agentAddress = next.address
-                if shouldResetSessions {
-                    conversations[index].serverSession = nil
-                }
-                conversations[index].updatedAt = now
-                recordPersistence(store.upsertConversationResult(conversations[index]))
-            }
-        }
-
-        agents.removeAll { $0.id == next.id }
-        agents.insert(next, at: 0)
-        activeAgentID = next.id
-        agentAddressDraft = next.address
         errorMessage = nil
-        recordPersistence(store.upsertAgentResult(next))
-        persist()
+        let next = conversationState.saveAgent(
+            id: id,
+            name: trimmedName,
+            address: trimmedAddress,
+            token: trimmedToken
+        )
+        agentAddressDraft = next.address
         return next
     }
 
     func switchToAgentForChat(_ agent: AgentConnection) {
-        activeAgentID = agent.id
         agentAddressDraft = agent.address
         if let conversation = conversations(for: agent).first {
-            activateConversation(withID: conversation.id)
-            persist()
+            conversationState.selectConversation(conversation, currentDraft: prompt)
+            prompt = conversationState.activeDraft
         } else {
             _ = createConversation(for: agent)
         }
@@ -375,17 +332,8 @@ final class ChatViewModel: ObservableObject {
         cancelPendingInteractions(forConversationID: conversation.id)
         pausedConversationIDs.remove(conversation.id)
         connectionStatesByConversationID[conversation.id] = nil
-        conversations.removeAll { $0.id == conversation.id }
-        if activeConversationID == conversation.id {
-            if let activeAgent {
-                activateConversation(withID: conversations(for: activeAgent).first?.id)
-            } else {
-                activateConversation(withID: nil)
-            }
-        }
-        draftsByConversationID[conversation.id] = nil
-        recordPersistence(store.deleteConversationResult(id: conversation.id))
-        persist()
+        conversationState.deleteConversation(conversation, currentDraft: prompt)
+        prompt = conversationState.activeDraft
     }
 
     func deleteAgent(_ agent: AgentConnection) {
@@ -395,28 +343,9 @@ final class ChatViewModel: ObservableObject {
             pausedConversationIDs.remove(conversationID)
             connectionStatesByConversationID[conversationID] = nil
         }
-        agents.removeAll { $0.id == agent.id }
-        conversations.removeAll { conversationBelongsToAgent($0, agent) }
-
-        if activeAgentID == agent.id {
-            activeAgentID = agents.first?.id
-            agentAddressDraft = activeAgent?.address ?? ""
-        }
-        if let activeConversationID, deletedConversationIDs.contains(activeConversationID) {
-            if let activeAgent {
-                activateConversation(withID: conversations(for: activeAgent).first?.id)
-            } else {
-                activateConversation(withID: nil)
-            }
-        }
-        for conversationID in deletedConversationIDs {
-            draftsByConversationID[conversationID] = nil
-        }
-        deletedConversationIDs.forEach {
-            recordPersistence(store.deleteConversationResult(id: $0))
-        }
-        recordPersistence(store.deleteAgentResult(id: agent.id))
-        persist()
+        conversationState.deleteAgent(agent, currentDraft: prompt)
+        prompt = conversationState.activeDraft
+        agentAddressDraft = activeAgent?.address ?? ""
     }
 
     /// Renames a conversation in place. Empty/whitespace titles and no-op renames are
@@ -424,32 +353,14 @@ final class ChatViewModel: ObservableObject {
     /// reorder the list, bump `updatedAt`, or change the active conversation — only the
     /// title and its persisted row change.
     func renameConversation(_ conversation: Conversation, to title: String) {
-        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty,
-              let index = conversations.firstIndex(where: { $0.id == conversation.id }),
-              conversations[index].title != trimmed else {
-            return
-        }
-        conversations[index].title = trimmed
-        recordPersistence(store.upsertConversationResult(conversations[index]))
+        conversationState.renameConversation(conversation, to: title)
     }
 
     /// Filters conversations by title and message content via the store's indexed query,
     /// optionally scoped to a single agent. An empty/whitespace query returns all
     /// conversations (most-recent-first), matching the repository contract.
     func searchConversations(_ query: String, for agent: AgentConnection? = nil) -> [Conversation] {
-        let results: [Conversation]
-        switch store.searchResult(query) {
-        case .success(let conversations):
-            results = conversations
-        case .failure(let error):
-            errorMessage = error.localizedDescription
-            results = []
-        }
-        guard let agent else {
-            return results
-        }
-        return results.filter { conversationBelongsToAgent($0, agent) }
+        conversationState.searchConversations(query, for: agent)
     }
 
     func setMode(_ mode: ChatMode) {
@@ -1026,78 +937,34 @@ final class ChatViewModel: ObservableObject {
     }
 
     private func upsertAgent(_ agent: AgentConnection) -> AgentConnection {
-        var next = agent
-        next.name = next.name.isEmpty ? AgentConnection.defaultName(for: next.address) : next.name
-        next.updatedAt = Date()
-        agents.removeAll { $0.id == next.id }
-        agents.insert(next, at: 0)
-        activeAgentID = next.id
+        let next = conversationState.upsertAgent(agent)
         agentAddressDraft = next.address
-        recordPersistence(store.upsertAgentResult(next))
-        persist()
         return next
     }
 
     private func ensureDefaultConversation(for agent: AgentConnection, seed: Conversation) {
-        if var existing = conversations(for: agent).first {
-            if let session = seed.serverSession {
-                existing.serverSession = self.session(session, applying: existing.mode, conversationID: existing.id)
-            }
-            existing.agentID = agent.id
-            existing.agentAddress = agent.address
-            activateConversation(withID: existing.id)
-            upsert(existing)
-            return
+        var normalizedSeed = seed
+        if let existing = conversations(for: agent).first,
+           let session = seed.serverSession {
+            normalizedSeed.serverSession = self.session(
+                session,
+                applying: existing.mode,
+                conversationID: existing.id
+            )
         }
-
-        var conversation = seed
-        conversation.agentID = agent.id
-        conversation.agentAddress = agent.address
-        conversations.insert(conversation, at: 0)
-        activateConversation(withID: conversation.id)
-        recordPersistence(store.upsertConversationResult(conversation))
-        persist()
+        conversationState.ensureDefaultConversation(
+            for: agent,
+            seed: normalizedSeed,
+            currentDraft: prompt
+        )
+        prompt = conversationState.activeDraft
     }
 
     private func upsert(
         _ conversation: Conversation,
         persistence: ConversationPersistence = .full
     ) {
-        var next = conversation
-        next.updatedAt = Date()
-        if let agent = agent(for: next) {
-            next.agentID = agent.id
-            next.agentAddress = agent.address
-            touchAgent(id: agent.id)
-            if let touched = self.agent(withID: agent.id) {
-                recordPersistence(store.upsertAgentResult(touched))
-            }
-        }
-        conversations.removeAll { $0.id == next.id }
-        conversations.insert(next, at: 0)
-        switch persistence {
-        case .full:
-            recordPersistence(store.upsertConversationResult(next))
-        case .message(let id):
-            guard let message = next.messages.first(where: { $0.id == id }) else {
-                recordPersistence(store.upsertConversationResult(next))
-                persist()
-                return
-            }
-            recordPersistence(store.upsertMessageResult(message, in: next))
-        case .metadata:
-            recordPersistence(store.updateConversationMetadataResult(next))
-        }
-        persist()
-    }
-
-    private func touchAgent(id: String) {
-        guard let index = agents.firstIndex(where: { $0.id == id }) else {
-            return
-        }
-        var agent = agents.remove(at: index)
-        agent.updatedAt = Date()
-        agents.insert(agent, at: 0)
+        conversationState.upsert(conversation, persistence: persistence)
     }
 
     private func setConnectionState(
@@ -1111,34 +978,12 @@ final class ChatViewModel: ObservableObject {
         connectionStatesByConversationID[conversationID] ?? .disconnected
     }
 
-    private func activateConversation(withID conversationID: String?) {
-        guard activeConversationID != conversationID else {
-            return
-        }
-        if let activeConversationID {
-            draftsByConversationID[activeConversationID] = prompt
-        }
-        activeConversationID = conversationID
-        isRestoringConversationDraft = true
-        prompt = conversationID.flatMap { draftsByConversationID[$0] } ?? ""
-        isRestoringConversationDraft = false
-    }
-
     private func agent(for conversation: Conversation) -> AgentConnection? {
-        if let agentID = conversation.agentID, let agent = agent(withID: agentID) {
-            return agent
-        }
-        if conversation.agentID != nil {
-            return nil
-        }
-        return agents.first { $0.address == conversation.agentAddress }
+        conversationState.agent(for: conversation)
     }
 
     private func conversationBelongsToAgent(_ conversation: Conversation, _ agent: AgentConnection) -> Bool {
-        if let agentID = conversation.agentID {
-            return agentID == agent.id
-        }
-        return conversation.agentAddress == agent.address
+        conversationState.conversationBelongsToAgent(conversation, agent)
     }
 
     private func session(_ session: [String: JSONValue]?, applying mode: ChatMode, conversationID: String) -> [String: JSONValue] {
@@ -1208,16 +1053,6 @@ final class ChatViewModel: ObservableObject {
     private func refreshSkills(for agent: AgentConnection) {
         skillsByAgentAddress[agent.address] = nil
         loadSkillsIfNeeded(for: agent, allowWhileOffline: true)
-    }
-
-    private func persist() {
-        store.saveActive(agentID: activeAgentID, conversationID: activeConversationID)
-    }
-
-    private func recordPersistence(_ result: Result<Void, ConversationRepositoryError>) {
-        if case .failure(let error) = result {
-            errorMessage = error.localizedDescription
-        }
     }
 
     private func titleFromPrompt(_ text: String) -> String {
