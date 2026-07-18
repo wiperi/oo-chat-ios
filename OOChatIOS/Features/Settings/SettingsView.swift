@@ -1,7 +1,7 @@
 import SwiftUI
 
-struct SettingsView: View {
-    @ObservedObject var viewModel: ChatViewModel
+struct SettingsView<Model: SettingsFeatureModel>: View {
+    @ObservedObject var viewModel: Model
     var onClose: (() -> Void)?
     @AppStorage("appAppearance") private var appAppearance = AppAppearance.system.rawValue
 

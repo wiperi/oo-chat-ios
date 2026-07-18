@@ -4,8 +4,8 @@ enum AgentRoute: Hashable {
     case sessions(String)
 }
 
-struct AgentsView: View {
-    @ObservedObject var viewModel: ChatViewModel
+struct AgentsView<Model: AgentsFeatureModel>: View {
+    @ObservedObject var viewModel: Model
     let switchToChat: () -> Void
     var onOpenSidebar: (() -> Void)?
     var onRootStateChange: ((Bool) -> Void)?

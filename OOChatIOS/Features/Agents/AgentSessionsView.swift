@@ -1,7 +1,7 @@
 import SwiftUI
 
-struct AgentSessionsView: View {
-    @ObservedObject var viewModel: ChatViewModel
+struct AgentSessionsView<Model: AgentsFeatureModel>: View {
+    @ObservedObject var viewModel: Model
     let agentID: String
     let switchToChat: () -> Void
 
