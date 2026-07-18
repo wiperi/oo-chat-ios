@@ -713,6 +713,39 @@ final class NetworkRecoveryTests: XCTestCase {
         XCTAssertEqual(messages.last?.content, "I found the project notes.")
     }
 
+    func testStreamedEventsRemainScopedToOriginConversationAfterSelectionChanges() async {
+        let (viewModel, transport, _) = makeEnvironment()
+        let agent = setUpAgentAndConversation(viewModel)
+        let originConversation = viewModel.activeConversation!
+        let gate = PromptGate()
+        transport.sendBehavior = .wait(gate: gate, output: "Background result")
+        transport.streamedEvents = [
+            .toolCall(id: "background-tool", name: "read_file", arguments: [:]),
+            .toolResult(
+                id: "background-tool",
+                name: "read_file",
+                output: "Background output",
+                state: .completed
+            ),
+        ]
+
+        viewModel.prompt = "Run in the background"
+        viewModel.sendPrompt()
+        await waitForSentPrompt(transport: transport)
+        let foregroundConversation = viewModel.createConversation(for: agent)
+
+        await gate.open()
+        await waitUntilIdle(originConversation.id, on: viewModel)
+
+        let originMessages = viewModel.conversation(withID: originConversation.id)?.messages ?? []
+        XCTAssertEqual(originMessages.first { $0.id == "background-tool" }?.content, "Background output")
+        XCTAssertEqual(originMessages.last?.content, "Background result")
+        XCTAssertFalse(
+            (viewModel.conversation(withID: foregroundConversation.id)?.messages ?? [])
+                .contains { $0.id == "background-tool" }
+        )
+    }
+
     func testSafeModeWaitsForAllowOnce() async {
         let (viewModel, transport, _) = makeEnvironment()
         setUpAgentAndConversation(viewModel)

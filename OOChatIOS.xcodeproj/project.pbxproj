@@ -11,6 +11,7 @@
 		100000000000000000000102 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000002 /* ContentView.swift */; };
 		100000000000000000000103 /* ChatViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000003 /* ChatViewModel.swift */; };
 		100000000000000000000154 /* ConversationState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000059 /* ConversationState.swift */; };
+		100000000000000000000155 /* MessageDeliveryCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000060 /* MessageDeliveryCoordinator.swift */; };
 		100000000000000000000104 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000004 /* Models.swift */; };
 		100000000000000000000105 /* CanonicalJSON.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000005 /* CanonicalJSON.swift */; };
 		100000000000000000000106 /* Hex.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000006 /* Hex.swift */; };
@@ -76,6 +77,7 @@
 		100000000000000000000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		100000000000000000000003 /* ChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModel.swift; sourceTree = "<group>"; };
 		100000000000000000000059 /* ConversationState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationState.swift; sourceTree = "<group>"; };
+		100000000000000000000060 /* MessageDeliveryCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageDeliveryCoordinator.swift; sourceTree = "<group>"; };
 		100000000000000000000004 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		100000000000000000000005 /* CanonicalJSON.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanonicalJSON.swift; sourceTree = "<group>"; };
 		100000000000000000000006 /* Hex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Hex.swift; sourceTree = "<group>"; };
@@ -235,6 +237,7 @@
 				100000000000000000000039 /* MarkdownMessageView.swift */,
 				100000000000000000000003 /* ChatViewModel.swift */,
 				100000000000000000000059 /* ConversationState.swift */,
+				100000000000000000000060 /* MessageDeliveryCoordinator.swift */,
 				100000000000000000000023 /* ChatView.swift */,
 				100000000000000000000048 /* ChatShellView.swift */,
 				100000000000000000000049 /* ChatSidebarView.swift */,
@@ -483,6 +486,7 @@
 				100000000000000000000142 /* AppAppearance.swift in Sources */,
 				100000000000000000000103 /* ChatViewModel.swift in Sources */,
 				100000000000000000000154 /* ConversationState.swift in Sources */,
+				100000000000000000000155 /* MessageDeliveryCoordinator.swift in Sources */,
 				100000000000000000000104 /* Models.swift in Sources */,
 				100000000000000000000105 /* CanonicalJSON.swift in Sources */,
 				100000000000000000000106 /* Hex.swift in Sources */,

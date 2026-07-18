@@ -3,15 +3,6 @@ import Foundation
 import SwiftUI
 
 @MainActor
-final class WeakChatViewModelReference {
-    weak var value: ChatViewModel?
-
-    init(_ value: ChatViewModel) {
-        self.value = value
-    }
-}
-
-@MainActor
 final class ChatViewModel: ObservableObject {
     @Published var identity: StoredIdentity?
     @Published var isConnecting = false
@@ -26,21 +17,19 @@ final class ChatViewModel: ObservableObject {
     @Published private(set) var isOffline = false
     @Published private(set) var isOfflineBannerDismissed = false
     @Published private var connectionStatesByConversationID: [String: ConnectionState] = [:]
-    @Published private var processingConversationIDs: Set<String> = []
     @Published private var skillsByAgentAddress: [String: [AgentSkill]] = [:]
 
     var shouldShowOfflineBanner: Bool {
         isOffline && !isOfflineBannerDismissed
     }
 
-    private var deliveryTasksByConversationID: [String: Task<Void, Never>] = [:]
-    private var activeMessageIDsByConversationID: [String: String] = [:]
-    private var pausedConversationIDs: Set<String> = []
     private(set) var recoveryTask: Task<Void, Never>?
     private(set) var probeTask: Task<Void, Never>?
     private var skillFetchTasks: [String: Task<Void, Never>] = [:]
-    private let interactionCoordinator = InteractionCoordinator()
+    private let interactionCoordinator: InteractionCoordinator
+    private let deliveryCoordinator: MessageDeliveryCoordinator
     private var interactionChangeCancellable: AnyCancellable?
+    private var deliveryChangeCancellable: AnyCancellable?
     private var conversationStateChangeCancellable: AnyCancellable?
     private var persistenceErrorCancellable: AnyCancellable?
 
@@ -50,8 +39,7 @@ final class ChatViewModel: ObservableObject {
     private let conversationState: ConversationState
     private let identityStore: IdentityStore
     private let networkMonitor: NetworkPathMonitoring
-    private let injectedClient: HostedAgentTransport?
-    private lazy var client: HostedAgentTransport = injectedClient ?? HostedAgentClient(identityStore: identityStore)
+    private var client: HostedAgentTransport
 
     var agents: [AgentConnection] {
         conversationState.agents
@@ -97,14 +85,11 @@ final class ChatViewModel: ObservableObject {
         guard let activeConversationID else {
             return false
         }
-        return processingConversationIDs.contains(activeConversationID)
+        return deliveryCoordinator.isProcessing(conversationID: activeConversationID)
     }
 
     var sendTask: Task<Void, Never>? {
-        guard let activeConversationID else {
-            return nil
-        }
-        return deliveryTasksByConversationID[activeConversationID]
+        deliveryCoordinator.task(for: activeConversationID)
     }
 
     var pendingApproval: PendingApproval? {
@@ -144,7 +129,7 @@ final class ChatViewModel: ObservableObject {
     }
 
     func isProcessing(conversationID: String) -> Bool {
-        processingConversationIDs.contains(conversationID)
+        deliveryCoordinator.isProcessing(conversationID: conversationID)
     }
 
     func hasPendingInteraction(forConversationID conversationID: String) -> Bool {
@@ -194,9 +179,17 @@ final class ChatViewModel: ObservableObject {
     ) {
         let store = store ?? ConversationRepositoryFactory.make()
         let conversationState = ConversationState(store: store)
+        let interactionCoordinator = InteractionCoordinator()
+        let transport = client ?? HostedAgentClient(identityStore: identityStore)
         self.conversationState = conversationState
+        self.interactionCoordinator = interactionCoordinator
+        self.deliveryCoordinator = MessageDeliveryCoordinator(
+            conversationState: conversationState,
+            interactionCoordinator: interactionCoordinator,
+            transport: transport
+        )
         self.identityStore = identityStore
-        self.injectedClient = client
+        self.client = transport
         self.networkMonitor = networkMonitor ?? NetworkMonitor()
         self.agentAddressDraft = conversationState.activeAgent?.address ?? ""
         do {
@@ -213,7 +206,22 @@ final class ChatViewModel: ObservableObject {
         self.client.onConnectionStateChange = { [weak self] conversationID, state in
             self?.setConnectionState(state, forConversationID: conversationID)
         }
+        deliveryCoordinator.connectionState = { [weak self] conversationID in
+            self?.connectionState(forConversationID: conversationID) ?? .disconnected
+        }
+        deliveryCoordinator.onConnectionStateChange = { [weak self] conversationID, state in
+            self?.setConnectionState(state, forConversationID: conversationID)
+        }
+        deliveryCoordinator.onDeliveryError = { [weak self] conversationID, message in
+            guard self?.activeConversationID == conversationID else {
+                return
+            }
+            self?.errorMessage = message
+        }
         interactionChangeCancellable = interactionCoordinator.objectWillChange.sink { [weak self] in
+            self?.objectWillChange.send()
+        }
+        deliveryChangeCancellable = deliveryCoordinator.objectWillChange.sink { [weak self] in
             self?.objectWillChange.send()
         }
         conversationStateChangeCancellable = conversationState.objectWillChange.sink { [weak self] in
@@ -231,7 +239,6 @@ final class ChatViewModel: ObservableObject {
         networkMonitor.cancel()
         probeTask?.cancel()
         recoveryTask?.cancel()
-        deliveryTasksByConversationID.values.forEach { $0.cancel() }
         skillFetchTasks.values.forEach { $0.cancel() }
     }
 
@@ -330,7 +337,6 @@ final class ChatViewModel: ObservableObject {
 
     func deleteConversation(_ conversation: Conversation) {
         cancelPendingInteractions(forConversationID: conversation.id)
-        pausedConversationIDs.remove(conversation.id)
         connectionStatesByConversationID[conversation.id] = nil
         conversationState.deleteConversation(conversation, currentDraft: prompt)
         prompt = conversationState.activeDraft
@@ -340,7 +346,6 @@ final class ChatViewModel: ObservableObject {
         let deletedConversationIDs = Set(conversations(for: agent).map(\.id))
         for conversationID in deletedConversationIDs {
             cancelPendingInteractions(forConversationID: conversationID)
-            pausedConversationIDs.remove(conversationID)
             connectionStatesByConversationID[conversationID] = nil
         }
         conversationState.deleteAgent(agent, currentDraft: prompt)
@@ -371,7 +376,11 @@ final class ChatViewModel: ObservableObject {
             return
         }
         conversation.mode = mode
-        conversation.serverSession = session(conversation.serverSession, applying: mode, conversationID: conversation.id)
+        conversation.serverSession = HostedAgentSessionState.applying(
+            mode,
+            to: conversation.serverSession,
+            conversationID: conversation.id
+        )
         conversation.serverSession?["updated"] = .number(Date().timeIntervalSince1970)
         upsert(conversation)
     }
@@ -410,10 +419,10 @@ final class ChatViewModel: ObservableObject {
         do {
             let result = try await client.connect(agentAddress: address, conversation: conversation)
             if let session = result.serverSession {
-                conversation.mode = serverMode(from: session, fallback: conversation.mode)
-                conversation.serverSession = self.session(
-                    session,
-                    applying: conversation.mode,
+                conversation.mode = HostedAgentSessionState.mode(from: session, fallback: conversation.mode)
+                conversation.serverSession = HostedAgentSessionState.applying(
+                    conversation.mode,
+                    to: session,
                     conversationID: conversation.id
                 )
             }
@@ -435,254 +444,39 @@ final class ChatViewModel: ObservableObject {
 
     func sendPrompt() {
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, var conversation = activeConversation else {
+        guard !text.isEmpty else {
             return
         }
-        guard let agent = agent(for: conversation),
-              HostedAgentClient.isHostedAgentAddress(agent.address) else {
-            errorMessage = "Connect to an agent before sending a message."
-            return
-        }
-
-        prompt = ""
-        errorMessage = nil
-        conversation.agentID = agent.id
-        conversation.agentAddress = agent.address
-        conversation.title = conversation.title == "New mobile session" ? titleFromPrompt(text) : conversation.title
-        let message = ChatMessage(role: .user, content: text, deliveryState: .queued)
-        conversation.messages.append(message)
-        upsert(conversation)
-        pausedConversationIDs.remove(conversation.id)
-
-        if !isOffline {
-            startNextQueuedMessage(in: conversation.id)
+        deliveryCoordinator.setDeliveryEnabled(!isOffline)
+        switch deliveryCoordinator.enqueuePrompt(text) {
+        case .queued:
+            prompt = ""
+            errorMessage = nil
+        case .rejected(let message):
+            errorMessage = message
         }
     }
 
     func retryMessage(_ message: ChatMessage) {
-        guard message.role == .user,
-              message.deliveryState == .failed || message.deliveryState == .cancelled else {
-            return
-        }
-        guard var conversation = conversations.first(where: { candidate in
-            candidate.messages.contains { $0.id == message.id }
-        }) else {
-            return
-        }
-        if let index = conversation.messages.firstIndex(where: { $0.id == message.id }) {
-            conversation.messages[index].deliveryState = .queued
-        }
-        errorMessage = nil
-        upsert(conversation)
-        pausedConversationIDs.remove(conversation.id)
-
-        if !isOffline {
-            startNextQueuedMessage(in: conversation.id)
+        deliveryCoordinator.setDeliveryEnabled(!isOffline)
+        if deliveryCoordinator.retryMessage(message) {
+            errorMessage = nil
         }
     }
 
     func flushQueuedMessages() async {
-        guard !isOffline else {
-            return
-        }
-
-        for conversation in conversations {
-            startNextQueuedMessage(in: conversation.id)
-        }
-
-        while !isOffline {
-            let tasks = Array(deliveryTasksByConversationID.values)
-            guard !tasks.isEmpty else {
-                break
-            }
-            for task in tasks {
-                await task.value
-            }
-        }
+        deliveryCoordinator.setDeliveryEnabled(!isOffline)
+        await deliveryCoordinator.flushQueuedMessages()
     }
 
     func stopActiveResponse() {
-        guard let conversationID = activeConversationID,
-              let task = deliveryTasksByConversationID[conversationID],
-              let conversation = conversation(withID: conversationID),
-              let agent = agent(for: conversation) else {
-            return
-        }
-
-        pausedConversationIDs.insert(conversationID)
-        guard settlePendingInteractionForStop(in: conversationID) else {
-            task.cancel()
-            return
-        }
-
-        let transport = client
-        Task {
-            await transport.waitForPendingInteractionResponses(
-                agentAddress: agent.address,
-                conversationID: conversationID
-            )
-            task.cancel()
-        }
-    }
-
-    @discardableResult
-    private func startNextQueuedMessage(in conversationID: String) -> Bool {
-        guard !isOffline,
-              !pausedConversationIDs.contains(conversationID),
-              deliveryTasksByConversationID[conversationID] == nil,
-              let conversation = conversation(withID: conversationID),
-              let message = conversation.messages.first(where: {
-                  $0.role == .user && $0.deliveryState == .queued
-              }) else {
-            return false
-        }
-
-        activeMessageIDsByConversationID[conversationID] = message.id
-        processingConversationIDs.insert(conversationID)
-        if connectionState(forConversationID: conversationID) != .connected {
-            setConnectionState(.reconnecting, forConversationID: conversationID)
-        }
-
-        guard let deliveryTask = makeDeliveryTask(
-            messageID: message.id,
-            conversationID: conversationID
-        ) else {
-            activeMessageIDsByConversationID[conversationID] = nil
-            processingConversationIDs.remove(conversationID)
-            return false
-        }
-        deliveryTasksByConversationID[conversationID] = deliveryTask
-        return true
-    }
-
-    private func makeDeliveryTask(messageID: String, conversationID: String) -> Task<Void, Never>? {
-        guard let conversation = self.conversation(withID: conversationID),
-              let message = conversation.messages.first(where: { $0.id == messageID }),
-              message.role == .user,
-              let agent = agent(for: conversation),
-              HostedAgentClient.isHostedAgentAddress(agent.address) else {
-            return nil
-        }
-        var pending = conversation
-        pending.messages.append(ChatMessage(role: .thinking, content: "Waiting for hosted agent…"))
-        upsert(pending)
-
-        let transport = client
-        let interactionCoordinator = interactionCoordinator
-        let owner = WeakChatViewModelReference(self)
-        return Task { [transport, interactionCoordinator, owner] in
-            defer {
-                owner.value?.deliveryDidFinish(
-                    messageID: messageID,
-                    conversationID: conversationID
-                )
-            }
-            do {
-                let result = try await transport.sendPrompt(
-                    agentAddress: agent.address,
-                    conversation: pending,
-                    prompt: message.content,
-                    onEvent: { [owner] event in
-                        owner.value?.apply(event, toConversationID: conversationID)
-                    },
-                    onInteraction: { [interactionCoordinator, owner] interaction in
-                        await interactionCoordinator.handle(
-                            interaction,
-                            conversationID: conversationID
-                        ) { [owner] in
-                            owner.value?.conversation(withID: conversationID) != nil
-                        }
-                    }
-                )
-                try Task.checkCancellation()
-                owner.value?.completeDelivery(
-                    result,
-                    messageID: messageID,
-                    conversationID: conversationID
-                )
-            } catch is CancellationError {
-                owner.value?.cancelDelivery(messageID: messageID, conversationID: conversationID)
-            } catch {
-                owner.value?.failDelivery(
-                    error,
-                    messageID: messageID,
-                    conversationID: conversationID
-                )
-            }
-        }
-    }
-
-    private func deliveryDidFinish(messageID: String, conversationID: String) {
-        guard activeMessageIDsByConversationID[conversationID] == messageID else {
-            return
-        }
-        deliveryTasksByConversationID[conversationID] = nil
-        activeMessageIDsByConversationID[conversationID] = nil
-        processingConversationIDs.remove(conversationID)
-        if !isOffline, !pausedConversationIDs.contains(conversationID) {
-            startNextQueuedMessage(in: conversationID)
-        }
-    }
-
-    private func completeDelivery(
-        _ result: HostedAgentResult,
-        messageID: String,
-        conversationID: String
-    ) {
-        guard var updated = conversation(withID: conversationID) else {
-            return
-        }
-        updated.messages.removeAll { $0.role == .thinking }
-        if let index = updated.messages.firstIndex(where: { $0.id == messageID }) {
-            updated.messages[index].deliveryState = .sent
-        }
-        if let session = result.serverSession {
-            updated.mode = serverMode(from: session, fallback: updated.mode)
-            updated.serverSession = self.session(
-                session,
-                applying: updated.mode,
-                conversationID: updated.id
-            )
-        }
-        updated.messages.append(ChatMessage(role: .agent, content: result.output ?? ""))
-        setConnectionState(.connected, forConversationID: conversationID)
-        upsert(updated)
-    }
-
-    private func failDelivery(
-        _ error: Error,
-        messageID: String,
-        conversationID: String
-    ) {
-        guard var updated = conversation(withID: conversationID) else {
-            return
-        }
-        updated.messages.removeAll { $0.role == .thinking }
-        if let index = updated.messages.firstIndex(where: { $0.id == messageID }) {
-            updated.messages[index].deliveryState = .failed
-        }
-        if activeConversationID == conversationID {
-            errorMessage = error.localizedDescription
-        }
-        setConnectionState(.disconnected, forConversationID: conversationID)
-        upsert(updated)
-    }
-
-    private func cancelDelivery(messageID: String, conversationID: String) {
-        guard var updated = conversation(withID: conversationID) else {
-            return
-        }
-        updated.messages.removeAll { $0.role == .thinking }
-        if let index = updated.messages.firstIndex(where: { $0.id == messageID }) {
-            updated.messages[index].deliveryState = .cancelled
-        }
-        setConnectionState(.disconnected, forConversationID: conversationID)
-        upsert(updated)
+        deliveryCoordinator.stopActiveResponse()
     }
 
     private func handleNetworkChange(isOnline: Bool) {
         let wasOffline = isOffline
         isOffline = !isOnline
+        deliveryCoordinator.setDeliveryEnabled(isOnline)
         guard isOnline else {
             if !wasOffline {
                 // Fresh drop: surface the banner again even if it was dismissed earlier.
@@ -702,58 +496,6 @@ final class ChatViewModel: ObservableObject {
             await self.reconnect()
             await self.flushQueuedMessages()
         }
-    }
-
-    private func apply(_ event: HostedAgentEvent, toConversationID conversationID: String) {
-        guard var conversation = conversation(withID: conversationID) else {
-            return
-        }
-
-        let persistence: ConversationPersistence
-        switch event {
-        case .toolCall(let id, let name, let arguments):
-            guard !conversation.messages.contains(where: { $0.id == id }) else {
-                return
-            }
-            conversation.messages.append(
-                ChatMessage(
-                    id: id,
-                    role: .tool,
-                    content: "",
-                    toolName: name,
-                    toolArguments: arguments,
-                    toolState: .running
-                )
-            )
-            persistence = .message(id: id)
-        case .toolResult(let id, let name, let output, let state):
-            if let index = conversation.messages.firstIndex(where: { $0.id == id && $0.role == .tool }) {
-                conversation.messages[index].toolName = name ?? conversation.messages[index].toolName
-                conversation.messages[index].content = output
-                conversation.messages[index].toolState = state
-            } else {
-                conversation.messages.append(
-                    ChatMessage(
-                        id: id,
-                        role: .tool,
-                        content: output,
-                        toolName: name ?? "tool",
-                        toolState: state
-                    )
-                )
-            }
-            persistence = .message(id: id)
-        case .modeChanged(let mode):
-            conversation.mode = mode
-            conversation.serverSession = session(
-                conversation.serverSession,
-                applying: mode,
-                conversationID: conversationID
-            )
-            persistence = .metadata
-        }
-
-        upsert(conversation, persistence: persistence)
     }
 
     func allowPendingApprovalOnce(id: String) {
@@ -832,12 +574,7 @@ final class ChatViewModel: ObservableObject {
     }
 
     private func cancelPendingInteractions(forConversationID conversationID: String) {
-        interactionCoordinator.cancelInteractions(for: conversationID)
-        deliveryTasksByConversationID[conversationID]?.cancel()
-    }
-
-    private func settlePendingInteractionForStop(in conversationID: String) -> Bool {
-        interactionCoordinator.cancelInteractions(for: conversationID)
+        deliveryCoordinator.cancelDeliveryAndInteractions(for: conversationID)
     }
 
     /// The path monitor can lag well behind the actual network (especially on the
@@ -874,7 +611,11 @@ final class ChatViewModel: ObservableObject {
                 var updated = self.conversation(withID: conversation.id) ?? conversation
                 updated.agentID = agent.id
                 updated.agentAddress = agent.address
-                updated.serverSession = self.session(session, applying: updated.mode, conversationID: updated.id)
+                updated.serverSession = HostedAgentSessionState.applying(
+                    updated.mode,
+                    to: session,
+                    conversationID: updated.id
+                )
                 self.upsert(updated)
             }
             setConnectionState(.connected, forConversationID: conversation.id)
@@ -919,7 +660,11 @@ final class ChatViewModel: ObservableObject {
                 var updated = self.conversation(withID: conversation.id) ?? conversation
                 updated.agentID = agent.id
                 updated.agentAddress = agent.address
-                updated.serverSession = self.session(session, applying: updated.mode, conversationID: updated.id)
+                updated.serverSession = HostedAgentSessionState.applying(
+                    updated.mode,
+                    to: session,
+                    conversationID: updated.id
+                )
                 self.upsert(updated)
             }
             refreshSkills(for: agent)
@@ -946,9 +691,9 @@ final class ChatViewModel: ObservableObject {
         var normalizedSeed = seed
         if let existing = conversations(for: agent).first,
            let session = seed.serverSession {
-            normalizedSeed.serverSession = self.session(
-                session,
-                applying: existing.mode,
+            normalizedSeed.serverSession = HostedAgentSessionState.applying(
+                existing.mode,
+                to: session,
                 conversationID: existing.id
             )
         }
@@ -984,25 +729,6 @@ final class ChatViewModel: ObservableObject {
 
     private func conversationBelongsToAgent(_ conversation: Conversation, _ agent: AgentConnection) -> Bool {
         conversationState.conversationBelongsToAgent(conversation, agent)
-    }
-
-    private func session(_ session: [String: JSONValue]?, applying mode: ChatMode, conversationID: String) -> [String: JSONValue] {
-        var next = session ?? [:]
-        next["session_id"] = .string(conversationID)
-        next["mode"] = .string(mode.rawValue)
-        next.removeValue(forKey: "ulw_turns")
-        next.removeValue(forKey: "ulw_turns_used")
-        next.removeValue(forKey: "ulw_prompt")
-        next.removeValue(forKey: "skip_tool_approval")
-        return next
-    }
-
-    private func serverMode(from session: [String: JSONValue], fallback: ChatMode) -> ChatMode {
-        guard let rawMode = session["mode"]?.stringValue,
-              let mode = ChatMode(rawValue: rawMode) else {
-            return fallback
-        }
-        return mode
     }
 
     private var slashSkillQuery: String? {
@@ -1055,10 +781,4 @@ final class ChatViewModel: ObservableObject {
         loadSkillsIfNeeded(for: agent, allowWhileOffline: true)
     }
 
-    private func titleFromPrompt(_ text: String) -> String {
-        if text.count > 38 {
-            return String(text.prefix(35)) + "..."
-        }
-        return text
-    }
 }
