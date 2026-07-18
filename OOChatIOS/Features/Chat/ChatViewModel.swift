@@ -192,7 +192,8 @@ final class ChatViewModel: ObservableObject {
         self.identityStore = identityStore
         self.injectedClient = client
         self.networkMonitor = networkMonitor ?? NetworkMonitor()
-        let snapshot = store.load()
+        let snapshotResult = store.loadResult()
+        let snapshot = (try? snapshotResult.get()) ?? .empty
         self.agents = snapshot.agents
         self.conversations = snapshot.conversations
         self.activeConversationID = snapshot.activeConversationID
@@ -206,6 +207,9 @@ final class ChatViewModel: ObservableObject {
         do {
             self.identity = try identityStore.loadOrCreateIdentity()
         } catch {
+            self.errorMessage = error.localizedDescription
+        }
+        if case .failure(let error) = snapshotResult {
             self.errorMessage = error.localizedDescription
         }
         self.networkMonitor.onUpdate = { [weak self] isOnline in
@@ -279,7 +283,7 @@ final class ChatViewModel: ObservableObject {
         activateConversation(withID: conversation.id)
         connectionStatesByConversationID[conversation.id] = .disconnected
         agentAddressDraft = agent.address
-        store.upsertConversation(conversation)
+        recordPersistence(store.upsertConversationResult(conversation))
         persist()
         return conversation
     }
@@ -317,7 +321,7 @@ final class ChatViewModel: ObservableObject {
                     conversations[index].serverSession = nil
                 }
                 conversations[index].updatedAt = now
-                store.upsertConversation(conversations[index])
+                recordPersistence(store.upsertConversationResult(conversations[index]))
             }
         }
 
@@ -326,7 +330,7 @@ final class ChatViewModel: ObservableObject {
         activeAgentID = next.id
         agentAddressDraft = next.address
         errorMessage = nil
-        store.upsertAgent(next)
+        recordPersistence(store.upsertAgentResult(next))
         persist()
         return next
     }
@@ -374,7 +378,7 @@ final class ChatViewModel: ObservableObject {
             }
         }
         draftsByConversationID[conversation.id] = nil
-        store.deleteConversation(id: conversation.id)
+        recordPersistence(store.deleteConversationResult(id: conversation.id))
         persist()
     }
 
@@ -402,8 +406,10 @@ final class ChatViewModel: ObservableObject {
         for conversationID in deletedConversationIDs {
             draftsByConversationID[conversationID] = nil
         }
-        deletedConversationIDs.forEach { store.deleteConversation(id: $0) }
-        store.deleteAgent(id: agent.id)
+        deletedConversationIDs.forEach {
+            recordPersistence(store.deleteConversationResult(id: $0))
+        }
+        recordPersistence(store.deleteAgentResult(id: agent.id))
         persist()
     }
 
@@ -419,14 +425,21 @@ final class ChatViewModel: ObservableObject {
             return
         }
         conversations[index].title = trimmed
-        store.upsertConversation(conversations[index])
+        recordPersistence(store.upsertConversationResult(conversations[index]))
     }
 
     /// Filters conversations by title and message content via the store's indexed query,
     /// optionally scoped to a single agent. An empty/whitespace query returns all
     /// conversations (most-recent-first), matching the repository contract.
     func searchConversations(_ query: String, for agent: AgentConnection? = nil) -> [Conversation] {
-        let results = store.search(query)
+        let results: [Conversation]
+        switch store.searchResult(query) {
+        case .success(let conversations):
+            results = conversations
+        case .failure(let error):
+            errorMessage = error.localizedDescription
+            results = []
+        }
         guard let agent else {
             return results
         }
@@ -1010,7 +1023,7 @@ final class ChatViewModel: ObservableObject {
         agents.insert(next, at: 0)
         activeAgentID = next.id
         agentAddressDraft = next.address
-        store.upsertAgent(next)
+        recordPersistence(store.upsertAgentResult(next))
         persist()
         return next
     }
@@ -1032,7 +1045,7 @@ final class ChatViewModel: ObservableObject {
         conversation.agentAddress = agent.address
         conversations.insert(conversation, at: 0)
         activateConversation(withID: conversation.id)
-        store.upsertConversation(conversation)
+        recordPersistence(store.upsertConversationResult(conversation))
         persist()
     }
 
@@ -1044,12 +1057,12 @@ final class ChatViewModel: ObservableObject {
             next.agentAddress = agent.address
             touchAgent(id: agent.id)
             if let touched = self.agent(withID: agent.id) {
-                store.upsertAgent(touched)
+                recordPersistence(store.upsertAgentResult(touched))
             }
         }
         conversations.removeAll { $0.id == next.id }
         conversations.insert(next, at: 0)
-        store.upsertConversation(next)
+        recordPersistence(store.upsertConversationResult(next))
         persist()
     }
 
@@ -1174,6 +1187,12 @@ final class ChatViewModel: ObservableObject {
 
     private func persist() {
         store.saveActive(agentID: activeAgentID, conversationID: activeConversationID)
+    }
+
+    private func recordPersistence(_ result: Result<Void, ConversationRepositoryError>) {
+        if case .failure(let error) = result {
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func titleFromPrompt(_ text: String) -> String {

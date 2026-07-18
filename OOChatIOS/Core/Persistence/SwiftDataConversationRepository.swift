@@ -32,8 +32,8 @@ final class SwiftDataConversationRepository: ConversationRepository {
             container = try ModelContainer(for: schema, configurations: configuration)
         }
         context = ModelContext(container)
-        repairLegacyMessageIDs()
-        removeLegacyInitialMessages()
+        try repairLegacyMessageIDs()
+        try removeLegacyInitialMessages()
     }
 
     /// Stores written before `StoredMessage.messageID` existed carry the raw server ID in
@@ -41,10 +41,10 @@ final class SwiftDataConversationRepository: ConversationRepository {
     /// once into the composite-key form; the empty-`messageID` predicate makes this a
     /// no-op on healthy stores. Runs before any load or write so callers never observe
     /// half-migrated rows.
-    private func repairLegacyMessageIDs() {
-        let legacy = (try? context.fetch(FetchDescriptor<StoredMessage>(
+    private func repairLegacyMessageIDs() throws {
+        let legacy = try context.fetch(FetchDescriptor<StoredMessage>(
             predicate: #Predicate { $0.messageID == "" }
-        ))) ?? []
+        ))
         guard !legacy.isEmpty else { return }
         for message in legacy {
             message.messageID = message.id
@@ -53,70 +53,100 @@ final class SwiftDataConversationRepository: ConversationRepository {
                 messageID: message.messageID
             )
         }
-        save()
+        try save()
     }
 
     /// Older app versions inserted a synthetic assistant message into every new chat.
     /// Remove only that exact legacy bubble so existing conversations open cleanly while
     /// preserving user-authored messages that happen to mention ConnectOnion.
-    private func removeLegacyInitialMessages() {
-        let messages = (try? context.fetch(FetchDescriptor<StoredMessage>(
+    private func removeLegacyInitialMessages() throws {
+        let messages = try context.fetch(FetchDescriptor<StoredMessage>(
             predicate: #Predicate {
                 $0.roleRaw == "agent"
                     && $0.content == "ConnectOnion native iOS session is ready."
             }
-        ))) ?? []
+        ))
         guard !messages.isEmpty else { return }
         messages.forEach(context.delete)
-        save()
+        try save()
     }
 
     func load() -> ChatSnapshot {
-        let agents = (try? context.fetch(FetchDescriptor<StoredAgent>())) ?? []
-        let conversations = (try? context.fetch(FetchDescriptor<StoredConversation>())) ?? []
-        return ChatSnapshot(
-            agents: agents.map(toAgent).sorted { $0.updatedAt > $1.updatedAt },
-            conversations: conversations.map(toConversation).sorted { $0.updatedAt > $1.updatedAt },
-            activeAgentID: defaults.string(forKey: activeAgentKey),
-            activeConversationID: defaults.string(forKey: activeConversationKey)
-        )
+        (try? loadResult().get()) ?? .empty
+    }
+
+    func loadResult() -> Result<ChatSnapshot, ConversationRepositoryError> {
+        capture(.load) {
+            let agents = try context.fetch(FetchDescriptor<StoredAgent>())
+            let conversations = try context.fetch(FetchDescriptor<StoredConversation>())
+            return ChatSnapshot(
+                agents: agents.map(toAgent).sorted { $0.updatedAt > $1.updatedAt },
+                conversations: conversations.map(toConversation).sorted { $0.updatedAt > $1.updatedAt },
+                activeAgentID: defaults.string(forKey: activeAgentKey),
+                activeConversationID: defaults.string(forKey: activeConversationKey)
+            )
+        }
     }
 
     func upsertConversation(_ conversation: Conversation) {
-        if let stored = storedConversation(id: conversation.id) {
-            apply(conversation, to: stored)
-        } else {
-            context.insert(toStoredConversation(conversation))
+        _ = upsertConversationResult(conversation)
+    }
+
+    func upsertConversationResult(_ conversation: Conversation) -> Result<Void, ConversationRepositoryError> {
+        capture(.saveConversation) {
+            if let stored = try storedConversation(id: conversation.id) {
+                apply(conversation, to: stored)
+            } else {
+                context.insert(toStoredConversation(conversation))
+            }
+            try save()
         }
-        save()
     }
 
     func deleteConversation(id: String) {
-        guard let stored = storedConversation(id: id) else { return }
-        context.delete(stored)
-        save()
+        _ = deleteConversationResult(id: id)
+    }
+
+    func deleteConversationResult(id: String) -> Result<Void, ConversationRepositoryError> {
+        capture(.deleteConversation) {
+            guard let stored = try storedConversation(id: id) else { return }
+            context.delete(stored)
+            try save()
+        }
     }
 
     func upsertAgent(_ agent: AgentConnection) {
-        if let stored = storedAgent(id: agent.id) {
-            apply(agent, to: stored)
-        } else {
-            context.insert(toStoredAgent(agent))
+        _ = upsertAgentResult(agent)
+    }
+
+    func upsertAgentResult(_ agent: AgentConnection) -> Result<Void, ConversationRepositoryError> {
+        capture(.saveAgent) {
+            if let stored = try storedAgent(id: agent.id) {
+                apply(agent, to: stored)
+            } else {
+                context.insert(toStoredAgent(agent))
+            }
+            try save()
         }
-        save()
     }
 
     func deleteAgent(id: String) {
+        _ = deleteAgentResult(id: id)
+    }
+
+    func deleteAgentResult(id: String) -> Result<Void, ConversationRepositoryError> {
         // Cascade by agentID only. Multiple agents can share one address (distinct tokens),
         // so an address-based cascade would wrongly delete a sibling agent's conversations.
-        if let stored = storedAgent(id: id) {
-            context.delete(stored)
+        capture(.deleteAgent) {
+            if let stored = try storedAgent(id: id) {
+                context.delete(stored)
+            }
+            let owned = try context.fetch(FetchDescriptor<StoredConversation>(
+                predicate: #Predicate { $0.agentID == id }
+            ))
+            owned.forEach(context.delete)
+            try save()
         }
-        let owned = (try? context.fetch(FetchDescriptor<StoredConversation>(
-            predicate: #Predicate { $0.agentID == id }
-        ))) ?? []
-        owned.forEach(context.delete)
-        save()
     }
 
     func saveActive(agentID: String?, conversationID: String?) {
@@ -127,46 +157,64 @@ final class SwiftDataConversationRepository: ConversationRepository {
     /// Case- and diacritic-insensitive search over conversation titles and message content,
     /// run as two indexed `#Predicate` fetches and unioned by conversation.
     func search(_ query: String) -> [Conversation] {
-        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !needle.isEmpty else {
-            return load().conversations
-        }
-        var matched: [String: StoredConversation] = [:]
-        let titleHits = (try? context.fetch(FetchDescriptor<StoredConversation>(
-            predicate: #Predicate { $0.title.localizedStandardContains(needle) }
-        ))) ?? []
-        for conversation in titleHits {
-            matched[conversation.id] = conversation
-        }
-        let messageHits = (try? context.fetch(FetchDescriptor<StoredMessage>(
-            predicate: #Predicate { $0.content.localizedStandardContains(needle) }
-        ))) ?? []
-        for message in messageHits {
-            if let conversation = message.conversation {
+        (try? searchResult(query).get()) ?? []
+    }
+
+    func searchResult(_ query: String) -> Result<[Conversation], ConversationRepositoryError> {
+        capture(.search) {
+            let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !needle.isEmpty else {
+                return try loadResult().get().conversations
+            }
+            var matched: [String: StoredConversation] = [:]
+            let titleHits = try context.fetch(FetchDescriptor<StoredConversation>(
+                predicate: #Predicate { $0.title.localizedStandardContains(needle) }
+            ))
+            for conversation in titleHits {
                 matched[conversation.id] = conversation
             }
+            let messageHits = try context.fetch(FetchDescriptor<StoredMessage>(
+                predicate: #Predicate { $0.content.localizedStandardContains(needle) }
+            ))
+            for message in messageHits {
+                if let conversation = message.conversation {
+                    matched[conversation.id] = conversation
+                }
+            }
+            return matched.values.map(toConversation).sorted { $0.updatedAt > $1.updatedAt }
         }
-        return matched.values.map(toConversation).sorted { $0.updatedAt > $1.updatedAt }
     }
 
 
 
-    private func storedAgent(id: String) -> StoredAgent? {
-        (try? context.fetch(FetchDescriptor<StoredAgent>(predicate: #Predicate { $0.id == id })))?.first
+    private func storedAgent(id: String) throws -> StoredAgent? {
+        try context.fetch(FetchDescriptor<StoredAgent>(predicate: #Predicate { $0.id == id })).first
     }
 
-    private func storedConversation(id: String) -> StoredConversation? {
-        (try? context.fetch(FetchDescriptor<StoredConversation>(predicate: #Predicate { $0.id == id })))?.first
+    private func storedConversation(id: String) throws -> StoredConversation? {
+        try context.fetch(FetchDescriptor<StoredConversation>(predicate: #Predicate { $0.id == id })).first
     }
 
-    private func save() {
+    private func save() throws {
         do {
             try context.save()
         } catch {
-            // Surface the failure loudly in debug, and roll back so the shared context's
-            // uncommitted changes don't get silently flushed by the next operation's save.
-            assertionFailure("SwiftData save failed: \(error)")
             context.rollback()
+            throw error
+        }
+    }
+
+    private func capture<Value>(
+        _ operation: ConversationRepositoryError.Operation,
+        work: () throws -> Value
+    ) -> Result<Value, ConversationRepositoryError> {
+        do {
+            return .success(try work())
+        } catch let error as ConversationRepositoryError {
+            return .failure(error)
+        } catch {
+            context.rollback()
+            return .failure(ConversationRepositoryError(operation: operation, underlyingError: error))
         }
     }
 
