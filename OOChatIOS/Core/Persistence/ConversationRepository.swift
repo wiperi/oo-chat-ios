@@ -40,6 +40,13 @@ protocol ConversationRepository {
     /// compatibility methods above keep existing callers source-compatible during migration.
     func loadResult() -> Result<ChatSnapshot, ConversationRepositoryError>
     func upsertConversationResult(_ conversation: Conversation) -> Result<Void, ConversationRepositoryError>
+    func upsertMessageResult(
+        _ message: ChatMessage,
+        in conversation: Conversation
+    ) -> Result<Void, ConversationRepositoryError>
+    func updateConversationMetadataResult(
+        _ conversation: Conversation
+    ) -> Result<Void, ConversationRepositoryError>
     func deleteConversationResult(id: String) -> Result<Void, ConversationRepositoryError>
     func upsertAgentResult(_ agent: AgentConnection) -> Result<Void, ConversationRepositoryError>
     func deleteAgentResult(id: String) -> Result<Void, ConversationRepositoryError>
@@ -54,6 +61,19 @@ extension ConversationRepository {
     func upsertConversationResult(_ conversation: Conversation) -> Result<Void, ConversationRepositoryError> {
         upsertConversation(conversation)
         return .success(())
+    }
+
+    func upsertMessageResult(
+        _ message: ChatMessage,
+        in conversation: Conversation
+    ) -> Result<Void, ConversationRepositoryError> {
+        upsertConversationResult(conversation)
+    }
+
+    func updateConversationMetadataResult(
+        _ conversation: Conversation
+    ) -> Result<Void, ConversationRepositoryError> {
+        upsertConversationResult(conversation)
     }
 
     func deleteConversationResult(id: String) -> Result<Void, ConversationRepositoryError> {

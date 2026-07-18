@@ -290,6 +290,54 @@ final class SwiftDataConversationRepositoryTests: XCTestCase {
         XCTAssertEqual(loaded?.messages.map(\.id), [keep.id])
     }
 
+    func testGranularMessageUpsertPreservesSiblingMessages() throws {
+        let repository = try makeRepository()
+        var conversation = makeConversation(
+            agentID: "a1",
+            address: "0xabc",
+            title: "Streaming",
+            updatedAt: seconds(1000)
+        )
+        conversation.messages = [
+            ChatMessage(id: "tool-1", role: .tool, content: "", toolName: "read", toolState: .running),
+            ChatMessage(id: "user-1", role: .user, content: "Keep me"),
+        ]
+        repository.upsertConversation(conversation)
+
+        var completedTool = conversation.messages[0]
+        completedTool.content = "Done"
+        completedTool.toolState = .completed
+        conversation.messages = [completedTool]
+        try repository.upsertMessageResult(completedTool, in: conversation).get()
+
+        let loaded = try XCTUnwrap(repository.load().conversations.first)
+        XCTAssertEqual(Set(loaded.messages.map(\.id)), ["tool-1", "user-1"])
+        XCTAssertEqual(loaded.messages.first { $0.id == "tool-1" }?.content, "Done")
+        XCTAssertEqual(loaded.messages.first { $0.id == "tool-1" }?.toolState, .completed)
+    }
+
+    func testMetadataUpdatePreservesStoredMessages() throws {
+        let repository = try makeRepository()
+        var conversation = makeConversation(
+            agentID: "a1",
+            address: "0xabc",
+            title: "Before",
+            updatedAt: seconds(1000)
+        )
+        conversation.messages = [ChatMessage(id: "m1", role: .user, content: "Keep me")]
+        repository.upsertConversation(conversation)
+
+        conversation.title = "After"
+        conversation.mode = .ulw
+        conversation.messages = []
+        try repository.updateConversationMetadataResult(conversation).get()
+
+        let loaded = try XCTUnwrap(repository.load().conversations.first)
+        XCTAssertEqual(loaded.title, "After")
+        XCTAssertEqual(loaded.mode, .ulw)
+        XCTAssertEqual(loaded.messages.map(\.id), ["m1"])
+    }
+
     func testSaveActivePersistsPointers() throws {
         let repository = try makeRepository()
 

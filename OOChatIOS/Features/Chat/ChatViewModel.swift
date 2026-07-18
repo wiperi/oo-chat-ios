@@ -2,6 +2,12 @@ import Combine
 import Foundation
 import SwiftUI
 
+private enum ConversationPersistence {
+    case full
+    case message(id: String)
+    case metadata
+}
+
 @MainActor
 final class WeakChatViewModelReference {
     weak var value: ChatViewModel?
@@ -792,6 +798,7 @@ final class ChatViewModel: ObservableObject {
             return
         }
 
+        let persistence: ConversationPersistence
         switch event {
         case .toolCall(let id, let name, let arguments):
             guard !conversation.messages.contains(where: { $0.id == id }) else {
@@ -807,6 +814,7 @@ final class ChatViewModel: ObservableObject {
                     toolState: .running
                 )
             )
+            persistence = .message(id: id)
         case .toolResult(let id, let name, let output, let state):
             if let index = conversation.messages.firstIndex(where: { $0.id == id && $0.role == .tool }) {
                 conversation.messages[index].toolName = name ?? conversation.messages[index].toolName
@@ -823,6 +831,7 @@ final class ChatViewModel: ObservableObject {
                     )
                 )
             }
+            persistence = .message(id: id)
         case .modeChanged(let mode):
             conversation.mode = mode
             conversation.serverSession = session(
@@ -830,9 +839,10 @@ final class ChatViewModel: ObservableObject {
                 applying: mode,
                 conversationID: conversationID
             )
+            persistence = .metadata
         }
 
-        upsert(conversation)
+        upsert(conversation, persistence: persistence)
     }
 
     func allowPendingApprovalOnce(id: String) {
@@ -1049,7 +1059,10 @@ final class ChatViewModel: ObservableObject {
         persist()
     }
 
-    private func upsert(_ conversation: Conversation) {
+    private func upsert(
+        _ conversation: Conversation,
+        persistence: ConversationPersistence = .full
+    ) {
         var next = conversation
         next.updatedAt = Date()
         if let agent = agent(for: next) {
@@ -1062,7 +1075,19 @@ final class ChatViewModel: ObservableObject {
         }
         conversations.removeAll { $0.id == next.id }
         conversations.insert(next, at: 0)
-        recordPersistence(store.upsertConversationResult(next))
+        switch persistence {
+        case .full:
+            recordPersistence(store.upsertConversationResult(next))
+        case .message(let id):
+            guard let message = next.messages.first(where: { $0.id == id }) else {
+                recordPersistence(store.upsertConversationResult(next))
+                persist()
+                return
+            }
+            recordPersistence(store.upsertMessageResult(message, in: next))
+        case .metadata:
+            recordPersistence(store.updateConversationMetadataResult(next))
+        }
         persist()
     }
 

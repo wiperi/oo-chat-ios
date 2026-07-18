@@ -103,6 +103,40 @@ final class SwiftDataConversationRepository: ConversationRepository {
         }
     }
 
+    func upsertMessageResult(
+        _ message: ChatMessage,
+        in conversation: Conversation
+    ) -> Result<Void, ConversationRepositoryError> {
+        capture(.saveConversation) {
+            guard let stored = try storedConversation(id: conversation.id) else {
+                context.insert(toStoredConversation(conversation))
+                try save()
+                return
+            }
+            applyMetadata(conversation, to: stored)
+            if let storedMessage = stored.messages.first(where: { $0.messageID == message.id }) {
+                apply(message, to: storedMessage)
+            } else {
+                stored.messages.append(toStoredMessage(message, conversationID: conversation.id))
+            }
+            try save()
+        }
+    }
+
+    func updateConversationMetadataResult(
+        _ conversation: Conversation
+    ) -> Result<Void, ConversationRepositoryError> {
+        capture(.saveConversation) {
+            guard let stored = try storedConversation(id: conversation.id) else {
+                context.insert(toStoredConversation(conversation))
+                try save()
+                return
+            }
+            applyMetadata(conversation, to: stored)
+            try save()
+        }
+    }
+
     func deleteConversation(id: String) {
         _ = deleteConversationResult(id: id)
     }
@@ -237,6 +271,11 @@ final class SwiftDataConversationRepository: ConversationRepository {
     }
 
     private func apply(_ conversation: Conversation, to stored: StoredConversation) {
+        applyMetadata(conversation, to: stored)
+        syncMessages(conversation.messages, of: stored)
+    }
+
+    private func applyMetadata(_ conversation: Conversation, to stored: StoredConversation) {
         stored.title = conversation.title
         stored.agentID = conversation.agentID
         stored.agentAddress = conversation.agentAddress
@@ -244,7 +283,6 @@ final class SwiftDataConversationRepository: ConversationRepository {
         stored.createdAt = conversation.createdAt
         stored.updatedAt = conversation.updatedAt
         stored.serverSessionData = encodeSession(conversation.serverSession)
-        syncMessages(conversation.messages, of: stored)
     }
 
     private func syncMessages(_ messages: [ChatMessage], of stored: StoredConversation) {
@@ -260,16 +298,20 @@ final class SwiftDataConversationRepository: ConversationRepository {
         for message in messages {
             if let storedMessage = existing[message.id] {
                 // Existing rows keep their position while streamed tool results update in place.
-                storedMessage.roleRaw = message.role.rawValue
-                storedMessage.deliveryStateRaw = message.deliveryState.rawValue
-                storedMessage.content = message.content
-                storedMessage.toolName = message.toolName
-                storedMessage.toolArgumentsData = encodeToolArguments(message.toolArguments)
-                storedMessage.toolStateRaw = message.toolState?.rawValue
+                apply(message, to: storedMessage)
             } else {
                 stored.messages.append(toStoredMessage(message, conversationID: stored.id))
             }
         }
+    }
+
+    private func apply(_ message: ChatMessage, to stored: StoredMessage) {
+        stored.roleRaw = message.role.rawValue
+        stored.deliveryStateRaw = message.deliveryState.rawValue
+        stored.content = message.content
+        stored.toolName = message.toolName
+        stored.toolArgumentsData = encodeToolArguments(message.toolArguments)
+        stored.toolStateRaw = message.toolState?.rawValue
     }
 
 
