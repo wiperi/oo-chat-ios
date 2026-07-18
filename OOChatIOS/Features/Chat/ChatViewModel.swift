@@ -14,31 +14,49 @@ final class ChatViewModel: ObservableObject {
             conversationState.updateActiveDraft(prompt)
         }
     }
-    @Published private(set) var isOffline = false
-    @Published private(set) var isOfflineBannerDismissed = false
-    @Published private var connectionStatesByConversationID: [String: ConnectionState] = [:]
     @Published private var skillsByAgentAddress: [String: [AgentSkill]] = [:]
 
-    var shouldShowOfflineBanner: Bool {
-        isOffline && !isOfflineBannerDismissed
+    var isOffline: Bool {
+        recoveryCoordinator.isOffline
     }
 
-    private(set) var recoveryTask: Task<Void, Never>?
-    private(set) var probeTask: Task<Void, Never>?
+    var isOfflineBannerDismissed: Bool {
+        recoveryCoordinator.isOfflineBannerDismissed
+    }
+
+    var shouldShowOfflineBanner: Bool {
+        recoveryCoordinator.shouldShowOfflineBanner
+    }
+
+    var recoveryTask: Task<Void, Never>? {
+        recoveryCoordinator.recoveryTask
+    }
+
+    var probeTask: Task<Void, Never>? {
+        recoveryCoordinator.probeTask
+    }
+
     private var skillFetchTasks: [String: Task<Void, Never>] = [:]
     private let interactionCoordinator: InteractionCoordinator
     private let deliveryCoordinator: MessageDeliveryCoordinator
+    private let recoveryCoordinator: ConnectionRecoveryCoordinator
     private var interactionChangeCancellable: AnyCancellable?
     private var deliveryChangeCancellable: AnyCancellable?
+    private var recoveryChangeCancellable: AnyCancellable?
     private var conversationStateChangeCancellable: AnyCancellable?
     private var persistenceErrorCancellable: AnyCancellable?
 
-    /// Seconds between silent reachability probes while offline. Overridable in tests.
-    var probeInterval: TimeInterval = 5
+    var probeInterval: TimeInterval {
+        get {
+            recoveryCoordinator.probeInterval
+        }
+        set {
+            recoveryCoordinator.probeInterval = newValue
+        }
+    }
 
     private let conversationState: ConversationState
     private let identityStore: IdentityStore
-    private let networkMonitor: NetworkPathMonitoring
     private var client: HostedAgentTransport
 
     var agents: [AgentConnection] {
@@ -78,7 +96,7 @@ final class ChatViewModel: ObservableObject {
         guard let activeConversationID else {
             return .disconnected
         }
-        return connectionState(forConversationID: activeConversationID)
+        return recoveryCoordinator.connectionState(forConversationID: activeConversationID)
     }
 
     var isProcessing: Bool {
@@ -146,7 +164,7 @@ final class ChatViewModel: ObservableObject {
 
     func isAgentOnline(_ agent: AgentConnection) -> Bool {
         conversations(for: agent).contains { conversation in
-            connectionState(forConversationID: conversation.id) == .connected
+            recoveryCoordinator.connectionState(forConversationID: conversation.id) == .connected
         }
     }
 
@@ -181,16 +199,23 @@ final class ChatViewModel: ObservableObject {
         let conversationState = ConversationState(store: store)
         let interactionCoordinator = InteractionCoordinator()
         let transport = client ?? HostedAgentClient(identityStore: identityStore)
-        self.conversationState = conversationState
-        self.interactionCoordinator = interactionCoordinator
-        self.deliveryCoordinator = MessageDeliveryCoordinator(
+        let deliveryCoordinator = MessageDeliveryCoordinator(
             conversationState: conversationState,
             interactionCoordinator: interactionCoordinator,
             transport: transport
         )
+        let recoveryCoordinator = ConnectionRecoveryCoordinator(
+            conversationState: conversationState,
+            deliveryCoordinator: deliveryCoordinator,
+            networkMonitor: networkMonitor ?? NetworkMonitor(),
+            transport: transport
+        )
+        self.conversationState = conversationState
+        self.interactionCoordinator = interactionCoordinator
+        self.deliveryCoordinator = deliveryCoordinator
+        self.recoveryCoordinator = recoveryCoordinator
         self.identityStore = identityStore
         self.client = transport
-        self.networkMonitor = networkMonitor ?? NetworkMonitor()
         self.agentAddressDraft = conversationState.activeAgent?.address ?? ""
         do {
             self.identity = try identityStore.loadOrCreateIdentity()
@@ -200,17 +225,14 @@ final class ChatViewModel: ObservableObject {
         if let error = conversationState.persistenceError {
             self.errorMessage = error.localizedDescription
         }
-        self.networkMonitor.onUpdate = { [weak self] isOnline in
-            self?.handleNetworkChange(isOnline: isOnline)
+        recoveryCoordinator.onRecoveryError = { [weak self] conversationID, message in
+            guard self?.activeConversationID == conversationID else {
+                return
+            }
+            self?.errorMessage = message
         }
-        self.client.onConnectionStateChange = { [weak self] conversationID, state in
-            self?.setConnectionState(state, forConversationID: conversationID)
-        }
-        deliveryCoordinator.connectionState = { [weak self] conversationID in
-            self?.connectionState(forConversationID: conversationID) ?? .disconnected
-        }
-        deliveryCoordinator.onConnectionStateChange = { [weak self] conversationID, state in
-            self?.setConnectionState(state, forConversationID: conversationID)
+        recoveryCoordinator.onReconnect = { [weak self] agent in
+            self?.refreshSkills(for: agent)
         }
         deliveryCoordinator.onDeliveryError = { [weak self] conversationID, message in
             guard self?.activeConversationID == conversationID else {
@@ -224,6 +246,9 @@ final class ChatViewModel: ObservableObject {
         deliveryChangeCancellable = deliveryCoordinator.objectWillChange.sink { [weak self] in
             self?.objectWillChange.send()
         }
+        recoveryChangeCancellable = recoveryCoordinator.objectWillChange.sink { [weak self] in
+            self?.objectWillChange.send()
+        }
         conversationStateChangeCancellable = conversationState.objectWillChange.sink { [weak self] in
             self?.objectWillChange.send()
         }
@@ -232,13 +257,10 @@ final class ChatViewModel: ObservableObject {
             .sink { [weak self] error in
                 self?.errorMessage = error.localizedDescription
             }
-        self.networkMonitor.start()
+        recoveryCoordinator.start()
     }
 
     deinit {
-        networkMonitor.cancel()
-        probeTask?.cancel()
-        recoveryTask?.cancel()
         skillFetchTasks.values.forEach { $0.cancel() }
     }
 
@@ -280,7 +302,7 @@ final class ChatViewModel: ObservableObject {
     func createConversation(for agent: AgentConnection) -> Conversation {
         let conversation = conversationState.createConversation(for: agent, currentDraft: prompt)
         prompt = conversationState.activeDraft
-        connectionStatesByConversationID[conversation.id] = .disconnected
+        recoveryCoordinator.setConnectionState(.disconnected, forConversationID: conversation.id)
         agentAddressDraft = agent.address
         return conversation
     }
@@ -337,7 +359,7 @@ final class ChatViewModel: ObservableObject {
 
     func deleteConversation(_ conversation: Conversation) {
         cancelPendingInteractions(forConversationID: conversation.id)
-        connectionStatesByConversationID[conversation.id] = nil
+        recoveryCoordinator.removeConnectionState(forConversationID: conversation.id)
         conversationState.deleteConversation(conversation, currentDraft: prompt)
         prompt = conversationState.activeDraft
     }
@@ -346,7 +368,7 @@ final class ChatViewModel: ObservableObject {
         let deletedConversationIDs = Set(conversations(for: agent).map(\.id))
         for conversationID in deletedConversationIDs {
             cancelPendingInteractions(forConversationID: conversationID)
-            connectionStatesByConversationID[conversationID] = nil
+            recoveryCoordinator.removeConnectionState(forConversationID: conversationID)
         }
         conversationState.deleteAgent(agent, currentDraft: prompt)
         prompt = conversationState.activeDraft
@@ -414,7 +436,7 @@ final class ChatViewModel: ObservableObject {
             agent = agents.first { $0.address == address } ?? AgentConnection(address: address)
         }
         var conversation = conversations(for: agent).first ?? Conversation(agentID: agent.id, agentAddress: address)
-        setConnectionState(.reconnecting, forConversationID: conversation.id)
+        recoveryCoordinator.setConnectionState(.reconnecting, forConversationID: conversation.id)
 
         do {
             let result = try await client.connect(agentAddress: address, conversation: conversation)
@@ -429,12 +451,12 @@ final class ChatViewModel: ObservableObject {
             let savedAgent = upsertAgent(agent)
             ensureDefaultConversation(for: savedAgent, seed: conversation)
             loadSkillsIfNeeded(for: savedAgent)
-            setConnectionState(.connected, forConversationID: conversation.id)
+            recoveryCoordinator.setConnectionState(.connected, forConversationID: conversation.id)
             isConnecting = false
             return savedAgent
         } catch {
             let message = error.localizedDescription
-            setConnectionState(.disconnected, forConversationID: conversation.id)
+            recoveryCoordinator.setConnectionState(.disconnected, forConversationID: conversation.id)
             errorMessage = message
             connectionFailureMessage = "Connection failed. \(message)"
             isConnecting = false
@@ -471,31 +493,6 @@ final class ChatViewModel: ObservableObject {
 
     func stopActiveResponse() {
         deliveryCoordinator.stopActiveResponse()
-    }
-
-    private func handleNetworkChange(isOnline: Bool) {
-        let wasOffline = isOffline
-        isOffline = !isOnline
-        deliveryCoordinator.setDeliveryEnabled(isOnline)
-        guard isOnline else {
-            if !wasOffline {
-                // Fresh drop: surface the banner again even if it was dismissed earlier.
-                isOfflineBannerDismissed = false
-            }
-            for conversationID in conversations.map(\.id) {
-                connectionStatesByConversationID[conversationID] = .disconnected
-            }
-            startRecoveryProbing()
-            return
-        }
-        probeTask?.cancel()
-        guard wasOffline else {
-            return
-        }
-        recoveryTask = Task {
-            await self.reconnect()
-            await self.flushQueuedMessages()
-        }
     }
 
     func allowPendingApprovalOnce(id: String) {
@@ -577,104 +574,20 @@ final class ChatViewModel: ObservableObject {
         deliveryCoordinator.cancelDeliveryAndInteractions(for: conversationID)
     }
 
-    /// The path monitor can lag well behind the actual network (especially on the
-    /// simulator), so while offline we also probe the agent directly on a timer and
-    /// recover as soon as a probe gets through — no monitor update or user tap needed.
-    private func startRecoveryProbing() {
-        probeTask?.cancel()
-        probeTask = Task {
-            while !Task.isCancelled && self.isOffline {
-                try? await Task.sleep(nanoseconds: UInt64(self.probeInterval * 1_000_000_000))
-                guard !Task.isCancelled, self.isOffline else {
-                    return
-                }
-                if await self.probeReconnect() {
-                    self.isOffline = false
-                    await self.flushQueuedMessages()
-                    return
-                }
-            }
-        }
-    }
-
-    /// Quiet reachability check. Unlike reconnect(), a failed probe leaves all UI state
-    /// untouched so background retries don't flash error banners every few seconds.
-    private func probeReconnect() async -> Bool {
-        guard let conversation = activeConversation,
-              let agent = agent(for: conversation),
-              HostedAgentClient.isHostedAgentAddress(agent.address) else {
-            return false
-        }
-        do {
-            let result = try await client.connect(agentAddress: agent.address, conversation: conversation)
-            if let session = result.serverSession {
-                var updated = self.conversation(withID: conversation.id) ?? conversation
-                updated.agentID = agent.id
-                updated.agentAddress = agent.address
-                updated.serverSession = HostedAgentSessionState.applying(
-                    updated.mode,
-                    to: session,
-                    conversationID: updated.id
-                )
-                self.upsert(updated)
-            }
-            setConnectionState(.connected, forConversationID: conversation.id)
-            refreshSkills(for: agent)
-            return true
-        } catch {
-            return false
-        }
-    }
-
     func dismissOfflineBanner() {
-        isOfflineBannerDismissed = true
+        recoveryCoordinator.dismissOfflineBanner()
     }
 
     /// Manual recovery for when the path monitor is slow to notice the network is back
     /// (common on the simulator): attempt a real reconnect, and if it succeeds treat
     /// the app as online again and flush the queue without waiting for the monitor.
     func retryConnectivity() {
-        guard isOffline, let conversationID = activeConversationID else {
-            return
-        }
-        recoveryTask = Task {
-            await self.reconnect()
-            if self.connectionState(forConversationID: conversationID) == .connected {
-                self.isOffline = false
-                await self.flushQueuedMessages()
-            }
-        }
+        recoveryCoordinator.retryConnectivity()
     }
 
     func reconnect() async {
-        guard let conversation = activeConversation,
-              let agent = agent(for: conversation),
-              HostedAgentClient.isHostedAgentAddress(agent.address) else {
-            return
-        }
         errorMessage = nil
-        setConnectionState(.reconnecting, forConversationID: conversation.id)
-        do {
-            let result = try await client.connect(agentAddress: agent.address, conversation: conversation)
-            if let session = result.serverSession {
-                var updated = self.conversation(withID: conversation.id) ?? conversation
-                updated.agentID = agent.id
-                updated.agentAddress = agent.address
-                updated.serverSession = HostedAgentSessionState.applying(
-                    updated.mode,
-                    to: session,
-                    conversationID: updated.id
-                )
-                self.upsert(updated)
-            }
-            refreshSkills(for: agent)
-            setConnectionState(.connected, forConversationID: conversation.id)
-        } catch {
-            setConnectionState(.disconnected, forConversationID: conversation.id)
-            if activeConversationID == conversation.id {
-                errorMessage = error.localizedDescription
-            }
-        }
+        await recoveryCoordinator.reconnectActiveConversation()
     }
 
     func dismissError() {
@@ -710,17 +623,6 @@ final class ChatViewModel: ObservableObject {
         persistence: ConversationPersistence = .full
     ) {
         conversationState.upsert(conversation, persistence: persistence)
-    }
-
-    private func setConnectionState(
-        _ state: ConnectionState,
-        forConversationID conversationID: String
-    ) {
-        connectionStatesByConversationID[conversationID] = state
-    }
-
-    private func connectionState(forConversationID conversationID: String) -> ConnectionState {
-        connectionStatesByConversationID[conversationID] ?? .disconnected
     }
 
     private func agent(for conversation: Conversation) -> AgentConnection? {

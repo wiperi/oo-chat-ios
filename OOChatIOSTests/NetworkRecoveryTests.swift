@@ -488,6 +488,30 @@ final class NetworkRecoveryTests: XCTestCase {
         XCTAssertTrue(transport.sentPrompts.isEmpty)
     }
 
+    func testRecoveryRemainsScopedToOriginConversationAfterSelectionChanges() async {
+        let (viewModel, transport, monitor) = makeEnvironment()
+        let firstAgent = setUpAgentAndConversation(viewModel)
+        let firstConversation = viewModel.activeConversation!
+        let secondAddress = "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        let secondAgent = viewModel.saveAgent(name: "Second", address: secondAddress, token: "")!
+        let secondConversation = viewModel.createConversation(for: secondAgent)
+        viewModel.selectConversation(firstConversation)
+        let gate = PromptGate()
+        transport.connectBehavior = .wait(gate: gate, output: "")
+
+        monitor.simulate(online: false)
+        monitor.simulate(online: true)
+        viewModel.selectConversation(secondConversation)
+        await gate.open()
+        await viewModel.recoveryTask?.value
+
+        XCTAssertEqual(transport.connectedAddresses, [firstAgent.address])
+        XCTAssertEqual(viewModel.activeConversationID, secondConversation.id)
+        XCTAssertEqual(viewModel.connectionState, .disconnected)
+        viewModel.selectConversation(firstConversation)
+        XCTAssertEqual(viewModel.connectionState, .connected)
+    }
+
     func testFlushStopsWhenNetworkDropsAgain() async {
         let (viewModel, transport, monitor) = makeEnvironment()
         setUpAgentAndConversation(viewModel)
