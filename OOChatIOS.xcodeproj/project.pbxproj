@@ -59,6 +59,10 @@
 		100000000000000000000143 /* ChatShellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000048 /* ChatShellView.swift */; };
 		100000000000000000000144 /* ChatSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000049 /* ChatSidebarView.swift */; };
 		100000000000000000000145 /* SidebarButtonStyles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000050 /* SidebarButtonStyles.swift */; };
+		100000000000000000000158 /* ChatSidebarMetrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000063 /* ChatSidebarMetrics.swift */; };
+		100000000000000000000159 /* ChatSidebarHeaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000064 /* ChatSidebarHeaderView.swift */; };
+		100000000000000000000160 /* ChatSidebarFooterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000065 /* ChatSidebarFooterView.swift */; };
+		100000000000000000000161 /* ChatSidebarRows.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000066 /* ChatSidebarRows.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -127,6 +131,10 @@
 		100000000000000000000048 /* ChatShellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatShellView.swift; sourceTree = "<group>"; };
 		100000000000000000000049 /* ChatSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSidebarView.swift; sourceTree = "<group>"; };
 		100000000000000000000050 /* SidebarButtonStyles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarButtonStyles.swift; sourceTree = "<group>"; };
+		100000000000000000000063 /* ChatSidebarMetrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSidebarMetrics.swift; sourceTree = "<group>"; };
+		100000000000000000000064 /* ChatSidebarHeaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSidebarHeaderView.swift; sourceTree = "<group>"; };
+		100000000000000000000065 /* ChatSidebarFooterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSidebarFooterView.swift; sourceTree = "<group>"; };
+		100000000000000000000066 /* ChatSidebarRows.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSidebarRows.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -241,6 +249,10 @@
 				100000000000000000000023 /* ChatView.swift */,
 				100000000000000000000048 /* ChatShellView.swift */,
 				100000000000000000000049 /* ChatSidebarView.swift */,
+				100000000000000000000063 /* ChatSidebarMetrics.swift */,
+				100000000000000000000064 /* ChatSidebarHeaderView.swift */,
+				100000000000000000000065 /* ChatSidebarFooterView.swift */,
+				100000000000000000000066 /* ChatSidebarRows.swift */,
 				100000000000000000000050 /* SidebarButtonStyles.swift */,
 				100000000000000000000024 /* Composer.swift */,
 				100000000000000000000025 /* MessageBubble.swift */,
@@ -503,6 +515,10 @@
 				100000000000000000000119 /* ChatView.swift in Sources */,
 				100000000000000000000143 /* ChatShellView.swift in Sources */,
 				100000000000000000000144 /* ChatSidebarView.swift in Sources */,
+				100000000000000000000158 /* ChatSidebarMetrics.swift in Sources */,
+				100000000000000000000159 /* ChatSidebarHeaderView.swift in Sources */,
+				100000000000000000000160 /* ChatSidebarFooterView.swift in Sources */,
+				100000000000000000000161 /* ChatSidebarRows.swift in Sources */,
 				100000000000000000000145 /* SidebarButtonStyles.swift in Sources */,
 				100000000000000000000120 /* Composer.swift in Sources */,
 				100000000000000000000121 /* MessageBubble.swift in Sources */,

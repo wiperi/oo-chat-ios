@@ -216,106 +216,13 @@ struct ChatSidebarView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: SidebarMetrics.headerSpacing) {
-            ZStack(alignment: .topTrailing) {
-                VStack(alignment: .leading, spacing: SidebarMetrics.headerSpacing) {
-                    brandTitle
-                    connectionStatus
-                }
-                .padding(.top, SidebarMetrics.brandTopPadding)
-                .padding(.trailing, SidebarMetrics.headerIconButtonSize + SidebarMetrics.headerTrailingSpacing)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                searchToggleButton
-                    .offset(y: SidebarMetrics.searchButtonVerticalOffset)
-            }
-
-            if isSearchVisible {
-                searchField
-                    .transition(AppMotion.materialize(reduceMotion: reduceMotion, edge: .top))
-            }
-        }
-    }
-
-    private var brandTitle: some View {
-        HStack(spacing: SidebarMetrics.headerLogoSpacing) {
-            Image("OnionLogo")
-                .resizable()
-                .scaledToFit()
-                .frame(width: SidebarMetrics.logoSize, height: SidebarMetrics.logoSize)
-
-            Text("oo-chat")
-                .font(.title3.bold())
-                .lineLimit(1)
-        }
-    }
-
-    private var connectionStatus: some View {
-        HStack(spacing: SidebarMetrics.statusSpacing) {
-            Circle()
-                .fill(viewModel.onlineAgentCount > 0 ? Color(.systemGreen) : Color(.tertiaryLabel))
-                .frame(width: SidebarMetrics.statusDotSize, height: SidebarMetrics.statusDotSize)
-
-            Text(connectionSummary)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-        }
-        .accessibilityElement(children: .combine)
-    }
-
-    private var searchToggleButton: some View {
-        Button {
-            toggleSidebarSearch()
-        } label: {
-            Image(systemName: isSearchVisible ? "xmark" : "magnifyingglass")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(AppTheme.primary)
-                .frame(width: SidebarMetrics.headerIconButtonSize, height: SidebarMetrics.headerIconButtonSize)
-                .glassBackground(in: Circle(), interactive: true, tint: Color(.systemBackground))
-                .overlay {
-                    Circle()
-                        .stroke(Color(.separator).opacity(SidebarMetrics.settingsButtonStrokeOpacity), lineWidth: 0.5)
-                }
-                .shadow(
-                    color: Color(.label).opacity(SidebarMetrics.settingsButtonShadowOpacity),
-                    radius: SidebarMetrics.settingsButtonShadowRadius,
-                    x: 0,
-                    y: SidebarMetrics.settingsButtonShadowYOffset
-                )
-        }
-        .buttonStyle(SidebarFooterButtonStyle())
-        .accessibilityLabel(isSearchVisible ? "Close search" : "Search")
-    }
-
-    private var searchField: some View {
-        HStack(spacing: SidebarMetrics.searchFieldSpacing) {
-            Image(systemName: "magnifyingglass")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Color(.secondaryLabel))
-
-            TextField("Search", text: $sidebarSearchText)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .submitLabel(.search)
-                .focused($isSearchFieldFocused)
-
-            if !sidebarSearchText.isEmpty {
-                Button {
-                    sidebarSearchText = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Color(.secondaryLabel))
-                        .frame(width: SidebarMetrics.searchClearButtonSize, height: SidebarMetrics.searchClearButtonSize)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Clear search")
-            }
-        }
-        .padding(.horizontal, SidebarMetrics.searchFieldHorizontalPadding)
-        .frame(height: SidebarMetrics.searchFieldHeight)
-        .background(Color(.secondarySystemFill), in: Capsule())
-        .accessibilityElement(children: .contain)
+        ChatSidebarHeaderView(
+            onlineAgentCount: viewModel.onlineAgentCount,
+            isSearchVisible: isSearchVisible,
+            searchText: $sidebarSearchText,
+            searchFieldFocus: $isSearchFieldFocused,
+            onToggleSearch: toggleSidebarSearch
+        )
     }
 
     private var agentsHeader: some View {
@@ -330,47 +237,11 @@ struct ChatSidebarView: View {
     }
 
     private var footer: some View {
-        HStack {
-            Button(action: beginAddingAgent) {
-                Label("New Agent", systemImage: "person.badge.plus")
-                    .font(.callout.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, SidebarMetrics.footerButtonHorizontalPadding)
-                    .frame(height: SidebarMetrics.footerButtonSize)
-                    .background(AppTheme.primary, in: Capsule())
-            }
-            .buttonStyle(SidebarFooterButtonStyle())
-            .accessibilityLabel("Add Agent")
-
-            Spacer()
-
-            Button(action: onSettings) {
-                Image(systemName: "gearshape")
-                    .imageScale(.large)
-                    .foregroundStyle(.primary)
-                    .frame(width: SidebarMetrics.footerButtonSize, height: SidebarMetrics.footerButtonSize)
-                    .glassBackground(in: Circle(), interactive: true, tint: Color(.systemBackground))
-                    .overlay {
-                        Circle()
-                            .stroke(Color(.separator).opacity(SidebarMetrics.settingsButtonStrokeOpacity), lineWidth: 0.5)
-                    }
-                    .shadow(
-                        color: Color(.label).opacity(SidebarMetrics.settingsButtonShadowOpacity),
-                        radius: SidebarMetrics.settingsButtonShadowRadius,
-                        x: 0,
-                        y: SidebarMetrics.settingsButtonShadowYOffset
-                    )
-            }
-            .buttonStyle(SidebarFooterButtonStyle())
-            .tint(Color(.label))
-            .accessibilityLabel("Settings")
-        }
-        .padding(.horizontal, SidebarMetrics.outerLeading)
-        .padding(.bottom, safeAreaInsets.bottom + SidebarMetrics.footerBottomPadding)
-        .background {
-            Color(.systemBackground)
-                .ignoresSafeArea()
-        }
+        ChatSidebarFooterView(
+            safeAreaInsets: safeAreaInsets,
+            onAddAgent: beginAddingAgent,
+            onSettings: onSettings
+        )
     }
 
     @ViewBuilder
@@ -446,154 +317,50 @@ struct ChatSidebarView: View {
     }
 
     private func agentRow(for agent: AgentConnection) -> some View {
-        let isOnline = viewModel.isAgentOnline(agent)
-        return Button {
-            toggleAgent(agent)
-        } label: {
-            HStack(spacing: SidebarMetrics.agentRowSpacing) {
-                Image(systemName: "chevron.forward")
-                    .imageScale(.small)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.secondary)
-                    .frame(width: SidebarMetrics.chevronWidth, height: SidebarMetrics.agentRowHeight)
-                    .rotationEffect(.degrees(expandedAgentIDs.contains(agent.id) ? 90 : 0))
-
-                HStack(spacing: SidebarMetrics.agentAvatarSpacing) {
-                    Text(agentInitial(for: agent))
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Color(.label))
-                        .frame(width: SidebarMetrics.avatarSize, height: SidebarMetrics.avatarSize)
-                        .background(Color(.quaternarySystemFill), in: Circle())
-
-                    HStack(spacing: SidebarMetrics.agentNameSpacing) {
-                        Text(agent.name)
-                            .font(.body)
-                            .lineLimit(1)
-
-                        if isOnline {
-                            Circle()
-                                .fill(Color(.systemGreen))
-                                .frame(width: SidebarMetrics.statusDotSize, height: SidebarMetrics.statusDotSize)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(AppPressButtonStyle(pressedScale: 0.985, pressedOpacity: 0.90))
-        .contextMenu {
-            Button {
+        SidebarAgentRow(
+            agent: agent,
+            isExpanded: expandedAgentIDs.contains(agent.id),
+            isOnline: viewModel.isAgentOnline(agent),
+            onToggle: {
+                toggleAgent(agent)
+            },
+            onRename: {
                 beginRenaming(agent)
-            } label: {
-                contextMenuLabel("Rename", systemImage: "pencil", color: Color(.label))
-            }
-            .tint(Color(.label))
-
-            Button {
+            },
+            onEdit: {
                 beginEditing(agent)
-            } label: {
-                contextMenuLabel("Edit Agent", systemImage: "slider.horizontal.3", color: Color(.label))
-            }
-            .tint(Color(.label))
-
-            Button {
+            },
+            onAddChat: {
                 focusedAgentID = agent.id
                 expandedAgentIDs.insert(agent.id)
                 onAddChat(agent)
-            } label: {
-                contextMenuLabel("Add Chat", systemImage: "plus.bubble", color: Color(.label))
-            }
-            .tint(Color(.label))
-
-            if let shareURL = AgentShareURL.url(for: agent.address) {
-                ShareLink(item: shareURL) {
-                    contextMenuLabel("Share Link", systemImage: "square.and.arrow.up", color: Color(.label))
-                }
-                .tint(Color(.label))
-
-                Button {
-                    qrCodeShareURL = shareURL
-                } label: {
-                    contextMenuLabel("Show QR Code", systemImage: "qrcode", color: Color(.label))
-                }
-                .tint(Color(.label))
-            }
-
-            Button(role: .destructive) {
+            },
+            onShowQRCode: { shareURL in
+                qrCodeShareURL = shareURL
+            },
+            onDelete: {
                 agentDeleteTarget = agent
-            } label: {
-                contextMenuLabel("Delete", systemImage: "trash", color: AppTheme.destructive)
             }
-            .tint(AppTheme.destructive)
-        }
+        )
     }
 
     private func conversationButton(_ conversation: Conversation) -> some View {
-        let isSelected = selection == .conversation(conversation.id)
-
-        return Button {
-            focusedAgentID = conversation.agentID
-            onSelectConversation(conversation)
-        } label: {
-            HStack(spacing: 0) {
-                HStack(spacing: SidebarMetrics.sessionContentSpacing) {
-                    Image(systemName: "message")
-                        .imageScale(.medium)
-                        .symbolRenderingMode(.hierarchical)
-                        .frame(width: SidebarMetrics.sessionIconWidth)
-
-                    Text(conversation.title)
-                        .font(.subheadline)
-                        .lineLimit(1)
-
-                    Spacer(minLength: 0)
-
-                    if viewModel.hasPendingInteraction(forConversationID: conversation.id) {
-                        Image(systemName: "exclamationmark.circle.fill")
-                            .foregroundStyle(Color(.systemOrange))
-                            .accessibilityLabel("Approval required")
-                    } else if viewModel.isProcessing(conversationID: conversation.id) {
-                        ProgressView()
-                            .controlSize(.small)
-                            .accessibilityLabel("Agent working")
-                    }
-                }
-                .padding(.leading, SidebarMetrics.sessionIndent)
-            }
-        }
-        .buttonStyle(SidebarConversationButtonStyle(isSelected: isSelected))
-        .listRowInsets(SidebarMetrics.conversationRowInsets)
-        .listRowSeparator(.hidden)
-        .listRowBackground(Color.clear)
-        .contextMenu {
-            Button {
+        SidebarConversationRow(
+            conversation: conversation,
+            isSelected: selection == .conversation(conversation.id),
+            hasPendingInteraction: viewModel.hasPendingInteraction(forConversationID: conversation.id),
+            isProcessing: viewModel.isProcessing(conversationID: conversation.id),
+            onSelect: {
+                focusedAgentID = conversation.agentID
+                onSelectConversation(conversation)
+            },
+            onRename: {
                 beginRenaming(conversation)
-            } label: {
-                contextMenuLabel("Rename", systemImage: "pencil", color: Color(.label))
-            }
-            .tint(Color(.label))
-
-            Button(role: .destructive) {
+            },
+            onDelete: {
                 deleteTarget = conversation
-            } label: {
-                contextMenuLabel("Delete", systemImage: "trash", color: AppTheme.destructive)
             }
-            .tint(AppTheme.destructive)
-        }
-        .accessibilityAction(named: Text("Delete")) {
-            deleteTarget = conversation
-        }
-        .accessibilityAction(named: Text("Rename")) {
-            beginRenaming(conversation)
-        }
-    }
-
-    private var connectionSummary: String {
-        let count = viewModel.onlineAgentCount
-        let noun = count == 1 ? "agent" : "agents"
-        return "\(count) \(noun) online"
+        )
     }
 
     private func toggleAgent(_ agent: AgentConnection) {
@@ -694,25 +461,6 @@ struct ChatSidebarView: View {
         viewModel.renameConversation(conversation, to: trimmedTitle)
     }
 
-    private func contextMenuLabel(_ title: String, systemImage: String, color: Color) -> some View {
-        Label {
-            Text(title)
-                .foregroundStyle(color)
-        } icon: {
-            Image(systemName: systemImage)
-                .symbolRenderingMode(.monochrome)
-                .foregroundStyle(color)
-        }
-        .tint(color)
-    }
-
-    private func agentInitial(for agent: AgentConnection) -> String {
-        guard let first = agent.name.trimmingCharacters(in: .whitespacesAndNewlines).first else {
-            return "A"
-        }
-        return String(first).uppercased()
-    }
-
     private var isDeleting: Binding<Bool> {
         Binding(get: { deleteTarget != nil }, set: { if !$0 { deleteTarget = nil } })
     }
@@ -755,60 +503,4 @@ struct ChatSidebarView: View {
             }
         )
     }
-}
-
-enum ChatSidebarSelection: Equatable {
-    case conversation(String)
-}
-
-// Sidebar metrics and constants.
-private enum SidebarMetrics {
-    static let outerLeading: CGFloat = 22
-    static let outerTrailing: CGFloat = 18
-    static let rowLeading: CGFloat = 22
-    static let compactRowLeading: CGFloat = 12
-    static let compactRowTrailing: CGFloat = 10
-    static let headerTopPadding: CGFloat = 8
-    static let headerBottomPadding: CGFloat = 26
-    static let headerSpacing: CGFloat = 12
-    static let headerLogoSpacing: CGFloat = 12
-    static let brandTopPadding: CGFloat = -3
-    static let headerTrailingSpacing: CGFloat = 12
-    static let headerIconButtonSize: CGFloat = 44
-    static let searchButtonVerticalOffset: CGFloat = -8
-    static let logoSize: CGFloat = 34
-    static let statusSpacing: CGFloat = 10
-    static let statusDotSize: CGFloat = 8
-    static let searchFieldSpacing: CGFloat = 8
-    static let searchFieldHorizontalPadding: CGFloat = 12
-    static let searchFieldHeight: CGFloat = 42
-    static let searchClearButtonSize: CGFloat = 24
-    static let agentsHeaderTopPadding: CGFloat = 0
-    static let agentsHeaderBottomPadding: CGFloat = 10
-    static let sectionHeaderHorizontalPadding: CGFloat = 10
-    static let minimumRowHeight: CGFloat = 0
-    static let footerButtonSize: CGFloat = 50
-    static let footerBottomPadding: CGFloat = 20
-    static let footerButtonHorizontalPadding: CGFloat = 18
-    static let settingsButtonStrokeOpacity: Double = 0.20
-    static let settingsButtonShadowOpacity: Double = 0.07
-    static let settingsButtonShadowRadius: CGFloat = 14
-    static let settingsButtonShadowYOffset: CGFloat = 6
-    static let chevronWidth: CGFloat = 24
-    static let agentRowSpacing: CGFloat = 8
-    static let agentRowHeight: CGFloat = 34
-    static let avatarSize: CGFloat = 32
-    static let agentAvatarSpacing: CGFloat = 10
-    static let agentNameSpacing: CGFloat = 8
-    static let sessionIndent: CGFloat = 36
-    static let sessionIconWidth: CGFloat = 18
-    static let sessionContentSpacing: CGFloat = 8
-    static let rowHorizontalPadding: CGFloat = 10
-    static let conversationTextLeading = rowLeading + rowHorizontalPadding + sessionIndent + sessionIconWidth + sessionContentSpacing
-
-    static let primaryRowInsets = EdgeInsets(top: 2, leading: compactRowLeading, bottom: 2, trailing: compactRowTrailing)
-    static let emptyRowInsets = EdgeInsets(top: 8, leading: rowLeading, bottom: 8, trailing: outerTrailing)
-    static let agentRowInsets = EdgeInsets(top: 4, leading: rowLeading, bottom: 4, trailing: 14)
-    static let conversationRowInsets = EdgeInsets(top: 0, leading: rowLeading, bottom: 0, trailing: compactRowTrailing)
-    static let emptySessionRowInsets = EdgeInsets(top: 6, leading: conversationTextLeading, bottom: 6, trailing: outerTrailing)
 }
