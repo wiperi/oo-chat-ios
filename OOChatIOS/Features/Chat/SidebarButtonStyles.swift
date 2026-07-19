@@ -41,7 +41,7 @@ struct SidebarConversationButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .foregroundStyle(isSelected ? Color(.label) : Color(.secondaryLabel))
+            .foregroundStyle(isSelected ? Color(.label) : Color(.label).opacity(0.68))
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
             .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)

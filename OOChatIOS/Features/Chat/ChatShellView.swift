@@ -6,13 +6,12 @@ struct ChatShellView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var isSidebarOpen = false
+    @State private var isSidebarSearchFocused = false
     @State private var dragOffset: CGFloat = 0
     @State private var activeContent: SidebarContent = .chat
-    @State private var isActiveContentAtRoot = true
 
-    init(viewModel: ChatViewModel, startsOnAgents: Bool = false) {
+    init(viewModel: ChatViewModel) {
         self.viewModel = viewModel
-        _activeContent = State(initialValue: startsOnAgents ? .agents : .chat)
     }
 
     var body: some View {
@@ -27,17 +26,19 @@ struct ChatShellView: View {
                 ChatSidebarView(
                     viewModel: viewModel,
                     safeAreaInsets: windowSafeAreaInsets,
+                    isSidebarOpen: isSidebarOpen,
+                    isSearchFocused: $isSidebarSearchFocused,
                     selection: sidebarSelection,
                     onSelectConversation: { conversation in
                         viewModel.selectConversation(conversation)
                         showContentFromSidebar(.chat)
                     },
-                    onNewChat: { agent in
+                    onAddChat: { agent in
                         _ = viewModel.createConversation(for: agent)
                         showContentFromSidebar(.chat)
                     },
-                    onManageAgents: {
-                        showContentFromSidebar(.agents)
+                    onConnected: {
+                        showContentFromSidebar(.chat)
                     },
                     onSettings: {
                         showContentFromSidebar(.settings)
@@ -45,20 +46,14 @@ struct ChatShellView: View {
                 )
                 .frame(width: drawerWidth)
                 .offset(x: reduceMotion ? 0 : -SidebarShellMetrics.sidebarParallax * (1 - progress))
-                .opacity(reduceMotion ? 1 : SidebarShellMetrics.sidebarRestingOpacity + ((1 - SidebarShellMetrics.sidebarRestingOpacity) * progress))
                 .zIndex(0)
 
                 contentView(for: activeContent)
                 .frame(width: proxy.size.width, height: proxy.size.height)
                 .background(Color(.systemBackground))
+                .ignoresSafeArea(contentKeyboardSafeAreaRegions, edges: .bottom)
                 .allowsHitTesting(progress == 0)
-                .clipShape(
-                    UnevenRoundedRectangle(
-                        topLeadingRadius: cornerRadius,
-                        bottomLeadingRadius: cornerRadius,
-                        style: .continuous
-                    )
-                )
+                .clipShape(contentMask(cornerRadius: cornerRadius))
                 .compositingGroup()
                 .shadow(
                     color: .black.opacity(SidebarShellMetrics.shadowOpacity * progress),
@@ -84,6 +79,7 @@ struct ChatShellView: View {
                             * progress
                     )
                         .frame(width: max(0, proxy.size.width - contentOffset), height: proxy.size.height)
+                        .clipShape(contentMask(cornerRadius: cornerRadius))
                         .contentShape(Rectangle())
                         .offset(x: contentOffset)
                         .onTapGesture {
@@ -99,56 +95,35 @@ struct ChatShellView: View {
             .clipped()
         }
         .ignoresSafeArea()
-        .onAppear {
-            if viewModel.agents.isEmpty {
-                activeContent = .agents
-                isActiveContentAtRoot = true
-            }
-        }
-        .onChange(of: viewModel.agents.isEmpty) {
-            if viewModel.agents.isEmpty {
-                showContent(.agents)
-            }
-        }
     }
 
     @ViewBuilder
     private func contentView(for content: SidebarContent) -> some View {
         switch content {
         case .chat:
-            ChatView(viewModel: viewModel) {
+            ChatView(viewModel: viewModel, showsComposer: !isSidebarSearchFocused) {
                 openSidebar()
             }
-        case .agents:
-            AgentsView(
-                viewModel: viewModel,
-                switchToChat: {
-                    showChat()
-                },
-                onOpenSidebar: {
-                    openSidebar()
-                },
-                onRootStateChange: { isAtRoot in
-                    isActiveContentAtRoot = isAtRoot
-                }
-            )
         case .settings:
             SettingsView(viewModel: viewModel) {
-                showContent(.chat)
+                returnToSidebar()
             }
         }
-    }
-
-    private func showChat() {
-        showContent(.chat)
     }
 
     private func showContent(_ content: SidebarContent) {
         withAnimation(AppMotion.stateChange(reduceMotion: reduceMotion)) {
             activeContent = content
             isSidebarOpen = false
+            isSidebarSearchFocused = false
             dragOffset = 0
-            isActiveContentAtRoot = true
+        }
+    }
+
+    private func returnToSidebar() {
+        withAnimation(AppMotion.drawer(reduceMotion: reduceMotion)) {
+            isSidebarOpen = true
+            dragOffset = 0
         }
     }
 
@@ -166,7 +141,6 @@ struct ChatShellView: View {
         withTransaction(Transaction(animation: nil)) {
             activeContent = content
             dragOffset = 0
-            isActiveContentAtRoot = true
         }
 
         DispatchQueue.main.async {
@@ -188,6 +162,7 @@ struct ChatShellView: View {
     private func closeSidebar() {
         withAnimation(AppMotion.drawer(reduceMotion: reduceMotion)) {
             isSidebarOpen = false
+            isSidebarSearchFocused = false
             dragOffset = 0
         }
     }
@@ -213,12 +188,11 @@ struct ChatShellView: View {
     }
 
     private var canOpenSidebar: Bool {
-        switch activeContent {
-        case .chat, .settings:
-            return true
-        case .agents:
-            return isActiveContentAtRoot
-        }
+        true
+    }
+
+    private var contentKeyboardSafeAreaRegions: SafeAreaRegions {
+        isSidebarSearchFocused ? .keyboard : []
     }
 
     private var sidebarSelection: ChatSidebarSelection? {
@@ -228,8 +202,6 @@ struct ChatShellView: View {
                 return nil
             }
             return .conversation(conversationID)
-        case .agents:
-            return .agents
         case .settings:
             return nil
         }
@@ -261,6 +233,9 @@ struct ChatShellView: View {
 
                 withAnimation(AppMotion.drawer(reduceMotion: reduceMotion)) {
                     isSidebarOpen = shouldOpen
+                    if !shouldOpen {
+                        isSidebarSearchFocused = false
+                    }
                     dragOffset = 0
                 }
             }
@@ -272,6 +247,14 @@ struct ChatShellView: View {
         }
         let constant = SidebarShellMetrics.rubberBandConstant
         return (overshoot * dimension * constant) / (dimension + (constant * overshoot))
+    }
+
+    private func contentMask(cornerRadius: CGFloat) -> UnevenRoundedRectangle {
+        UnevenRoundedRectangle(
+            topLeadingRadius: cornerRadius,
+            bottomLeadingRadius: cornerRadius,
+            style: .continuous
+        )
     }
 
     private var windowSafeAreaInsets: EdgeInsets {
@@ -296,21 +279,19 @@ struct ChatShellView: View {
 
 private enum SidebarContent {
     case chat
-    case agents
     case settings
 }
 
 // Sidebar metrics and constants.
 private enum SidebarShellMetrics {
-    static let drawerWidthRatio: CGFloat = 0.76
-    static let maxDrawerWidth: CGFloat = 304
-    static let visibleChatWidth: CGFloat = 92
+    static let drawerWidthRatio: CGFloat = 0.80
+    static let maxDrawerWidth: CGFloat = 332
+    static let visibleChatWidth: CGFloat = 78
     static let cornerRadius: CGFloat = 34
     static let shadowOpacity: Double = 0.08
     static let shadowRadius: CGFloat = 16
     static let shadowOffset = CGSize(width: -2, height: 0)
     static let sidebarParallax: CGFloat = 18
-    static let sidebarRestingOpacity: Double = 0.86
     static let scrimOpacity: Double = 0.025
     static let reducedTransparencyScrimOpacity: Double = 0.05
     static let dragMinimumDistance: CGFloat = 16

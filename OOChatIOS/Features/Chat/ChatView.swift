@@ -2,22 +2,33 @@ import SwiftUI
 // The main chat view message and conversations of the app.
 struct ChatView: View {
     @ObservedObject var viewModel: ChatViewModel
+    let showsComposer: Bool
     let onOpenSidebar: () -> Void
 
-    init(viewModel: ChatViewModel, onOpenSidebar: @escaping () -> Void = {}) {
+    init(
+        viewModel: ChatViewModel,
+        showsComposer: Bool = true,
+        onOpenSidebar: @escaping () -> Void = {}
+    ) {
         self.viewModel = viewModel
+        self.showsComposer = showsComposer
         self.onOpenSidebar = onOpenSidebar
     }
 
     var body: some View {
         NavigationStack {
-            ChatScreen(viewModel: viewModel, onOpenSidebar: onOpenSidebar)
+            ChatScreen(
+                viewModel: viewModel,
+                showsComposer: showsComposer,
+                onOpenSidebar: onOpenSidebar
+            )
         }
     }
 }
 
 struct ChatScreen: View {
     @ObservedObject var viewModel: ChatViewModel
+    let showsComposer: Bool
     let onOpenSidebar: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private let bottomAnchorID = "chat.bottomAnchor"
@@ -111,12 +122,14 @@ struct ChatScreen: View {
                         }
                     }
                     .safeAreaInset(edge: .bottom, spacing: 0) {
-                        Composer(viewModel: viewModel)
-                            .padding(.top, 8)
-                            .background {
-                                Color(.systemBackground)
-                                    .ignoresSafeArea(edges: .bottom)
-                            }
+                        if showsComposer {
+                            Composer(viewModel: viewModel)
+                                .padding(.top, 8)
+                                .background {
+                                    Color(.systemBackground)
+                                        .ignoresSafeArea(edges: .bottom)
+                                }
+                        }
                     }
                 }
             } else {
@@ -134,18 +147,7 @@ struct ChatScreen: View {
                         .lineLimit(1)
                         .contentTransition(.opacity)
 
-                    HStack(spacing: 5) {
-                        if let agentName = viewModel.activeAgent?.name {
-                            Text(agentName)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-
-                            Text("·")
-                                .font(.caption)
-                                .foregroundStyle(.tertiary)
-                        }
-
+                    HStack {
                         StatusPill(state: viewModel.connectionState)
                     }
                     .contentTransition(.opacity)

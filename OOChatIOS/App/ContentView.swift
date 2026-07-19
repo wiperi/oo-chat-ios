@@ -7,7 +7,7 @@ struct ContentView: View {
     @AppStorage("appAppearance") private var appAppearance = AppAppearance.system.rawValue
 
     var body: some View {
-        ChatShellView(viewModel: viewModel, startsOnAgents: viewModel.agents.isEmpty)
+        ChatShellView(viewModel: viewModel)
         .safeAreaInset(edge: .top, spacing: 0) {
             VStack(spacing: 1) {
                 if viewModel.shouldShowOfflineBanner {
