@@ -1,5 +1,6 @@
 import Foundation
 
+// wraps the system socket so tests can control reads and writes
 protocol HostedAgentWebSocketTask: AnyObject, Sendable {
     func resume()
     func cancel(with closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?)
@@ -12,6 +13,7 @@ extension URLSessionWebSocketTask: HostedAgentWebSocketTask {}
 typealias HostedAgentWebSocketFactory = @Sendable (URL) -> any HostedAgentWebSocketTask
 typealias HostedAgentEndpointResolver = @Sendable (String) async throws -> ResolvedEndpoint
 
+// owns one socket and one active prompt for a conversation
 actor HostedAgentConnection {
     private enum State: Equatable {
         case disconnected
@@ -42,6 +44,7 @@ actor HostedAgentConnection {
     private var connectTimeoutTask: Task<Void, Never>?
     private var livenessTask: Task<Void, Never>?
     private var interactionTasks: [UUID: Task<Void, Never>] = [:]
+    // rejects frames and failures from sockets that were already replaced
     private var socketGeneration = 0
     private var connectWaiters: [UUID: CheckedContinuation<HostedAgentResult, Error>] = [:]
     private var pendingPrompt: PendingPrompt?
@@ -73,6 +76,7 @@ actor HostedAgentConnection {
         self.livenessCheckInterval = livenessCheckInterval
     }
 
+    // shares one connection attempt across callers for the same conversation
     func ensureConnected(conversation: Conversation) async throws -> HostedAgentResult {
         if state == .connected, socket != nil, let endpoint {
             return HostedAgentResult(output: nil, endpointLabel: endpoint.label, serverSession: serverSession)
@@ -104,6 +108,7 @@ actor HostedAgentConnection {
         }
     }
 
+    // allows only one prompt to use this conversation socket at a time
     func sendPrompt(
         conversation: Conversation,
         prompt: String,
@@ -179,6 +184,7 @@ actor HostedAgentConnection {
         socket: any HostedAgentWebSocketTask,
         generation: Int
     ) {
+        // keeps one reader responsible for all frames from the current socket
         receiveTask?.cancel()
         receiveTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -236,10 +242,8 @@ actor HostedAgentConnection {
     }
 
     private func hasTimedOut(generation: Int) -> Bool {
-        // No frames flow while an interaction card waits on the human, so a user who takes
-        // longer than `livenessTimeout` to decide would otherwise lose the connection and
-        // their decision with it. Sending the response updates `lastNetworkActivityAt`,
-        // which restarts the clock from a live socket.
+        // human interaction can stay quiet longer than the liveness window
+        // sending a decision restarts activity tracking for the same socket
         guard interactionTasks.isEmpty else {
             return false
         }
@@ -252,10 +256,8 @@ actor HostedAgentConnection {
         guard pendingPrompt?.id == promptID else {
             return
         }
-        // The socket can die between `ensureConnected` returning and this task running,
-        // in which case `disconnect` already ran and resumed nothing — `pendingPrompt` was
-        // set after it. Returning here would leak the continuation and hang the conversation
-        // forever, so fail the prompt explicitly instead.
+        // the socket may close after connection checks but before this task sends
+        // failing here keeps the stored continuation from waiting forever
         guard let socket else {
             failConnection(HostedAgentClientError.closed, generation: generation)
             return
@@ -342,8 +344,7 @@ actor HostedAgentConnection {
                 return
             }
             guard let interaction = HostedAgentInteraction.from(frame) else {
-                // A payload we cannot parse used to fail the connection, which cost the user
-                // the whole round-trip. Decline it on their behalf and keep the socket.
+                // decline known interaction types when their payload cannot be parsed
                 if let placeholder = HostedAgentInteraction.declinePlaceholder(for: frame) {
                     await sendDeclineResponse(for: placeholder, generation: generation)
                 } else {
@@ -426,9 +427,7 @@ actor HostedAgentConnection {
                 decision: interaction.unavailableDecision,
                 endpoint: endpoint
             ) else {
-                // This kind's decline has no wire representation (ask_user cancel), so the
-                // agent would keep waiting on a response that is never coming. End the
-                // round-trip now rather than letting it sit until the receive timeout.
+                // ask user cancellation has no response frame, so end the pending turn
                 failConnection(HostedAgentClientError.badFrame, generation: generation)
                 return
             }
@@ -444,10 +443,7 @@ actor HostedAgentConnection {
         endpoint: ResolvedEndpoint
     ) throws -> [String: JSONValue]? {
         switch (interaction, decision) {
-        // A superseded request is one the agent itself replaced by sending a newer one of the
-        // same kind. Its gate still has to be released so the receive loop unblocks, but no
-        // response goes on the wire: these frames carry no request ID, so a late reply would
-        // be indistinguishable from an answer to the request that replaced it.
+        // superseded requests release the local gate without writing to the socket
         case (_, .superseded):
             return nil
         case (.approval, .approval(let approval)):
@@ -509,6 +505,7 @@ actor HostedAgentConnection {
     }
 
     private func disconnect(with error: Error, closeCode: URLSessionWebSocketTask.CloseCode) {
+        // clear shared state before any waiter can resume and call back into this actor
         socketGeneration += 1
         setState(.disconnected)
         connectionStatus = nil
@@ -615,6 +612,7 @@ actor HostedAgentConnection {
             throw HostedAgentClientError.badFrame
         }
         try await socket.send(.string(text))
+        // an awaited send may finish after this socket has already been replaced
         guard self.socket === socket else {
             throw HostedAgentClientError.closed
         }

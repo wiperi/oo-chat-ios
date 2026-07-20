@@ -1,5 +1,6 @@
 import Foundation
 
+// sends only the newest queued state update for each conversation
 final class HostedAgentConnectionStateObserver: @unchecked Sendable {
     private let lock = NSLock()
     private var storedHandler: (@MainActor (String, ConnectionState) -> Void)?
@@ -48,14 +49,14 @@ final class HostedAgentConnectionStateObserver: @unchecked Sendable {
     }
 }
 
+// identifies one agent socket within one conversation session
 struct HostedAgentConnectionKey: Hashable {
     let agentAddress: String
     let conversationID: String
 }
 
-/// Owns a bounded set of session-bound WebSockets. Connections that are actively
-/// running an agent or waiting for human interaction are pinned and never evicted.
-
+// owns a bounded group of reusable conversation sockets
+// active leases keep a connection from being evicted
 actor HostedAgentConnectionPool {
     private struct Entry {
         let connection: HostedAgentConnection
@@ -170,17 +171,20 @@ actor HostedAgentConnectionPool {
     }
 
     private func acquire(agentAddress: String, conversationID: String) async -> Lease {
+        // remove expired entries before checking the pool limit
         startCleanupTaskIfNeeded()
         await evictExpiredConnections()
 
         let key = HostedAgentConnectionKey(agentAddress: agentAddress, conversationID: conversationID)
         if var entry = connections[key] {
+            // reuse keeps session state and the socket handshake intact
             entry.activeLeases += 1
             entry.lastUsedAt = now()
             connections[key] = entry
             return Lease(key: key, connection: entry.connection)
         }
 
+        // active entries can let the pool grow until their leases are released
         while connections.count >= maximumSize, await evictLeastRecentlyUsedIdleConnection() {}
 
         let connection = HostedAgentConnection(
@@ -212,6 +216,7 @@ actor HostedAgentConnectionPool {
         guard cleanupTask == nil else {
             return
         }
+        // run cleanup often enough for short idle lifetimes without polling too fast
         let interval = min(30, max(1, idleLifetime / 2))
         cleanupTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -226,6 +231,7 @@ actor HostedAgentConnectionPool {
     }
 
     private func evictExpiredConnections() async {
+        // update the dictionary before awaiting connection shutdown
         let cutoff = now().addingTimeInterval(-idleLifetime)
         let expiredKeys = connections.compactMap { key, entry in
             entry.activeLeases == 0 && entry.lastUsedAt < cutoff ? key : nil
@@ -242,6 +248,7 @@ actor HostedAgentConnectionPool {
     private func evictLeastRecentlyUsedIdleConnection() async -> Bool {
         var candidate: (key: HostedAgentConnectionKey, entry: Entry)?
         for (key, entry) in connections {
+            // leased connections stay pinned until their operation completes
             guard entry.activeLeases == 0 else {
                 continue
             }
@@ -259,6 +266,7 @@ actor HostedAgentConnectionPool {
     }
 
     private func trimToSize() async {
+        // stop when every remaining connection still has an active lease
         while connections.count > maximumSize {
             guard await evictLeastRecentlyUsedIdleConnection() else {
                 return
