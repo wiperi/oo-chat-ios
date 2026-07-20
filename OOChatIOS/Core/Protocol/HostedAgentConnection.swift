@@ -1,5 +1,17 @@
 import Foundation
 
+protocol HostedAgentWebSocketTask: AnyObject, Sendable {
+    func resume()
+    func cancel(with closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?)
+    func send(_ message: URLSessionWebSocketTask.Message) async throws
+    func receive() async throws -> URLSessionWebSocketTask.Message
+}
+
+extension URLSessionWebSocketTask: HostedAgentWebSocketTask {}
+
+typealias HostedAgentWebSocketFactory = @Sendable (URL) -> any HostedAgentWebSocketTask
+typealias HostedAgentEndpointResolver = @Sendable (String) async throws -> ResolvedEndpoint
+
 actor HostedAgentConnection {
     private enum State: Equatable {
         case disconnected
@@ -16,14 +28,15 @@ actor HostedAgentConnection {
 
     private let key: HostedAgentConnectionKey
     private let identityStore: IdentityStore
-    private let session: URLSession
-    private let discovery: HostedAgentDiscovery
     private let connectionStateObserver: HostedAgentConnectionStateObserver
-    private let connectTimeout: TimeInterval = 45
-    private let livenessTimeout: TimeInterval = 75
+    private let socketFactory: HostedAgentWebSocketFactory
+    private let endpointResolver: HostedAgentEndpointResolver
+    private let connectTimeout: TimeInterval
+    private let livenessTimeout: TimeInterval
+    private let livenessCheckInterval: TimeInterval
 
     private var state: State = .disconnected
-    private var socket: URLSessionWebSocketTask?
+    private var socket: (any HostedAgentWebSocketTask)?
     private var endpoint: ResolvedEndpoint?
     private var receiveTask: Task<Void, Never>?
     private var connectTimeoutTask: Task<Void, Never>?
@@ -41,13 +54,23 @@ actor HostedAgentConnection {
         identityStore: IdentityStore,
         session: URLSession,
         discovery: HostedAgentDiscovery,
-        connectionStateObserver: HostedAgentConnectionStateObserver
+        connectionStateObserver: HostedAgentConnectionStateObserver,
+        socketFactory: HostedAgentWebSocketFactory? = nil,
+        endpointResolver: HostedAgentEndpointResolver? = nil,
+        connectTimeout: TimeInterval = 45,
+        livenessTimeout: TimeInterval = 75,
+        livenessCheckInterval: TimeInterval = 10
     ) {
         self.key = key
         self.identityStore = identityStore
-        self.session = session
-        self.discovery = discovery
         self.connectionStateObserver = connectionStateObserver
+        self.socketFactory = socketFactory ?? { session.webSocketTask(with: $0) }
+        self.endpointResolver = endpointResolver ?? { agentAddress in
+            try await discovery.discover(agentAddress: agentAddress).endpoint
+        }
+        self.connectTimeout = connectTimeout
+        self.livenessTimeout = livenessTimeout
+        self.livenessCheckInterval = livenessCheckInterval
     }
 
     func ensureConnected(conversation: Conversation) async throws -> HostedAgentResult {
@@ -138,7 +161,7 @@ actor HostedAgentConnection {
             }
 
             self.endpoint = endpoint
-            let socket = session.webSocketTask(with: endpoint.wsURL)
+            let socket = socketFactory(endpoint.wsURL)
             self.socket = socket
             lastNetworkActivityAt = Date()
             socket.resume()
@@ -152,7 +175,10 @@ actor HostedAgentConnection {
         }
     }
 
-    private func startReceiveLoop(socket: URLSessionWebSocketTask, generation: Int) {
+    private func startReceiveLoop(
+        socket: any HostedAgentWebSocketTask,
+        generation: Int
+    ) {
         receiveTask?.cancel()
         receiveTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -192,7 +218,9 @@ actor HostedAgentConnection {
         livenessTask = Task { [weak self] in
             while !Task.isCancelled {
                 do {
-                    try await Task.sleep(nanoseconds: 10_000_000_000)
+                    try await Task.sleep(
+                        nanoseconds: UInt64((self?.livenessCheckInterval ?? 10) * 1_000_000_000)
+                    )
                 } catch {
                     return
                 }
@@ -534,7 +562,7 @@ actor HostedAgentConnection {
     }
 
     private func resolveEndpoint(agentAddress: String) async throws -> ResolvedEndpoint {
-        try await discovery.discover(agentAddress: agentAddress).endpoint
+        try await endpointResolver(agentAddress)
     }
 
     private func buildConnectFrame(conversation: Conversation) throws -> [String: JSONValue] {
@@ -581,7 +609,7 @@ actor HostedAgentConnection {
         return frame
     }
 
-    private func send(_ frame: [String: JSONValue], over socket: URLSessionWebSocketTask) async throws {
+    private func send(_ frame: [String: JSONValue], over socket: any HostedAgentWebSocketTask) async throws {
         let data = try JSONEncoder().encode(frame)
         guard let text = String(data: data, encoding: .utf8) else {
             throw HostedAgentClientError.badFrame
@@ -593,7 +621,9 @@ actor HostedAgentConnection {
         lastNetworkActivityAt = Date()
     }
 
-    private static func readFrame(from socket: URLSessionWebSocketTask) async throws -> [String: JSONValue] {
+    private static func readFrame(
+        from socket: any HostedAgentWebSocketTask
+    ) async throws -> [String: JSONValue] {
         let message = try await socket.receive()
         switch message {
         case .string(let text):
