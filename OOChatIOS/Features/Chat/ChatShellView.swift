@@ -64,15 +64,6 @@ struct ChatShellView: View {
                 .offset(x: contentOffset)
                 .zIndex(1)
 
-                if canOpenSidebar && !isSidebarOpen {
-                    Color.clear
-                        .frame(width: SidebarShellMetrics.openEdgeWidth, height: proxy.size.height)
-                        .contentShape(Rectangle())
-                        .gesture(sidebarDrag(openOffset: openOffset))
-                        .accessibilityHidden(true)
-                        .zIndex(2)
-                }
-
                 if isSidebarOpen {
                     Color.black.opacity(
                         (reduceTransparency ? SidebarShellMetrics.reducedTransparencyScrimOpacity : SidebarShellMetrics.scrimOpacity)
@@ -85,12 +76,12 @@ struct ChatShellView: View {
                         .onTapGesture {
                             closeSidebar()
                         }
-                        .gesture(sidebarDrag(openOffset: openOffset))
                         .accessibilityHidden(true)
                         .zIndex(2)
                 }
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
+            .simultaneousGesture(sidebarDrag(openOffset: openOffset))
             .background(Color(.systemBackground))
             .clipped()
         }
@@ -210,28 +201,37 @@ struct ChatShellView: View {
     private func sidebarDrag(openOffset: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: SidebarShellMetrics.dragMinimumDistance, coordinateSpace: .global)
             .onChanged { value in
+                guard isHorizontalDrag(value) else {
+                    return
+                }
+
                 if isSidebarOpen {
-                    guard value.startLocation.x >= openOffset else {
-                        dragOffset = 0
-                        return
-                    }
-                    dragOffset = min(0, value.translation.width)
+                    dragOffset = value.translation.width
                 } else if canOpenSidebar, value.startLocation.x <= SidebarShellMetrics.openEdgeWidth {
-                    dragOffset = max(0, min(openOffset, value.translation.width))
+                    dragOffset = value.translation.width
                 }
             }
             .onEnded { value in
+                guard isHorizontalDrag(value) else {
+                    return
+                }
+
                 let shouldOpen: Bool
                 if isSidebarOpen {
-                    shouldOpen = value.startLocation.x < openOffset
-                        || value.predictedEndTranslation.width > -openOffset * SidebarShellMetrics.closeThreshold
+                    let projectedOffset = openOffset + value.predictedEndTranslation.width
+                    shouldOpen = projectedOffset > openOffset * SidebarShellMetrics.closeThreshold
                 } else {
                     shouldOpen = canOpenSidebar
                         && value.startLocation.x <= SidebarShellMetrics.openEdgeWidth
                         && value.predictedEndTranslation.width > openOffset * SidebarShellMetrics.openThreshold
                 }
 
-                withAnimation(AppMotion.drawer(reduceMotion: reduceMotion)) {
+                let animation = drawerGestureAnimation(
+                    value: value,
+                    openOffset: openOffset,
+                    shouldOpen: shouldOpen
+                )
+                withAnimation(animation) {
                     isSidebarOpen = shouldOpen
                     if !shouldOpen {
                         isSidebarSearchFocused = false
@@ -239,6 +239,35 @@ struct ChatShellView: View {
                     dragOffset = 0
                 }
             }
+    }
+
+    private func isHorizontalDrag(_ value: DragGesture.Value) -> Bool {
+        abs(value.translation.width) > abs(value.translation.height)
+    }
+
+    private func drawerGestureAnimation(
+        value: DragGesture.Value,
+        openOffset: CGFloat,
+        shouldOpen: Bool
+    ) -> Animation? {
+        let currentOffset = contentOffset(openOffset: openOffset)
+        let targetOffset = shouldOpen ? openOffset : 0
+        let remainingDistance = targetOffset - currentOffset
+        guard abs(remainingDistance) > 1 else {
+            return AppMotion.drawerGesture(reduceMotion: reduceMotion, initialVelocity: 0)
+        }
+
+        let projectedTravel = value.predictedEndTranslation.width - value.translation.width
+        let normalizedVelocity = projectedTravel / remainingDistance
+        return AppMotion.drawerGesture(
+            reduceMotion: reduceMotion,
+            initialVelocity: Double(
+                min(
+                    SidebarShellMetrics.maximumNormalizedVelocity,
+                    max(-SidebarShellMetrics.maximumNormalizedVelocity, normalizedVelocity)
+                )
+            )
+        )
     }
 
     private func rubberBand(_ overshoot: CGFloat, dimension: CGFloat) -> CGFloat {
@@ -299,4 +328,5 @@ private enum SidebarShellMetrics {
     static let closeThreshold: CGFloat = 0.40
     static let openThreshold: CGFloat = 0.33
     static let rubberBandConstant: CGFloat = 0.42
+    static let maximumNormalizedVelocity: CGFloat = 5
 }

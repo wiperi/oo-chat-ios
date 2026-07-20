@@ -11,7 +11,6 @@ struct Composer: View {
         VStack(alignment: .leading, spacing: ComposerMetrics.stackSpacing) {
             if viewModel.shouldShowSlashSkillPicker {
                 skillPicker
-                    .transition(AppMotion.materialize(reduceMotion: reduceMotion))
             }
 
             modeMenu
@@ -21,10 +20,6 @@ struct Composer: View {
         }
         .padding(.horizontal, ComposerMetrics.outerHorizontalPadding)
         .padding(.bottom, ComposerMetrics.outerBottomPadding)
-        .animation(
-            AppMotion.contentArrival(reduceMotion: reduceMotion),
-            value: viewModel.shouldShowSlashSkillPicker
-        )
         .onChange(of: viewModel.prompt) {
             viewModel.promptDidChange()
         }
@@ -59,7 +54,8 @@ struct Composer: View {
         .scrollIndicators(.hidden)
         .glassBackground(
             in: skillPickerShape,
-            tint: Color(.secondarySystemBackground).opacity(ComposerMetrics.skillPickerGlassTintOpacity)
+            tint: Color(.secondarySystemBackground).opacity(ComposerMetrics.skillPickerGlassTintOpacity),
+            fallback: Color(.secondarySystemBackground)
         )
         .overlay {
             skillPickerShape

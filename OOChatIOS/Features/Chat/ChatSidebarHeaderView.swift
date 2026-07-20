@@ -65,17 +65,11 @@ struct ChatSidebarHeaderView: View {
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(AppTheme.primary)
                 .frame(width: SidebarMetrics.headerIconButtonSize, height: SidebarMetrics.headerIconButtonSize)
-                .glassBackground(in: Circle(), interactive: true, tint: Color(.systemBackground))
+                .background(Color(.tertiarySystemFill), in: Circle())
                 .overlay {
                     Circle()
                         .stroke(Color(.separator).opacity(SidebarMetrics.settingsButtonStrokeOpacity), lineWidth: 0.5)
                 }
-                .shadow(
-                    color: Color(.label).opacity(SidebarMetrics.settingsButtonShadowOpacity),
-                    radius: SidebarMetrics.settingsButtonShadowRadius,
-                    x: 0,
-                    y: SidebarMetrics.settingsButtonShadowYOffset
-                )
         }
         .buttonStyle(SidebarFooterButtonStyle())
         .accessibilityLabel(isSearchVisible ? "Close search" : "Search")

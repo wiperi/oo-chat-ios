@@ -27,8 +27,13 @@ struct ChatSidebarView: View {
     @FocusState private var isSearchFieldFocused: Bool
 
     var body: some View {
-        VStack(spacing: 0) {
+        ZStack(alignment: .bottom) {
             sidebarList
+                .contentMargins(
+                    .bottom,
+                    SidebarMetrics.footerOverlayHeight + safeAreaInsets.bottom,
+                    for: .scrollContent
+                )
 
             footer
         }

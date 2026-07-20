@@ -4,8 +4,20 @@ import SwiftUI
 // fill on OS versions before the glass effect is available or when Reduce
 // Transparency is enabled. Pass a `tint` for prominent controls.
 extension View {
-    func glassBackground<S: Shape>(in shape: S, interactive: Bool = false, tint: Color? = nil) -> some View {
-        modifier(GlassBackgroundModifier(shape: shape, interactive: interactive, tint: tint))
+    func glassBackground<S: Shape>(
+        in shape: S,
+        interactive: Bool = false,
+        tint: Color? = nil,
+        fallback: Color? = nil
+    ) -> some View {
+        modifier(
+            GlassBackgroundModifier(
+                shape: shape,
+                interactive: interactive,
+                tint: tint,
+                fallback: fallback
+            )
+        )
     }
 }
 
@@ -15,12 +27,16 @@ private struct GlassBackgroundModifier<S: Shape>: ViewModifier {
     let shape: S
     let interactive: Bool
     let tint: Color?
+    let fallback: Color?
 
     func body(content: Content) -> some View {
         if #available(iOS 26.0, *), !reduceTransparency {
             content.glassEffect(glassStyle(interactive: interactive, tint: tint), in: shape)
         } else {
-            content.background(tint ?? Color(.secondarySystemBackground), in: shape)
+            content.background(
+                fallback ?? tint ?? Color(.secondarySystemBackground),
+                in: shape
+            )
         }
     }
 }
@@ -68,7 +84,18 @@ enum AppMotion {
     static func drawer(reduceMotion: Bool) -> Animation? {
         reduceMotion
             ? nil
-            : .spring(response: 0.32, dampingFraction: 0.84, blendDuration: 0.12)
+            : .spring(response: 0.30, dampingFraction: 1.0)
+    }
+
+    static func drawerGesture(reduceMotion: Bool, initialVelocity: Double) -> Animation? {
+        reduceMotion
+            ? nil
+            : .interpolatingSpring(
+                mass: 1,
+                stiffness: 385,
+                damping: 33,
+                initialVelocity: initialVelocity
+            )
     }
 
     static func stateChange(reduceMotion: Bool) -> Animation? {

@@ -25,27 +25,42 @@ struct ChatSidebarFooterView: View {
                     .imageScale(.large)
                     .foregroundStyle(.primary)
                     .frame(width: SidebarMetrics.footerButtonSize, height: SidebarMetrics.footerButtonSize)
-                    .glassBackground(in: Circle(), interactive: true, tint: Color(.systemBackground))
+                    .background(Color(.tertiarySystemFill), in: Circle())
                     .overlay {
                         Circle()
                             .stroke(Color(.separator).opacity(SidebarMetrics.settingsButtonStrokeOpacity), lineWidth: 0.5)
                     }
-                    .shadow(
-                        color: Color(.label).opacity(SidebarMetrics.settingsButtonShadowOpacity),
-                        radius: SidebarMetrics.settingsButtonShadowRadius,
-                        x: 0,
-                        y: SidebarMetrics.settingsButtonShadowYOffset
-                    )
             }
             .buttonStyle(SidebarFooterButtonStyle())
             .tint(Color(.label))
             .accessibilityLabel("Settings")
         }
+        .padding(.top, SidebarMetrics.footerTopPadding)
         .padding(.horizontal, SidebarMetrics.outerLeading)
         .padding(.bottom, safeAreaInsets.bottom + SidebarMetrics.footerBottomPadding)
-        .background {
-            Color(.systemBackground)
-                .ignoresSafeArea()
+        .glassBackground(
+            in: footerShape,
+            tint: Color(.systemBackground).opacity(SidebarMetrics.footerGlassTintOpacity),
+            fallback: Color(.systemBackground)
+        )
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Color(.separator).opacity(SidebarMetrics.footerEdgeOpacity))
+                .frame(height: 0.5)
         }
+        .shadow(
+            color: .black.opacity(SidebarMetrics.footerShadowOpacity),
+            radius: SidebarMetrics.footerShadowRadius,
+            y: SidebarMetrics.footerShadowYOffset
+        )
+        .ignoresSafeArea(edges: .bottom)
+    }
+
+    private var footerShape: UnevenRoundedRectangle {
+        UnevenRoundedRectangle(
+            topLeadingRadius: SidebarMetrics.footerCornerRadius,
+            topTrailingRadius: SidebarMetrics.footerCornerRadius,
+            style: .continuous
+        )
     }
 }

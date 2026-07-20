@@ -31,7 +31,11 @@ struct ChatScreen: View {
     let showsComposer: Bool
     let onOpenSidebar: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var bottomAnchorY: CGFloat = 0
+    @State private var scrollViewportHeight: CGFloat = 0
+    @State private var shouldFollowLatest = true
     private let bottomAnchorID = "chat.bottomAnchor"
+    private let scrollCoordinateSpace = "chat.scroll"
 
     var body: some View {
         VStack(spacing: 0) {
@@ -93,6 +97,16 @@ struct ChatScreen: View {
                             Color.clear
                                 .frame(height: 1)
                                 .id(bottomAnchorID)
+                                .background {
+                                    GeometryReader { geometry in
+                                        Color.clear.preference(
+                                            key: ChatBottomAnchorPreferenceKey.self,
+                                            value: geometry.frame(
+                                                in: .named(scrollCoordinateSpace)
+                                            ).maxY
+                                        )
+                                    }
+                                }
                         }
                         .id(conversation.id)
                         .transition(conversationTransition)
@@ -107,12 +121,27 @@ struct ChatScreen: View {
                             value: viewModel.pendingInteractionID
                         )
                     }
+                    .coordinateSpace(name: scrollCoordinateSpace)
+                    .background {
+                        GeometryReader { geometry in
+                            Color.clear.preference(
+                                key: ChatViewportHeightPreferenceKey.self,
+                                value: geometry.size.height
+                            )
+                        }
+                    }
                     .scrollDismissesKeyboard(.interactively)
                     .onAppear {
                         scrollToBottom(proxy, animated: false)
                     }
-                    .onChange(of: scrollSignature(for: conversation)) {
-                        scrollToBottom(proxy)
+                    .onChange(of: scrollUpdate(for: conversation)) { previous, current in
+                        guard shouldFollowLatest else {
+                            return
+                        }
+                        scrollToBottom(
+                            proxy,
+                            animated: current.isNewMessage(comparedTo: previous)
+                        )
                     }
                     .onChange(of: viewModel.pendingInteractionID) {
                         if let interactionID = viewModel.pendingInteractionID {
@@ -120,6 +149,14 @@ struct ChatScreen: View {
                                 proxy.scrollTo(scrollTarget(for: interactionID), anchor: .bottom)
                             }
                         }
+                    }
+                    .onPreferenceChange(ChatBottomAnchorPreferenceKey.self) { value in
+                        bottomAnchorY = value
+                        updateFollowLatest()
+                    }
+                    .onPreferenceChange(ChatViewportHeightPreferenceKey.self) { value in
+                        scrollViewportHeight = value
+                        updateFollowLatest()
                     }
                     .safeAreaInset(edge: .bottom, spacing: 0) {
                         if showsComposer {
@@ -245,19 +282,24 @@ struct ChatScreen: View {
         )
     }
 
-    private func scrollSignature(for conversation: Conversation) -> String {
-        guard let message = conversation.messages.last else {
-            return conversation.id
-        }
+    private func scrollUpdate(for conversation: Conversation) -> ChatScrollUpdate {
+        let message = conversation.messages.last
+        return ChatScrollUpdate(
+            conversationID: conversation.id,
+            messageCount: conversation.messages.count,
+            messageID: message?.id,
+            content: message?.content ?? "",
+            deliveryState: message?.deliveryState.rawValue ?? "",
+            toolState: message?.toolState?.rawValue ?? ""
+        )
+    }
 
-        return [
-            conversation.id,
-            String(conversation.messages.count),
-            message.id,
-            message.content,
-            message.deliveryState.rawValue,
-            message.toolState?.rawValue ?? ""
-        ].joined(separator: "|")
+    private func updateFollowLatest() {
+        guard scrollViewportHeight > 0 else {
+            return
+        }
+        shouldFollowLatest = bottomAnchorY - scrollViewportHeight
+            <= ChatScrollMetrics.followThreshold
     }
 
     private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool = true) {
@@ -281,6 +323,40 @@ struct ChatScreen: View {
             insertion: .opacity.combined(with: .offset(x: 10, y: 0)),
             removal: .opacity
         )
+    }
+}
+
+private struct ChatScrollUpdate: Equatable {
+    let conversationID: String
+    let messageCount: Int
+    let messageID: String?
+    let content: String
+    let deliveryState: String
+    let toolState: String
+
+    func isNewMessage(comparedTo previous: ChatScrollUpdate) -> Bool {
+        conversationID == previous.conversationID
+            && (messageCount != previous.messageCount || messageID != previous.messageID)
+    }
+}
+
+private enum ChatScrollMetrics {
+    static let followThreshold: CGFloat = 80
+}
+
+private struct ChatBottomAnchorPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+private struct ChatViewportHeightPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 
