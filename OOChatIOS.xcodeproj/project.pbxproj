@@ -63,6 +63,7 @@
 		100000000000000000000159 /* ChatSidebarHeaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000064 /* ChatSidebarHeaderView.swift */; };
 		100000000000000000000160 /* ChatSidebarFooterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000065 /* ChatSidebarFooterView.swift */; };
 		100000000000000000000161 /* ChatSidebarRows.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000066 /* ChatSidebarRows.swift */; };
+		100000000000000000000162 /* HostedAgentConnectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000067 /* HostedAgentConnectionTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -135,6 +136,7 @@
 		100000000000000000000064 /* ChatSidebarHeaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSidebarHeaderView.swift; sourceTree = "<group>"; };
 		100000000000000000000065 /* ChatSidebarFooterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSidebarFooterView.swift; sourceTree = "<group>"; };
 		100000000000000000000066 /* ChatSidebarRows.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSidebarRows.swift; sourceTree = "<group>"; };
+		100000000000000000000067 /* HostedAgentConnectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostedAgentConnectionTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -361,6 +363,7 @@
 				100000000000000000000013 /* MockHostedAgentTests.swift */,
 				100000000000000000000034 /* NetworkRecoveryTests.swift */,
 				100000000000000000000019 /* SwiftDataConversationRepositoryTests.swift */,
+				100000000000000000000067 /* HostedAgentConnectionTests.swift */,
 			);
 			path = OOChatIOSTests;
 			sourceTree = "<group>";
@@ -550,6 +553,7 @@
 				100000000000000000000110 /* MockHostedAgentTests.swift in Sources */,
 				100000000000000000000130 /* NetworkRecoveryTests.swift in Sources */,
 				100000000000000000000115 /* SwiftDataConversationRepositoryTests.swift in Sources */,
+				100000000000000000000162 /* HostedAgentConnectionTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
