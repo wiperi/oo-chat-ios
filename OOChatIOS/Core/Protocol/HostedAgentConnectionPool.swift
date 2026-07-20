@@ -74,6 +74,12 @@ actor HostedAgentConnectionPool {
     private let idleLifetime: TimeInterval
     private let discovery: HostedAgentDiscovery
     private let connectionStateObserver: HostedAgentConnectionStateObserver
+    private let socketFactory: HostedAgentWebSocketFactory?
+    private let endpointResolver: HostedAgentEndpointResolver?
+    private let connectTimeout: TimeInterval
+    private let livenessTimeout: TimeInterval
+    private let livenessCheckInterval: TimeInterval
+    private let now: @Sendable () -> Date
 
     private var connections: [HostedAgentConnectionKey: Entry] = [:]
     private var cleanupTask: Task<Void, Never>?
@@ -84,7 +90,13 @@ actor HostedAgentConnectionPool {
         maximumSize: Int,
         idleLifetime: TimeInterval,
         discovery: HostedAgentDiscovery,
-        connectionStateObserver: HostedAgentConnectionStateObserver
+        connectionStateObserver: HostedAgentConnectionStateObserver,
+        socketFactory: HostedAgentWebSocketFactory? = nil,
+        endpointResolver: HostedAgentEndpointResolver? = nil,
+        connectTimeout: TimeInterval = 45,
+        livenessTimeout: TimeInterval = 75,
+        livenessCheckInterval: TimeInterval = 10,
+        now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.identityStore = identityStore
         self.session = session
@@ -92,6 +104,12 @@ actor HostedAgentConnectionPool {
         self.idleLifetime = max(1, idleLifetime)
         self.discovery = discovery
         self.connectionStateObserver = connectionStateObserver
+        self.socketFactory = socketFactory
+        self.endpointResolver = endpointResolver
+        self.connectTimeout = connectTimeout
+        self.livenessTimeout = livenessTimeout
+        self.livenessCheckInterval = livenessCheckInterval
+        self.now = now
     }
 
     func connect(agentAddress: String, conversation: Conversation) async throws -> HostedAgentResult {
@@ -158,7 +176,7 @@ actor HostedAgentConnectionPool {
         let key = HostedAgentConnectionKey(agentAddress: agentAddress, conversationID: conversationID)
         if var entry = connections[key] {
             entry.activeLeases += 1
-            entry.lastUsedAt = Date()
+            entry.lastUsedAt = now()
             connections[key] = entry
             return Lease(key: key, connection: entry.connection)
         }
@@ -170,9 +188,14 @@ actor HostedAgentConnectionPool {
             identityStore: identityStore,
             session: session,
             discovery: discovery,
-            connectionStateObserver: connectionStateObserver
+            connectionStateObserver: connectionStateObserver,
+            socketFactory: socketFactory,
+            endpointResolver: endpointResolver,
+            connectTimeout: connectTimeout,
+            livenessTimeout: livenessTimeout,
+            livenessCheckInterval: livenessCheckInterval
         )
-        connections[key] = Entry(connection: connection, activeLeases: 1, lastUsedAt: Date())
+        connections[key] = Entry(connection: connection, activeLeases: 1, lastUsedAt: now())
         return Lease(key: key, connection: connection)
     }
 
@@ -181,7 +204,7 @@ actor HostedAgentConnectionPool {
             return
         }
         entry.activeLeases = max(0, entry.activeLeases - 1)
-        entry.lastUsedAt = Date()
+        entry.lastUsedAt = now()
         connections[lease.key] = entry
     }
 
@@ -203,7 +226,7 @@ actor HostedAgentConnectionPool {
     }
 
     private func evictExpiredConnections() async {
-        let cutoff = Date().addingTimeInterval(-idleLifetime)
+        let cutoff = now().addingTimeInterval(-idleLifetime)
         let expiredKeys = connections.compactMap { key, entry in
             entry.activeLeases == 0 && entry.lastUsedAt < cutoff ? key : nil
         }
