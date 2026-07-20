@@ -67,6 +67,7 @@ final class MessageDeliveryCoordinator: ObservableObject {
         conversation.messages.append(
             ChatMessage(role: .user, content: text, deliveryState: .queued)
         )
+        conversationState.clearCompletedUnread(conversationID: conversation.id)
         conversationState.upsert(conversation)
         pausedConversationIDs.remove(conversation.id)
 
@@ -88,6 +89,7 @@ final class MessageDeliveryCoordinator: ObservableObject {
         }
 
         conversation.messages[index].deliveryState = .queued
+        conversationState.clearCompletedUnread(conversationID: conversation.id)
         conversationState.upsert(conversation)
         pausedConversationIDs.remove(conversation.id)
         if isDeliveryEnabled {
@@ -274,6 +276,7 @@ final class MessageDeliveryCoordinator: ObservableObject {
         }
         onConnectionStateChange?(conversationID, .connected)
         conversationState.upsert(updated)
+        conversationState.markCompletedUnread(conversationID: conversationID)
     }
 
     private func failDelivery(
@@ -288,6 +291,7 @@ final class MessageDeliveryCoordinator: ObservableObject {
         if let index = updated.messages.firstIndex(where: { $0.id == messageID }) {
             updated.messages[index].deliveryState = .failed
         }
+        conversationState.clearCompletedUnread(conversationID: conversationID)
         onDeliveryError?(conversationID, error.localizedDescription)
         onConnectionStateChange?(conversationID, .disconnected)
         conversationState.upsert(updated)
@@ -301,6 +305,7 @@ final class MessageDeliveryCoordinator: ObservableObject {
         if let index = updated.messages.firstIndex(where: { $0.id == messageID }) {
             updated.messages[index].deliveryState = .cancelled
         }
+        conversationState.clearCompletedUnread(conversationID: conversationID)
         onConnectionStateChange?(conversationID, .disconnected)
         conversationState.upsert(updated)
     }

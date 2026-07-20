@@ -18,6 +18,9 @@ final class ConversationState: ObservableObject {
     /// on each redraw, and rescanning every conversation's messages there costs a full
     /// O(conversations × messages) sweep per streamed token.
     @Published private(set) var failedDeliveryConversationIDs: Set<String> = []
+    /// Session-scoped completion receipts. They are cleared when the conversation is viewed
+    /// and intentionally are not restored after an app relaunch.
+    @Published private(set) var completedUnreadConversationIDs: Set<String> = []
 
     private var draftsByConversationID: [String: String] = [:]
     private let store: ConversationRepository
@@ -102,6 +105,7 @@ final class ConversationState: ObservableObject {
         } else if activeConversation == nil {
             activeConversationID = conversations(for: agent).first?.id
         }
+        markActiveConversationViewed()
         persistSelection()
     }
 
@@ -111,6 +115,7 @@ final class ConversationState: ObservableObject {
         if let agent = agent(for: conversation) {
             activeAgentID = agent.id
         }
+        markActiveConversationViewed()
         persistSelection()
     }
 
@@ -120,6 +125,7 @@ final class ConversationState: ObservableObject {
         conversations.insert(conversation, at: 0)
         activeAgentID = agent.id
         activeConversationID = conversation.id
+        markActiveConversationViewed()
         recordPersistence(store.upsertConversationResult(conversation))
         persistSelection()
         return conversation
@@ -178,6 +184,8 @@ final class ConversationState: ObservableObject {
         }
         draftsByConversationID[conversation.id] = nil
         failedDeliveryConversationIDs.remove(conversation.id)
+        completedUnreadConversationIDs.remove(conversation.id)
+        markActiveConversationViewed()
         recordPersistence(store.deleteConversationResult(id: conversation.id))
         persistSelection()
     }
@@ -202,8 +210,10 @@ final class ConversationState: ObservableObject {
         for conversationID in deletedConversationIDs {
             draftsByConversationID[conversationID] = nil
             failedDeliveryConversationIDs.remove(conversationID)
+            completedUnreadConversationIDs.remove(conversationID)
             recordPersistence(store.deleteConversationResult(id: conversationID))
         }
+        markActiveConversationViewed()
         recordPersistence(store.deleteAgentResult(id: agent.id))
         persistSelection()
     }
@@ -259,6 +269,7 @@ final class ConversationState: ObservableObject {
             existing.agentID = agent.id
             existing.agentAddress = agent.address
             activeConversationID = existing.id
+            markActiveConversationViewed()
             upsert(existing)
             return
         }
@@ -269,6 +280,7 @@ final class ConversationState: ObservableObject {
         conversations.insert(conversation, at: 0)
         refreshFailedDeliveryFlag(for: conversation)
         activeConversationID = conversation.id
+        markActiveConversationViewed()
         recordPersistence(store.upsertConversationResult(conversation))
         persistSelection()
     }
@@ -324,6 +336,18 @@ final class ConversationState: ObservableObject {
         return conversation.agentAddress == agent.address
     }
 
+    func markCompletedUnread(conversationID: String) {
+        guard conversationID != activeConversationID,
+              conversation(withID: conversationID) != nil else {
+            return
+        }
+        completedUnreadConversationIDs.insert(conversationID)
+    }
+
+    func clearCompletedUnread(conversationID: String) {
+        completedUnreadConversationIDs.remove(conversationID)
+    }
+
     private func refreshFailedDeliveryFlag(for conversation: Conversation) {
         if conversation.messages.contains(where: { $0.deliveryState == .failed }) {
             failedDeliveryConversationIDs.insert(conversation.id)
@@ -339,6 +363,13 @@ final class ConversationState: ObservableObject {
         var agent = agents.remove(at: index)
         agent.updatedAt = Date()
         agents.insert(agent, at: 0)
+    }
+
+    private func markActiveConversationViewed() {
+        guard let activeConversationID else {
+            return
+        }
+        completedUnreadConversationIDs.remove(activeConversationID)
     }
 
     private func persistSelection() {

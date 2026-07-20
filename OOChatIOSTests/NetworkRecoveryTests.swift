@@ -336,12 +336,16 @@ final class NetworkRecoveryTests: XCTestCase {
         XCTAssertTrue(viewModel.isProcessing(conversationID: firstConversation.id))
         XCTAssertTrue(viewModel.isProcessing(conversationID: secondConversation.id))
         XCTAssertEqual(viewModel.activeConversationID, secondConversation.id)
+        XCTAssertEqual(viewModel.activityState(forConversationID: firstConversation.id), .working)
+        XCTAssertNil(viewModel.backgroundActivityState, "working alone does not show a toolbar dot")
 
         await firstGate.open()
         await waitUntilIdle(firstConversation.id, on: viewModel)
 
         XCTAssertEqual(viewModel.activeConversationID, secondConversation.id)
         XCTAssertTrue(viewModel.isProcessing)
+        XCTAssertEqual(viewModel.activityState(forConversationID: firstConversation.id), .completedUnread)
+        XCTAssertEqual(viewModel.backgroundActivityState, .completedUnread)
         XCTAssertTrue(
             viewModel.conversation(withID: firstConversation.id)?.messages.contains {
                 $0.role == .agent && $0.content == "first reply"
@@ -351,6 +355,12 @@ final class NetworkRecoveryTests: XCTestCase {
         await secondGate.open()
         await waitUntilIdle(secondConversation.id, on: viewModel)
         XCTAssertFalse(viewModel.isProcessing)
+        XCTAssertNil(viewModel.activityState(forConversationID: secondConversation.id))
+        XCTAssertEqual(viewModel.backgroundActivityState, .completedUnread)
+
+        viewModel.selectConversation(firstConversation)
+        XCTAssertNil(viewModel.activityState(forConversationID: firstConversation.id))
+        XCTAssertNil(viewModel.backgroundActivityState)
     }
 
     func testStopMarksActiveMessageCancelledAndRetryResendsIt() async {
@@ -884,11 +894,13 @@ final class NetworkRecoveryTests: XCTestCase {
         XCTAssertFalse(viewModel.isProcessing)
         XCTAssertTrue(viewModel.isProcessing(conversationID: approvalConversation.id))
         XCTAssertTrue(viewModel.hasPendingInteraction(forConversationID: approvalConversation.id))
+        XCTAssertEqual(viewModel.activityState(forConversationID: approvalConversation.id), .actionRequired)
         XCTAssertNil(viewModel.activePendingApproval)
         XCTAssertNil(viewModel.activePendingApproval)
         XCTAssertNil(viewModel.activePendingPlanReview)
         XCTAssertNil(viewModel.sendTask)
         XCTAssertTrue(viewModel.hasBackgroundPendingInteraction)
+        XCTAssertEqual(viewModel.backgroundActivityState, .actionRequired)
         XCTAssertTrue(
             viewModel.conversation(withID: secondConversation.id)?.messages.contains {
                 $0.role == .agent && $0.content == "mock reply"
@@ -904,6 +916,44 @@ final class NetworkRecoveryTests: XCTestCase {
         XCTAssertEqual(transport.approvalDecisions, [.allowOnce])
         XCTAssertFalse(viewModel.hasPendingInteraction(forConversationID: approvalConversation.id))
         XCTAssertFalse(viewModel.hasBackgroundPendingInteraction)
+    }
+
+    func testBackgroundActionRequiredOverridesUnreadCompletion() async {
+        let (viewModel, transport, _) = makeEnvironment()
+        let agent = setUpAgentAndConversation(viewModel)
+        let completedConversation = viewModel.activeConversation!
+        let completionGate = PromptGate()
+        transport.sendBehaviorsByPrompt["Finish in background"] = .wait(
+            gate: completionGate,
+            output: "finished"
+        )
+
+        viewModel.prompt = "Finish in background"
+        viewModel.sendPrompt()
+        await waitForSentPrompt("Finish in background", transport: transport)
+
+        let approvalConversation = viewModel.createConversation(for: agent)
+        await completionGate.open()
+        await waitUntilIdle(completedConversation.id, on: viewModel)
+        XCTAssertEqual(viewModel.backgroundActivityState, .completedUnread)
+
+        transport.approvalRequests = [approvalRequest(tool: "write")]
+        viewModel.prompt = "Wait for approval"
+        viewModel.sendPrompt()
+        await waitForPendingApproval(on: viewModel)
+        let approvalID = viewModel.activePendingApproval!.id
+
+        _ = viewModel.createConversation(for: agent)
+
+        XCTAssertEqual(viewModel.activityState(forConversationID: completedConversation.id), .completedUnread)
+        XCTAssertEqual(viewModel.activityState(forConversationID: approvalConversation.id), .actionRequired)
+        XCTAssertEqual(viewModel.backgroundActivityState, .actionRequired)
+
+        viewModel.selectConversation(approvalConversation)
+        viewModel.allowPendingApprovalOnce(id: approvalID)
+        await viewModel.sendTask?.value
+
+        XCTAssertEqual(viewModel.backgroundActivityState, .completedUnread)
     }
 
     func testSameApprovalIDCanWaitInTwoConversationsIndependently() async {
@@ -1557,15 +1607,19 @@ final class NetworkRecoveryTests: XCTestCase {
         await viewModel.sendTask?.value
 
         XCTAssertTrue(viewModel.hasFailedDelivery(forConversationID: failing.id))
+        XCTAssertEqual(viewModel.activityState(forConversationID: failing.id), .failedDelivery)
         XCTAssertFalse(viewModel.hasBackgroundDeliveryFailure, "failure is in the active conversation")
+        XCTAssertNil(viewModel.backgroundActivityState)
 
         _ = viewModel.createConversation(for: agent)
 
         XCTAssertTrue(viewModel.hasBackgroundDeliveryFailure)
         XCTAssertTrue(viewModel.needsBackgroundAttention)
+        XCTAssertEqual(viewModel.backgroundActivityState, .failedDelivery)
 
         viewModel.deleteConversation(failing)
         XCTAssertFalse(viewModel.hasBackgroundDeliveryFailure)
+        XCTAssertNil(viewModel.backgroundActivityState)
     }
 
     private func makeEnvironment() -> (ChatViewModel, MockAgentTransport, MockNetworkMonitor) {

@@ -22,6 +22,8 @@ enum SidebarMetrics {
     static let logoSize: CGFloat = 34
     static let statusSpacing: CGFloat = 10
     static let statusDotSize: CGFloat = 8
+    static let activityIndicatorSlotSize: CGFloat = 18
+    static let activityIndicatorStrokeWidth: CGFloat = 1.5
     static let searchFieldSpacing: CGFloat = 8
     static let searchFieldHorizontalPadding: CGFloat = 12
     static let searchFieldHeight: CGFloat = 42

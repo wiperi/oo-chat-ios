@@ -201,13 +201,13 @@ struct ChatScreen: View {
                 } label: {
                     Image(systemName: "sidebar.left")
                         .overlay(alignment: .topTrailing) {
-                            if viewModel.needsBackgroundAttention {
-                                Circle()
-                                    .fill(Color(.systemOrange))
-                                    .frame(width: 8, height: 8)
+                            if let state = viewModel.backgroundActivityState {
+                                ConversationStatusDot(state: state)
                                     .offset(x: 4, y: -3)
+                                    .transition(AppMotion.statusTransition(reduceMotion: reduceMotion))
                             }
                         }
+                        .animation(AppMotion.statusChange, value: viewModel.backgroundActivityState)
                 }
                 .accessibilityLabel(backgroundAttentionLabel)
             }
@@ -215,13 +215,16 @@ struct ChatScreen: View {
     }
 
     private var backgroundAttentionLabel: String {
-        if viewModel.hasBackgroundPendingInteraction {
-            return "Open sidebar, approval required"
-        }
-        if viewModel.hasBackgroundDeliveryFailure {
+        switch viewModel.backgroundActivityState {
+        case .actionRequired:
+            return "Open sidebar, action required"
+        case .failedDelivery:
             return "Open sidebar, a message failed to send"
+        case .completedUnread:
+            return "Open sidebar, background task completed"
+        case .working, nil:
+            return "Open sidebar"
         }
-        return "Open sidebar"
     }
 
     private func scrollTarget(for interactionID: String) -> String {

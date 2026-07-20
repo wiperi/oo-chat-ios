@@ -2,6 +2,13 @@ import Combine
 import Foundation
 import SwiftUI
 
+enum ConversationActivityState: Hashable {
+    case actionRequired
+    case working
+    case completedUnread
+    case failedDelivery
+}
+
 @MainActor
 final class ChatViewModel: ObservableObject {
     @Published var identity: StoredIdentity?
@@ -131,6 +138,40 @@ final class ChatViewModel: ObservableObject {
         interactionCoordinator.hasPendingInteraction(for: conversationID)
     }
 
+    func activityState(forConversationID conversationID: String) -> ConversationActivityState? {
+        if interactionCoordinator.hasPendingInteraction(for: conversationID) {
+            return .actionRequired
+        }
+        if deliveryCoordinator.isProcessing(conversationID: conversationID) {
+            return .working
+        }
+        if conversationState.failedDeliveryConversationIDs.contains(conversationID) {
+            return .failedDelivery
+        }
+        if conversationState.completedUnreadConversationIDs.contains(conversationID) {
+            return .completedUnread
+        }
+        return nil
+    }
+
+    var backgroundActivityState: ConversationActivityState? {
+        let backgroundConversationIDs = conversations.lazy
+            .map(\.id)
+            .filter { $0 != self.activeConversationID }
+        let states = backgroundConversationIDs.compactMap(activityState(forConversationID:))
+
+        if states.contains(.actionRequired) {
+            return .actionRequired
+        }
+        if states.contains(.failedDelivery) {
+            return .failedDelivery
+        }
+        if states.contains(.completedUnread) {
+            return .completedUnread
+        }
+        return nil
+    }
+
     var hasBackgroundPendingInteraction: Bool {
         interactionCoordinator.hasPendingInteraction(excluding: activeConversationID)
     }
@@ -146,7 +187,7 @@ final class ChatViewModel: ObservableObject {
     }
 
     var needsBackgroundAttention: Bool {
-        hasBackgroundPendingInteraction || hasBackgroundDeliveryFailure
+        backgroundActivityState != nil
     }
 
     /// True when a running tool message duplicates the approval card already on screen, so the

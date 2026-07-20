@@ -104,9 +104,7 @@ struct SidebarAgentRow: View {
 struct SidebarConversationRow: View {
     let conversation: Conversation
     let isSelected: Bool
-    let hasPendingInteraction: Bool
-    let isProcessing: Bool
-    let hasFailedDelivery: Bool
+    let activityState: ConversationActivityState?
     let onSelect: () -> Void
     let onRename: () -> Void
     let onDelete: () -> Void
@@ -128,19 +126,7 @@ struct SidebarConversationRow: View {
 
                     Spacer(minLength: 0)
 
-                    if hasPendingInteraction {
-                        Image(systemName: "exclamationmark.circle.fill")
-                            .foregroundStyle(Color(.systemOrange))
-                            .accessibilityLabel("Approval required")
-                    } else if isProcessing {
-                        ProgressView()
-                            .controlSize(.small)
-                            .accessibilityLabel("Agent working")
-                    } else if hasFailedDelivery {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(Color(.systemRed))
-                            .accessibilityLabel("Message failed to send")
-                    }
+                    ConversationActivityIndicator(state: activityState)
                 }
                 .padding(.leading, SidebarMetrics.sessionIndent)
             }
@@ -169,6 +155,86 @@ struct SidebarConversationRow: View {
         }
         .accessibilityAction(named: Text("Rename")) {
             onRename()
+        }
+    }
+}
+
+struct ConversationStatusDot: View {
+    let state: ConversationActivityState
+
+    var body: some View {
+        Circle()
+            .fill(color)
+            .frame(width: SidebarMetrics.statusDotSize, height: SidebarMetrics.statusDotSize)
+            .overlay {
+                Circle()
+                    .stroke(
+                        Color(.systemBackground),
+                        lineWidth: SidebarMetrics.activityIndicatorStrokeWidth
+                    )
+            }
+            .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var color: Color {
+        switch state {
+        case .actionRequired:
+            return Color(.systemYellow)
+        case .completedUnread:
+            return Color(.systemBlue)
+        case .failedDelivery:
+            return Color(.systemRed)
+        case .working:
+            return AppTheme.primary
+        }
+    }
+
+    private var accessibilityLabel: String {
+        switch state {
+        case .actionRequired:
+            return "Action required"
+        case .working:
+            return "Agent working"
+        case .completedUnread:
+            return "Background task completed"
+        case .failedDelivery:
+            return "Message failed to send"
+        }
+    }
+}
+
+private struct ConversationActivityIndicator: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let state: ConversationActivityState?
+
+    var body: some View {
+        ZStack {
+            if let state {
+                indicator(for: state)
+                    .id(state)
+                    .transition(AppMotion.statusTransition(reduceMotion: reduceMotion))
+            }
+        }
+        .frame(
+            width: SidebarMetrics.activityIndicatorSlotSize,
+            height: SidebarMetrics.activityIndicatorSlotSize
+        )
+        .animation(AppMotion.statusChange, value: state)
+    }
+
+    @ViewBuilder
+    private func indicator(for state: ConversationActivityState) -> some View {
+        switch state {
+        case .actionRequired, .completedUnread:
+            ConversationStatusDot(state: state)
+        case .working:
+            ProgressView()
+                .controlSize(.small)
+                .accessibilityLabel("Agent working")
+        case .failedDelivery:
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(Color(.systemRed))
+                .accessibilityLabel("Message failed to send")
         }
     }
 }

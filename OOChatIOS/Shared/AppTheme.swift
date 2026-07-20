@@ -81,6 +81,14 @@ enum AppTheme {
 enum AppMotion {
     static let press = Animation.easeOut(duration: 0.12)
 
+    static let statusChange = Animation.easeOut(duration: 0.14)
+
+    static func statusTransition(reduceMotion: Bool) -> AnyTransition {
+        reduceMotion
+            ? .opacity
+            : .opacity.combined(with: .scale(scale: 0.96))
+    }
+
     static func drawer(reduceMotion: Bool) -> Animation? {
         reduceMotion
             ? nil
