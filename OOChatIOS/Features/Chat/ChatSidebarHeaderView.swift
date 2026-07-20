@@ -61,15 +61,12 @@ struct ChatSidebarHeaderView: View {
         Button {
             onToggleSearch()
         } label: {
-            Image(systemName: isSearchVisible ? "xmark" : "magnifyingglass")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(AppTheme.primary)
-                .frame(width: SidebarMetrics.headerIconButtonSize, height: SidebarMetrics.headerIconButtonSize)
-                .background(Color(.tertiarySystemFill), in: Circle())
-                .overlay {
-                    Circle()
-                        .stroke(Color(.separator).opacity(SidebarMetrics.settingsButtonStrokeOpacity), lineWidth: 0.5)
-                }
+            SidebarIconButtonLabel(
+                systemName: isSearchVisible ? "xmark" : "magnifyingglass",
+                foregroundColor: AppTheme.primary,
+                size: SidebarMetrics.headerIconButtonSize,
+                font: .system(size: 16, weight: .semibold)
+            )
         }
         .buttonStyle(SidebarFooterButtonStyle())
         .accessibilityLabel(isSearchVisible ? "Close search" : "Search")
@@ -114,5 +111,29 @@ struct SidebarSearchField: View {
         .frame(height: SidebarMetrics.searchFieldHeight)
         .background(Color(.secondarySystemFill), in: Capsule())
         .accessibilityElement(children: .contain)
+    }
+}
+
+struct SidebarIconButtonLabel: View {
+    let systemName: String
+    let foregroundColor: Color
+    let size: CGFloat
+    let font: Font
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(font)
+            .foregroundStyle(foregroundColor)
+            .frame(width: size, height: size)
+            .glassBackground(
+                in: Circle(),
+                interactive: true,
+                tint: Color(.systemBackground),
+                fallback: Color(.tertiarySystemFill)
+            )
+            .overlay {
+                Circle()
+                    .stroke(Color(.separator).opacity(SidebarMetrics.settingsButtonStrokeOpacity), lineWidth: 0.5)
+            }
     }
 }

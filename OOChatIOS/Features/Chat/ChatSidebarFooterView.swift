@@ -21,15 +21,12 @@ struct ChatSidebarFooterView: View {
             Spacer()
 
             Button(action: onSettings) {
-                Image(systemName: "gearshape")
-                    .imageScale(.large)
-                    .foregroundStyle(.primary)
-                    .frame(width: SidebarMetrics.footerButtonSize, height: SidebarMetrics.footerButtonSize)
-                    .background(Color(.tertiarySystemFill), in: Circle())
-                    .overlay {
-                        Circle()
-                            .stroke(Color(.separator).opacity(SidebarMetrics.settingsButtonStrokeOpacity), lineWidth: 0.5)
-                    }
+                SidebarIconButtonLabel(
+                    systemName: "gearshape",
+                    foregroundColor: Color(.label),
+                    size: SidebarMetrics.footerButtonSize,
+                    font: .system(size: 22, weight: .regular)
+                )
             }
             .buttonStyle(SidebarFooterButtonStyle())
             .tint(Color(.label))
@@ -38,29 +35,5 @@ struct ChatSidebarFooterView: View {
         .padding(.top, SidebarMetrics.footerTopPadding)
         .padding(.horizontal, SidebarMetrics.outerLeading)
         .padding(.bottom, safeAreaInsets.bottom + SidebarMetrics.footerBottomPadding)
-        .glassBackground(
-            in: footerShape,
-            tint: Color(.systemBackground).opacity(SidebarMetrics.footerGlassTintOpacity),
-            fallback: Color(.systemBackground)
-        )
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(Color(.separator).opacity(SidebarMetrics.footerEdgeOpacity))
-                .frame(height: 0.5)
-        }
-        .shadow(
-            color: .black.opacity(SidebarMetrics.footerShadowOpacity),
-            radius: SidebarMetrics.footerShadowRadius,
-            y: SidebarMetrics.footerShadowYOffset
-        )
-        .ignoresSafeArea(edges: .bottom)
-    }
-
-    private var footerShape: UnevenRoundedRectangle {
-        UnevenRoundedRectangle(
-            topLeadingRadius: SidebarMetrics.footerCornerRadius,
-            topTrailingRadius: SidebarMetrics.footerCornerRadius,
-            style: .continuous
-        )
     }
 }

@@ -35,12 +35,6 @@ enum SidebarMetrics {
     static let footerBottomPadding: CGFloat = 20
     static let footerOverlayHeight = footerTopPadding + footerButtonSize + footerBottomPadding
     static let footerButtonHorizontalPadding: CGFloat = 18
-    static let footerCornerRadius: CGFloat = 26
-    static let footerGlassTintOpacity: Double = 0.68
-    static let footerEdgeOpacity: Double = 0.16
-    static let footerShadowOpacity: Double = 0.06
-    static let footerShadowRadius: CGFloat = 14
-    static let footerShadowYOffset: CGFloat = -2
     static let settingsButtonStrokeOpacity: Double = 0.20
     static let chevronWidth: CGFloat = 24
     static let agentRowSpacing: CGFloat = 8
