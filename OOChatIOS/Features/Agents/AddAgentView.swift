@@ -53,7 +53,7 @@ struct AgentFormView: View {
                         }
                     if draft.agentID == nil {
                         Button {
-                            guard AgentQRCodeScannerView.isAvailable else {
+                            guard AgentQRCodeScannerView.isSupported else {
                                 validationMessage = "Camera scanning is unavailable. Enter the agent address manually."
                                 return
                             }

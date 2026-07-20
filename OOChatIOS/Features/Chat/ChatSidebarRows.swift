@@ -106,6 +106,7 @@ struct SidebarConversationRow: View {
     let isSelected: Bool
     let hasPendingInteraction: Bool
     let isProcessing: Bool
+    let hasFailedDelivery: Bool
     let onSelect: () -> Void
     let onRename: () -> Void
     let onDelete: () -> Void
@@ -135,6 +136,10 @@ struct SidebarConversationRow: View {
                         ProgressView()
                             .controlSize(.small)
                             .accessibilityLabel("Agent working")
+                    } else if hasFailedDelivery {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(Color(.systemRed))
+                            .accessibilityLabel("Message failed to send")
                     }
                 }
                 .padding(.leading, SidebarMetrics.sessionIndent)

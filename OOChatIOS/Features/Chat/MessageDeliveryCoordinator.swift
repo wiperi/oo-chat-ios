@@ -6,40 +6,6 @@ enum MessageEnqueueResult {
     case rejected(String)
 }
 
-enum HostedAgentSessionState {
-    static func applying(
-        _ mode: ChatMode,
-        to session: [String: JSONValue]?,
-        conversationID: String
-    ) -> [String: JSONValue] {
-        var next = session ?? [:]
-        next["session_id"] = .string(conversationID)
-        next["mode"] = .string(mode.rawValue)
-        next.removeValue(forKey: "ulw_turns")
-        next.removeValue(forKey: "ulw_turns_used")
-        next.removeValue(forKey: "ulw_prompt")
-        next.removeValue(forKey: "skip_tool_approval")
-        return next
-    }
-
-    static func mode(from session: [String: JSONValue], fallback: ChatMode) -> ChatMode {
-        guard let rawMode = session["mode"]?.stringValue,
-              let mode = ChatMode(rawValue: rawMode) else {
-            return fallback
-        }
-        return mode
-    }
-}
-
-@MainActor
-final class WeakMessageDeliveryCoordinatorReference {
-    weak var value: MessageDeliveryCoordinator?
-
-    init(_ value: MessageDeliveryCoordinator) {
-        self.value = value
-    }
-}
-
 @MainActor
 final class MessageDeliveryCoordinator: ObservableObject {
     @Published private var processingConversationIDs: Set<String> = []
@@ -95,7 +61,7 @@ final class MessageDeliveryCoordinator: ObservableObject {
 
         conversation.agentID = agent.id
         conversation.agentAddress = agent.address
-        if conversation.title == "New mobile session" {
+        if conversation.title == Conversation.defaultTitle {
             conversation.title = Self.title(from: text)
         }
         conversation.messages.append(
@@ -228,10 +194,9 @@ final class MessageDeliveryCoordinator: ObservableObject {
         let transport = transport
         let interactionCoordinator = interactionCoordinator
         let conversationState = conversationState
-        let owner = WeakMessageDeliveryCoordinatorReference(self)
-        return Task { [transport, interactionCoordinator, conversationState, owner] in
+        return Task { [weak self, transport, interactionCoordinator, conversationState] in
             defer {
-                owner.value?.deliveryDidFinish(
+                self?.deliveryDidFinish(
                     messageID: messageID,
                     conversationID: conversationID
                 )
@@ -241,8 +206,8 @@ final class MessageDeliveryCoordinator: ObservableObject {
                     agentAddress: agent.address,
                     conversation: pending,
                     prompt: message.content,
-                    onEvent: { [owner] event in
-                        owner.value?.apply(event, toConversationID: conversationID)
+                    onEvent: { [weak self] event in
+                        self?.apply(event, toConversationID: conversationID)
                     },
                     onInteraction: { [interactionCoordinator, conversationState] interaction in
                         await interactionCoordinator.handle(
@@ -254,15 +219,15 @@ final class MessageDeliveryCoordinator: ObservableObject {
                     }
                 )
                 try Task.checkCancellation()
-                owner.value?.completeDelivery(
+                self?.completeDelivery(
                     result,
                     messageID: messageID,
                     conversationID: conversationID
                 )
             } catch is CancellationError {
-                owner.value?.cancelDelivery(messageID: messageID, conversationID: conversationID)
+                self?.cancelDelivery(messageID: messageID, conversationID: conversationID)
             } catch {
-                owner.value?.failDelivery(
+                self?.failDelivery(
                     error,
                     messageID: messageID,
                     conversationID: conversationID
@@ -303,7 +268,10 @@ final class MessageDeliveryCoordinator: ObservableObject {
                 conversationID: updated.id
             )
         }
-        updated.messages.append(ChatMessage(role: .agent, content: result.output ?? ""))
+        // An empty output would otherwise render as a blank bubble.
+        if let output = result.output, !output.isEmpty {
+            updated.messages.append(ChatMessage(role: .agent, content: output))
+        }
         onConnectionStateChange?(conversationID, .connected)
         conversationState.upsert(updated)
     }

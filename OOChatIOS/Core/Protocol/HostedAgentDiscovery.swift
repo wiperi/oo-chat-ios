@@ -109,14 +109,55 @@ actor HostedAgentDiscovery {
         }
     }
 
+    /// Matches on the parsed host, not the raw string: `contains("10.")` also hits
+    /// `x.example.com:8010.` and misses most of 172.16.0.0/12.
     private func priority(_ endpoint: String) -> Int {
-        if endpoint.contains("localhost") || endpoint.contains("127.0.0.1") {
+        guard let host = URLComponents(string: endpoint)?.host?.lowercased()
+            ?? URLComponents(string: "http://\(endpoint)")?.host?.lowercased() else {
+            return 2
+        }
+        if host == "localhost" || host == "127.0.0.1" || host == "::1" {
             return 0
         }
-        if endpoint.contains("192.168.") || endpoint.contains("10.") || endpoint.contains("172.16.") {
-            return 1
+        return Self.isPrivateHost(host) ? 1 : 2
+    }
+
+    /// Hosts reachable only from the local network, which are worth probing before anything
+    /// routed over the internet.
+    static func isPrivateHost(_ host: String) -> Bool {
+        isPrivateIPv4(host) || isPrivateIPv6(host)
+    }
+
+    /// RFC 4193 unique-local (fc00::/7) and RFC 4291 link-local (fe80::/10).
+    private static func isPrivateIPv6(_ host: String) -> Bool {
+        // URLComponents strips the brackets from "[fe80::1]", but a raw host may keep them.
+        let bare = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        guard bare.contains(":") else {
+            return false
         }
-        return 2
+        return bare.hasPrefix("fc") || bare.hasPrefix("fd") || bare.hasPrefix("fe8")
+            || bare.hasPrefix("fe9") || bare.hasPrefix("fea") || bare.hasPrefix("feb")
+    }
+
+    /// RFC 1918 ranges: 10/8, 172.16/12, 192.168/16.
+    static func isPrivateIPv4(_ host: String) -> Bool {
+        let octets = host.split(separator: ".", omittingEmptySubsequences: false)
+        guard octets.count == 4,
+              let first = UInt8(octets[0]),
+              let second = UInt8(octets[1]),
+              octets[2...].allSatisfy({ UInt8($0) != nil }) else {
+            return false
+        }
+        switch first {
+        case 10:
+            return true
+        case 172:
+            return (16...31).contains(second)
+        case 192:
+            return second == 168
+        default:
+            return false
+        }
     }
 
     private func httpToWebSocket(_ httpURL: String) -> String {

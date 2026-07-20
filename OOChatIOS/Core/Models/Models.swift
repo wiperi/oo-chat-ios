@@ -81,6 +81,9 @@ struct AgentConnection: Identifiable, Codable, Equatable {
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
     }
 
+    /// Note: `token` is a credential and is encoded here. Any new call site that serializes an
+    /// `AgentConnection` — export, share, a debug dump — leaks it, so route those through a
+    /// redacted projection instead of encoding this type directly.
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
@@ -288,6 +291,10 @@ enum HostedAgentInteractionDecision: Equatable {
     case ulwCheckpoint(UlwCheckpointDecision)
     case planReview(PlanReviewDecision)
     case askUser(AskUserDecision)
+    /// The agent replaced this request with a newer one of the same kind. The gate is released
+    /// so the receive loop can continue, but nothing is written back — see
+    /// `HostedAgentConnection.interactionResponseFrame`.
+    case superseded
 }
 
 struct PendingAskUser: Identifiable, Equatable {
@@ -374,10 +381,14 @@ struct Conversation: Identifiable, Codable, Equatable {
     var messages: [ChatMessage]
     var serverSession: [String: JSONValue]?
 
+    /// Placeholder title; `MessageDeliveryCoordinator` compares against it to decide whether
+    /// the first prompt should name the conversation.
+    static let defaultTitle = "New mobile session"
+
     init(agentID: String? = nil, agentAddress: String = "") {
         let now = Date()
         self.id = UUID().uuidString
-        self.title = "New mobile session"
+        self.title = Self.defaultTitle
         self.agentID = agentID
         self.agentAddress = agentAddress
         self.mode = .safe

@@ -34,6 +34,7 @@ final class SwiftDataConversationRepository: ConversationRepository {
         context = ModelContext(container)
         try repairLegacyMessageIDs()
         try removeLegacyInitialMessages()
+        try removeStaleThinkingMessages()
     }
 
     /// Stores written before `StoredMessage.messageID` existed carry the raw server ID in
@@ -47,9 +48,15 @@ final class SwiftDataConversationRepository: ConversationRepository {
         ))
         guard !legacy.isEmpty else { return }
         for message in legacy {
+            // A message with no conversation is already unreachable, and giving it an
+            // empty-scope composite key risks colliding with another orphan. Drop it.
+            guard let conversationID = message.conversation?.id else {
+                context.delete(message)
+                continue
+            }
             message.messageID = message.id
             message.id = StoredMessage.compositeID(
-                conversationID: message.conversation?.id ?? "",
+                conversationID: conversationID,
                 messageID: message.messageID
             )
         }
@@ -65,6 +72,19 @@ final class SwiftDataConversationRepository: ConversationRepository {
                 $0.roleRaw == "agent"
                     && $0.content == "ConnectOnion native iOS session is ready."
             }
+        ))
+        guard !messages.isEmpty else { return }
+        messages.forEach(context.delete)
+        try save()
+    }
+
+    /// `.thinking` bubbles are placeholders removed when a round-trip completes, fails, or is
+    /// cancelled — none of which run if the process dies mid-send, leaving the placeholder on
+    /// disk forever. No in-flight round-trip survives a launch, so every persisted one is stale.
+    private func removeStaleThinkingMessages() throws {
+        let thinkingRole = ChatRole.thinking.rawValue
+        let messages = try context.fetch(FetchDescriptor<StoredMessage>(
+            predicate: #Predicate { $0.roleRaw == thinkingRole }
         ))
         guard !messages.isEmpty else { return }
         messages.forEach(context.delete)

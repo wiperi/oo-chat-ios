@@ -7,7 +7,6 @@ final class ChatViewModel: ObservableObject {
     @Published var identity: StoredIdentity?
     @Published var isConnecting = false
     @Published var errorMessage: String?
-    @Published var connectionFailureMessage: String?
     @Published var agentAddressDraft = ""
     @Published var prompt = "" {
         didSet {
@@ -63,12 +62,7 @@ final class ChatViewModel: ObservableObject {
     }
 
     var conversations: [Conversation] {
-        get {
-            conversationState.conversations
-        }
-        set {
-            conversationState.replaceConversations(newValue)
-        }
+        conversationState.conversations
     }
 
     var activeAgentID: String? {
@@ -109,22 +103,6 @@ final class ChatViewModel: ObservableObject {
         deliveryCoordinator.task(for: activeConversationID)
     }
 
-    var pendingApproval: PendingApproval? {
-        activePendingApproval
-    }
-
-    var pendingUlwCheckpoint: PendingUlwCheckpoint? {
-        activePendingUlwCheckpoint
-    }
-
-    var pendingPlanReview: PendingPlanReview? {
-        activePendingPlanReview
-    }
-
-    var pendingAskUser: PendingAskUser? {
-        activePendingAskUser
-    }
-
     var activePendingApproval: PendingApproval? {
         interactionCoordinator.pendingApproval(for: activeConversationID)
     }
@@ -157,6 +135,50 @@ final class ChatViewModel: ObservableObject {
         interactionCoordinator.hasPendingInteraction(excluding: activeConversationID)
     }
 
+    func hasFailedDelivery(forConversationID conversationID: String) -> Bool {
+        conversationState.failedDeliveryConversationIDs.contains(conversationID)
+    }
+
+    /// A send that fails in a background conversation only raises the error banner when that
+    /// conversation happens to be active, so surface it on the sidebar affordance too.
+    var hasBackgroundDeliveryFailure: Bool {
+        conversationState.failedDeliveryConversationIDs.contains { $0 != activeConversationID }
+    }
+
+    var needsBackgroundAttention: Bool {
+        hasBackgroundPendingInteraction || hasBackgroundDeliveryFailure
+    }
+
+    /// True when a running tool message duplicates the approval card already on screen, so the
+    /// chat can hide the bubble and show only the card. The agent may name the tool differently
+    /// in the two frames, hence the fallback to comparing rendered action summaries.
+    func isToolCallCoveredByPendingApproval(_ message: ChatMessage, in conversationID: String) -> Bool {
+        guard let approval = activePendingApproval,
+              approval.conversationID == conversationID,
+              message.role == .tool,
+              message.toolState == .running,
+              message.content.isEmpty else {
+            return false
+        }
+
+        let messageArguments = message.toolArguments ?? [:]
+        guard messageArguments == approval.request.arguments else {
+            return false
+        }
+
+        if message.toolName == approval.request.tool {
+            return true
+        }
+
+        return ToolActionSummary.requested(
+            toolName: message.toolName ?? "tool",
+            arguments: messageArguments
+        ) == ToolActionSummary.requested(
+            toolName: approval.request.tool,
+            arguments: approval.request.arguments
+        )
+    }
+
     var onlineAgentCount: Int {
         agents.filter(isAgentOnline).count
     }
@@ -187,7 +209,17 @@ final class ChatViewModel: ObservableObject {
         client: HostedAgentTransport? = nil,
         networkMonitor: NetworkPathMonitoring? = nil
     ) {
-        let store = store ?? ConversationRepositoryFactory.make()
+        let resolvedStore: ConversationRepository
+        let storeError: Error?
+        if let store {
+            resolvedStore = store
+            storeError = nil
+        } else {
+            let outcome = ConversationRepositoryFactory.makeOutcome()
+            resolvedStore = outcome.repository
+            storeError = outcome.error
+        }
+        let store = resolvedStore
         let conversationState = ConversationState(store: store)
         let interactionCoordinator = InteractionCoordinator()
         let transport = client ?? HostedAgentClient(identityStore: identityStore)
@@ -217,6 +249,11 @@ final class ChatViewModel: ObservableObject {
         }
         if let error = conversationState.persistenceError {
             self.errorMessage = error.localizedDescription
+        }
+        // Assigned last so it outranks the others: the app is running without a durable
+        // store, which the user needs to know before they type anything they care about.
+        if let storeError {
+            self.errorMessage = "Couldn’t open your saved conversations, so this session won’t be saved. \(storeError.localizedDescription)"
         }
         recoveryCoordinator.onRecoveryError = { [weak self] conversationID, message in
             guard self?.activeConversationID == conversationID else {
@@ -395,7 +432,10 @@ final class ChatViewModel: ObservableObject {
             to: conversation.serverSession,
             conversationID: conversation.id
         )
-        conversation.serverSession?["updated"] = .number(Date().timeIntervalSince1970)
+        // Integral seconds only: this session feeds `session_sha256`, and CanonicalJSON
+        // serializes non-integral doubles via Swift's own formatting, which is not
+        // guaranteed to match the Python/TS reference implementations byte for byte.
+        conversation.serverSession?["updated"] = .number(Date().timeIntervalSince1970.rounded(.down))
         upsert(conversation)
     }
 
@@ -404,13 +444,11 @@ final class ChatViewModel: ObservableObject {
         guard HostedAgentClient.isHostedAgentAddress(address) else {
             let message = "That doesn't look like an agent address. It should start with 0x followed by 64 characters."
             errorMessage = message
-            connectionFailureMessage = message
             return nil
         }
         guard !isOffline else {
             let message = "You appear to be offline. Check your connection and try again."
             errorMessage = message
-            connectionFailureMessage = "Connection failed. \(message)"
             return nil
         }
         guard !isConnecting else {
@@ -419,7 +457,6 @@ final class ChatViewModel: ObservableObject {
 
         isConnecting = true
         errorMessage = nil
-        connectionFailureMessage = nil
 
         let agent: AgentConnection
         if let activeAgent, activeAgent.address == address {
@@ -448,9 +485,14 @@ final class ChatViewModel: ObservableObject {
             return savedAgent
         } catch {
             let message = error.localizedDescription
-            recoveryCoordinator.setConnectionState(.disconnected, forConversationID: conversation.id)
+            // `conversation` may be a candidate that was never persisted, so drop its state
+            // entry entirely rather than leaving a `.disconnected` row behind forever.
+            if conversationState.conversation(withID: conversation.id) == nil {
+                recoveryCoordinator.removeConnectionState(forConversationID: conversation.id)
+            } else {
+                recoveryCoordinator.setConnectionState(.disconnected, forConversationID: conversation.id)
+            }
             errorMessage = message
-            connectionFailureMessage = "Connection failed. \(message)"
             isConnecting = false
             return nil
         }
@@ -609,6 +651,16 @@ final class ChatViewModel: ObservableObject {
         )
         prompt = conversationState.activeDraft
     }
+
+#if DEBUG
+    /// Test-only seam for planting conversation state that normally arrives from the server.
+    /// It goes through the persisting `upsert` on purpose — the previous settable
+    /// `conversations` property let callers mutate the in-memory array without ever
+    /// reaching the store, which is the classic bug in this layer.
+    func upsertForTesting(_ conversation: Conversation) {
+        upsert(conversation)
+    }
+#endif
 
     private func upsert(
         _ conversation: Conversation,

@@ -1,5 +1,5 @@
 import SwiftUI
-// The main chat view message and conversations of the app.
+
 struct ChatView: View {
     @ObservedObject var viewModel: ChatViewModel
     let showsComposer: Bool
@@ -201,7 +201,7 @@ struct ChatScreen: View {
                 } label: {
                     Image(systemName: "sidebar.left")
                         .overlay(alignment: .topTrailing) {
-                            if viewModel.hasBackgroundPendingInteraction {
+                            if viewModel.needsBackgroundAttention {
                                 Circle()
                                     .fill(Color(.systemOrange))
                                     .frame(width: 8, height: 8)
@@ -209,13 +209,19 @@ struct ChatScreen: View {
                             }
                         }
                 }
-                .accessibilityLabel(
-                    viewModel.hasBackgroundPendingInteraction
-                        ? "Open sidebar, approval required"
-                        : "Open sidebar"
-                )
+                .accessibilityLabel(backgroundAttentionLabel)
             }
         }
+    }
+
+    private var backgroundAttentionLabel: String {
+        if viewModel.hasBackgroundPendingInteraction {
+            return "Open sidebar, approval required"
+        }
+        if viewModel.hasBackgroundDeliveryFailure {
+            return "Open sidebar, a message failed to send"
+        }
+        return "Open sidebar"
     }
 
     private func scrollTarget(for interactionID: String) -> String {
@@ -232,7 +238,7 @@ struct ChatScreen: View {
     }
 
     private func shouldShowMessage(_ message: ChatMessage, in conversationID: String) -> Bool {
-        !isToolCallCoveredByPendingApproval(message, in: conversationID)
+        !viewModel.isToolCallCoveredByPendingApproval(message, in: conversationID)
     }
 
     private func timelineEntries(for conversation: Conversation) -> [ChatTimelineEntry] {
@@ -255,40 +261,13 @@ struct ChatScreen: View {
         }
     }
 
-    private func isToolCallCoveredByPendingApproval(_ message: ChatMessage, in conversationID: String) -> Bool {
-        guard let approval = viewModel.pendingApproval,
-              approval.conversationID == conversationID,
-              message.role == .tool,
-              message.toolState == .running,
-              message.content.isEmpty else {
-            return false
-        }
-
-        let messageArguments = message.toolArguments ?? [:]
-        guard messageArguments == approval.request.arguments else {
-            return false
-        }
-
-        if message.toolName == approval.request.tool {
-            return true
-        }
-
-        return ToolActionSummary.requested(
-            toolName: message.toolName ?? "tool",
-            arguments: messageArguments
-        ) == ToolActionSummary.requested(
-            toolName: approval.request.tool,
-            arguments: approval.request.arguments
-        )
-    }
-
     private func scrollUpdate(for conversation: Conversation) -> ChatScrollUpdate {
         let message = conversation.messages.last
         return ChatScrollUpdate(
             conversationID: conversation.id,
             messageCount: conversation.messages.count,
             messageID: message?.id,
-            content: message?.content ?? "",
+            contentLength: message?.content.count ?? 0,
             deliveryState: message?.deliveryState.rawValue ?? "",
             toolState: message?.toolState?.rawValue ?? ""
         )
@@ -330,7 +309,10 @@ private struct ChatScrollUpdate: Equatable {
     let conversationID: String
     let messageCount: Int
     let messageID: String?
-    let content: String
+    /// Length rather than the text itself: this is rebuilt on every redraw purely to detect
+    /// change, and a streamed reply still grows it by one on each token — copying the whole
+    /// body into an Equatable struct per token is pure allocation churn.
+    let contentLength: Int
     let deliveryState: String
     let toolState: String
 

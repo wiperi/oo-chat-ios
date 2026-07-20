@@ -64,7 +64,7 @@ enum HostedAgentEvent: Equatable {
             return .toolResult(
                 id: id,
                 name: frame["name"]?.stringValue,
-                output: eventMessageText(frame),
+                output: messageText(frame),
                 state: state
             )
         default:
@@ -72,7 +72,7 @@ enum HostedAgentEvent: Equatable {
         }
     }
 
-    private static func eventMessageText(_ frame: [String: JSONValue]) -> String {
+    static func messageText(_ frame: [String: JSONValue]) -> String {
         for key in ["result", "message", "error", "text", "content"] {
             if let value = frame[key] {
                 if let text = value.stringValue {
@@ -103,15 +103,17 @@ extension ToolApprovalRequest {
             return nil
         }
 
-        let argumentsValue = frame["arguments"] ?? frame["args"]
+        // Servers send `arguments` either as an object or as a JSON string; anything else
+        // still yields a card (with the raw value shown) rather than failing the frame,
+        // because a rejected parse costs the user the whole round-trip.
         let arguments: [String: JSONValue]
-        switch argumentsValue {
-        case .none:
-            arguments = [:]
-        case .some(.object(let value)):
+        switch decodedArguments(frame["arguments"] ?? frame["args"] ?? .object([:])) {
+        case .object(let value):
             arguments = value
-        default:
-            return nil
+        case .null:
+            arguments = [:]
+        case let other:
+            arguments = ["value": other]
         }
 
         let identifier = frame["approval_id"]?.stringValue
@@ -142,12 +144,12 @@ extension ToolApprovalRequest {
             let rawArguments = object["arguments"] ?? object["args"] ?? .object([:])
             return ToolApprovalBatchItem(
                 tool: tool,
-                rawArguments: decodedBatchArguments(rawArguments)
+                rawArguments: decodedArguments(rawArguments)
             )
         }
     }
 
-    private static func decodedBatchArguments(_ value: JSONValue) -> JSONValue {
+    private static func decodedArguments(_ value: JSONValue) -> JSONValue {
         guard case .string(let text) = value,
               let data = text.data(using: .utf8),
               let decoded = try? JSONDecoder().decode(JSONValue.self, from: data) else {
@@ -206,13 +208,17 @@ extension UlwCheckpointRequest {
     static func from(_ frame: [String: JSONValue]) -> UlwCheckpointRequest? {
         guard frame["type"]?.stringValue?.lowercased() == "ulw_turns_reached",
               let turnsUsed = frame["turns_used"]?.numberValue,
-              let maxTurns = frame["max_turns"]?.numberValue else {
+              let maxTurns = frame["max_turns"]?.numberValue,
+              // `Int(Double)` traps on out-of-range values, so a frame carrying 1e300
+              // would crash the app; reject the frame instead.
+              let turnsUsedInt = Int(exactly: turnsUsed.rounded()),
+              let maxTurnsInt = Int(exactly: maxTurns.rounded()) else {
             return nil
         }
         return UlwCheckpointRequest(
             id: frame["id"]?.stringValue ?? UUID().uuidString,
-            turnsUsed: Int(turnsUsed),
-            maxTurns: Int(maxTurns)
+            turnsUsed: turnsUsedInt,
+            maxTurns: maxTurnsInt
         )
     }
 }
@@ -337,6 +343,31 @@ extension HostedAgentInteraction {
         }
     }
 
+    /// Stand-in for a known interaction type whose payload could not be parsed. It is never
+    /// presented to the user — it exists so the connection can still send that kind's decline
+    /// response and let the round-trip finish, instead of tearing the socket down.
+    /// Whatever ID the frame carried is preserved: today's response frames do not echo it,
+    /// but a placeholder that quietly invents one would start answering the wrong request the
+    /// day the protocol gains correlation IDs.
+    static func declinePlaceholder(for frame: [String: JSONValue]) -> HostedAgentInteraction? {
+        let identifier = frame["approval_id"]?.stringValue
+            ?? frame["request_id"]?.stringValue
+            ?? frame["id"]?.stringValue
+            ?? UUID().uuidString
+        switch frame["type"]?.stringValue?.lowercased() {
+        case "approval_needed":
+            return .approval(ToolApprovalRequest(id: identifier, tool: "unknown", arguments: [:]))
+        case "ulw_turns_reached":
+            return .ulwCheckpoint(UlwCheckpointRequest(id: identifier, turnsUsed: 0, maxTurns: 0))
+        case "plan_review":
+            return .planReview(PlanReviewRequest(id: identifier, planContent: ""))
+        case "ask_user":
+            return .askUser(AskUserRequest(id: identifier, question: ""))
+        default:
+            return nil
+        }
+    }
+
     var unavailableDecision: HostedAgentInteractionDecision {
         switch self {
         case .approval:
@@ -348,6 +379,35 @@ extension HostedAgentInteraction {
         case .askUser:
             return .askUser(.cancel)
         }
+    }
+}
+
+/// The one place the echoed `session` dict is normalized before it goes back on the wire:
+/// inject the client-owned keys, strip the server-owned ones. Both the outgoing CONNECT frame
+/// and the view model's stored session go through here, so a newly stripped key cannot be
+/// applied to one and missed by the other — `session_sha256` would reject the mismatch.
+enum HostedAgentSessionState {
+    static func applying(
+        _ mode: ChatMode,
+        to session: [String: JSONValue]?,
+        conversationID: String
+    ) -> [String: JSONValue] {
+        var next = session ?? [:]
+        next["session_id"] = .string(conversationID)
+        next["mode"] = .string(mode.rawValue)
+        next.removeValue(forKey: "ulw_turns")
+        next.removeValue(forKey: "ulw_turns_used")
+        next.removeValue(forKey: "ulw_prompt")
+        next.removeValue(forKey: "skip_tool_approval")
+        return next
+    }
+
+    static func mode(from session: [String: JSONValue], fallback: ChatMode) -> ChatMode {
+        guard let rawMode = session["mode"]?.stringValue,
+              let mode = ChatMode(rawValue: rawMode) else {
+            return fallback
+        }
+        return mode
     }
 }
 

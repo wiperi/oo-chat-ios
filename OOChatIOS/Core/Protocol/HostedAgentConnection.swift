@@ -208,13 +208,28 @@ actor HostedAgentConnection {
     }
 
     private func hasTimedOut(generation: Int) -> Bool {
-        generation == socketGeneration
+        // No frames flow while an interaction card waits on the human, so a user who takes
+        // longer than `livenessTimeout` to decide would otherwise lose the connection and
+        // their decision with it. Sending the response updates `lastNetworkActivityAt`,
+        // which restarts the clock from a live socket.
+        guard interactionTasks.isEmpty else {
+            return false
+        }
+        return generation == socketGeneration
             && Date().timeIntervalSince(lastNetworkActivityAt) > livenessTimeout
     }
 
     private func transmitPrompt(_ prompt: String, conversation: Conversation, promptID: UUID) async {
         let generation = socketGeneration
-        guard pendingPrompt?.id == promptID, let socket else {
+        guard pendingPrompt?.id == promptID else {
+            return
+        }
+        // The socket can die between `ensureConnected` returning and this task running,
+        // in which case `disconnect` already ran and resumed nothing — `pendingPrompt` was
+        // set after it. Returning here would leak the continuation and hang the conversation
+        // forever, so fail the prompt explicitly instead.
+        guard let socket else {
+            failConnection(HostedAgentClientError.closed, generation: generation)
             return
         }
         do {
@@ -295,9 +310,17 @@ actor HostedAgentConnection {
             }
             await pending.onEvent?(event)
         case "approval_needed", "APPROVAL_NEEDED", "ulw_turns_reached", "plan_review", "ask_user":
-            guard let pending = pendingPrompt,
-                  let interaction = HostedAgentInteraction.from(frame) else {
-                failConnection(HostedAgentClientError.badFrame, generation: generation)
+            guard let pending = pendingPrompt else {
+                return
+            }
+            guard let interaction = HostedAgentInteraction.from(frame) else {
+                // A payload we cannot parse used to fail the connection, which cost the user
+                // the whole round-trip. Decline it on their behalf and keep the socket.
+                if let placeholder = HostedAgentInteraction.declinePlaceholder(for: frame) {
+                    await sendDeclineResponse(for: placeholder, generation: generation)
+                } else {
+                    failConnection(HostedAgentClientError.badFrame, generation: generation)
+                }
                 return
             }
             startInteractionTask(interaction, promptID: pending.id, generation: generation)
@@ -362,12 +385,43 @@ actor HostedAgentConnection {
         }
     }
 
+    private func sendDeclineResponse(
+        for interaction: HostedAgentInteraction,
+        generation: Int
+    ) async {
+        guard generation == socketGeneration, let socket, let endpoint else {
+            return
+        }
+        do {
+            guard let frame = try interactionResponseFrame(
+                for: interaction,
+                decision: interaction.unavailableDecision,
+                endpoint: endpoint
+            ) else {
+                // This kind's decline has no wire representation (ask_user cancel), so the
+                // agent would keep waiting on a response that is never coming. End the
+                // round-trip now rather than letting it sit until the receive timeout.
+                failConnection(HostedAgentClientError.badFrame, generation: generation)
+                return
+            }
+            try await send(frame, over: socket)
+        } catch {
+            failConnection(error, generation: generation)
+        }
+    }
+
     private func interactionResponseFrame(
         for interaction: HostedAgentInteraction,
         decision: HostedAgentInteractionDecision,
         endpoint: ResolvedEndpoint
     ) throws -> [String: JSONValue]? {
         switch (interaction, decision) {
+        // A superseded request is one the agent itself replaced by sending a newer one of the
+        // same kind. Its gate still has to be released so the receive loop unblocks, but no
+        // response goes on the wire: these frames carry no request ID, so a late reply would
+        // be indistinguishable from an answer to the request that replaced it.
+        case (_, .superseded):
+            return nil
         case (.approval, .approval(let approval)):
             return HostedAgentClient.approvalResponseFrame(
                 decision: approval,
@@ -500,14 +554,11 @@ actor HostedAgentConnection {
     }
 
     private func sessionPayload(for conversation: Conversation) -> [String: JSONValue] {
-        var session = conversation.serverSession ?? [:]
-        session["session_id"] = .string(conversation.id)
-        session["mode"] = .string(conversation.mode.rawValue)
-        session.removeValue(forKey: "skip_tool_approval")
-        session.removeValue(forKey: "ulw_turns")
-        session.removeValue(forKey: "ulw_turns_used")
-        session.removeValue(forKey: "ulw_prompt")
-        return session
+        HostedAgentSessionState.applying(
+            conversation.mode,
+            to: conversation.serverSession,
+            conversationID: conversation.id
+        )
     }
 
     private func buildInputFrame(prompt: String, conversation: Conversation) throws -> [String: JSONValue] {
@@ -558,11 +609,6 @@ actor HostedAgentConnection {
     }
 
     private func messageText(_ frame: [String: JSONValue]) -> String {
-        for key in ["result", "message", "error", "text", "content"] {
-            if let value = frame[key]?.stringValue {
-                return value
-            }
-        }
-        return "Hosted agent returned \(frame["type"]?.stringValue ?? "an event")."
+        HostedAgentEvent.messageText(frame)
     }
 }

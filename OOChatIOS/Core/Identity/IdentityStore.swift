@@ -14,8 +14,14 @@ final class IdentityStore {
     func loadOrCreateIdentity() throws -> StoredIdentity {
         let key = try loadOrCreatePrivateKey()
         let publicKeyHex = Hex.encode(key.publicKey.rawRepresentation)
-        let createdAt = UserDefaults.standard.object(forKey: "connectonion.native-ios.identity.createdAt") as? Date ?? Date()
-        UserDefaults.standard.set(createdAt, forKey: "connectonion.native-ios.identity.createdAt")
+        let createdAtKey = "connectonion.native-ios.identity.createdAt"
+        let createdAt: Date
+        if let stored = UserDefaults.standard.object(forKey: createdAtKey) as? Date {
+            createdAt = stored
+        } else {
+            createdAt = Date()
+            UserDefaults.standard.set(createdAt, forKey: createdAtKey)
+        }
         return StoredIdentity(address: "0x\(publicKeyHex)", publicKeyHex: publicKeyHex, createdAt: createdAt)
     }
 
@@ -39,8 +45,20 @@ final class IdentityStore {
             return try Curve25519.Signing.PrivateKey(rawRepresentation: data)
         }
         let key = Curve25519.Signing.PrivateKey()
-        try writePrivateKeyData(key.rawRepresentation)
-        return key
+        switch try writePrivateKeyData(key.rawRepresentation) {
+        case .stored:
+            return key
+        case .adoptedExisting(let data):
+            // Another caller won the race and already stored a key. Adopt theirs rather than
+            // overwriting it — the device address is derived from this key, and changing it
+            // invalidates every peer's trust entry for this device.
+            return try Curve25519.Signing.PrivateKey(rawRepresentation: data)
+        }
+    }
+
+    private enum KeyWriteResult {
+        case stored
+        case adoptedExisting(Data)
     }
 
     private func readPrivateKeyData() throws -> Data? {
@@ -65,14 +83,9 @@ final class IdentityStore {
         return data
     }
 
-    private func writePrivateKeyData(_ data: Data) throws {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
-        SecItemDelete(query as CFDictionary)
-
+    /// Adds `data` without clobbering an existing entry, reporting whether this caller's key
+    /// won the race or an existing one has to be adopted.
+    private func writePrivateKeyData(_ data: Data) throws -> KeyWriteResult {
         let attributes: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -81,8 +94,15 @@ final class IdentityStore {
             kSecValueData as String: data,
         ]
         let status = SecItemAdd(attributes as CFDictionary, nil)
+        if status == errSecDuplicateItem {
+            guard let existing = try readPrivateKeyData() else {
+                throw IdentityStoreError.keychain(status)
+            }
+            return .adoptedExisting(existing)
+        }
         guard status == errSecSuccess else {
             throw IdentityStoreError.keychain(status)
         }
+        return .stored
     }
 }

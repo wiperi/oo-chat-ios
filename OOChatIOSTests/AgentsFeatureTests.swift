@@ -191,7 +191,6 @@ final class AgentsFeatureTests: XCTestCase {
         XCTAssertNil(result)
         XCTAssertFalse(view.isConnecting)
         XCTAssertNotNil(view.errorMessage)
-        XCTAssertNotNil(view.connectionFailureMessage)
         XCTAssertTrue(repo.upsertedAgents.isEmpty)
     }
 

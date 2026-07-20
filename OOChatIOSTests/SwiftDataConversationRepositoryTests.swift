@@ -148,6 +148,60 @@ final class SwiftDataConversationRepositoryTests: XCTestCase {
         XCTAssertEqual(messages.map(\.id), ["real-reply", "quoted-by-user"])
     }
 
+    /// `.thinking` bubbles only get removed when a round-trip ends, which never happens if the
+    /// process dies mid-send. Reopening must drop them without touching anything else.
+    func testReopeningStoreRemovesStaleThinkingMessages() throws {
+        let storeURL = try makeScratchStoreURL()
+        defer { try? FileManager.default.removeItem(at: storeURL.deletingLastPathComponent()) }
+        let repository = try SwiftDataConversationRepository(storeURL: storeURL, defaults: defaults)
+        var conversation = makeConversation(
+            agentID: "a1",
+            address: "0xabc",
+            title: "Interrupted chat",
+            updatedAt: seconds(1000)
+        )
+        conversation.messages = [
+            ChatMessage(id: "asked", role: .user, content: "hi", createdAt: seconds(1001)),
+            ChatMessage(id: "stale", role: .thinking, content: "Waiting…", createdAt: seconds(1002)),
+            ChatMessage(id: "tool-run", role: .tool, content: "", createdAt: seconds(1003)),
+            ChatMessage(id: "replied", role: .agent, content: "hello", createdAt: seconds(1004)),
+        ]
+        repository.upsertConversation(conversation)
+
+        let reopened = try SwiftDataConversationRepository(storeURL: storeURL, defaults: defaults)
+        let messages = try XCTUnwrap(reopened.load().conversations.first).messages
+
+        XCTAssertEqual(messages.map(\.id), ["asked", "tool-run", "replied"])
+    }
+
+    /// A legacy message with no conversation is already unreachable; keeping it would mint an
+    /// empty-scope composite key that can collide with another orphan.
+    func testReopeningStoreDropsOrphanedLegacyMessages() throws {
+        let storeURL = try makeScratchStoreURL()
+        defer { try? FileManager.default.removeItem(at: storeURL.deletingLastPathComponent()) }
+        try withLegacyContext(at: storeURL) { context in
+            context.insert(LegacyStoredModels.StoredConversation(
+                id: "c1", title: "kept", agentID: "a1", agentAddress: "0xaaa", modeRaw: "safe",
+                createdAt: seconds(1000), updatedAt: seconds(2000), serverSessionData: nil,
+                messages: [
+                    LegacyStoredModels.StoredMessage(
+                        id: "m1", roleRaw: "user", content: "attached", createdAt: seconds(1001)
+                    ),
+                ]
+            ))
+            // No conversation assigned: an orphan left behind by an older delete path.
+            context.insert(LegacyStoredModels.StoredMessage(
+                id: "orphan", roleRaw: "user", content: "unreachable", createdAt: seconds(1002)
+            ))
+        }
+
+        let repository = try SwiftDataConversationRepository(storeURL: storeURL, defaults: defaults)
+        let conversations = repository.load().conversations
+
+        XCTAssertEqual(conversations.count, 1)
+        XCTAssertEqual(conversations.first?.messages.map(\.id), ["m1"])
+    }
+
     func testUpsertsThenLoadRestoresAgentsConversationsAndActiveIDs() throws {
         let repository = try makeRepository()
         let agent = AgentConnection(address: "0xabc", createdAt: seconds(1000), updatedAt: seconds(1000))
@@ -707,6 +761,35 @@ final class SwiftDataConversationRepositoryTests: XCTestCase {
         let loaded = reopened.load().conversations.first { $0.id == "c1" }
         XCTAssertEqual(loaded?.messages.map(\.id), ["m1", "m2", "fresh"])
         XCTAssertEqual(loaded?.messages.last?.content, "post-upgrade")
+    }
+
+    /// The last-resort repository the factory falls back to when no SwiftData container can be
+    /// built. It keeps the session usable, so it has to honour the same read-back contract.
+    func testEphemeralRepositoryRoundTripsWithinASession() {
+        let repository = EphemeralConversationRepository()
+        var conversation = makeConversation(
+            agentID: "a1",
+            address: "0xabc",
+            title: "Ephemeral",
+            updatedAt: seconds(1000)
+        )
+        conversation.messages = [
+            ChatMessage(id: "m1", role: .user, content: "café", createdAt: seconds(1001)),
+        ]
+        repository.upsertAgent(AgentConnection(id: "a1", address: "0xabc"))
+        repository.upsertConversation(conversation)
+        repository.saveActive(agentID: "a1", conversationID: conversation.id)
+
+        let snapshot = repository.load()
+        XCTAssertEqual(snapshot.agents.map(\.id), ["a1"])
+        XCTAssertEqual(snapshot.conversations.map(\.id), [conversation.id])
+        XCTAssertEqual(snapshot.activeAgentID, "a1")
+        XCTAssertEqual(repository.search("café").map(\.id), [conversation.id])
+        XCTAssertEqual(repository.search("nothing-matches"), [])
+
+        repository.deleteAgent(id: "a1")
+        XCTAssertEqual(repository.load().agents, [])
+        XCTAssertEqual(repository.load().conversations, [])
     }
 
     private func makeScratchStoreURL() throws -> URL {

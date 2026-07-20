@@ -9,13 +9,21 @@ final class ConnectionRecoveryCoordinator: ObservableObject {
 
     private(set) var recoveryTask: Task<Void, Never>?
     private(set) var probeTask: Task<Void, Never>?
-    var probeInterval: TimeInterval = 5
+    private(set) var launchFlushTask: Task<Void, Never>?
+    /// Clamped on read: `UInt64(negative)` traps, so a non-positive interval would crash the
+    /// probe loop rather than just polling too eagerly.
+    var probeInterval: TimeInterval = 5 {
+        didSet {
+            probeInterval = max(0.1, probeInterval)
+        }
+    }
 
     var onRecoveryError: ((String, String) -> Void)?
     var onReconnect: ((AgentConnection) -> Void)?
 
     private var recoveryConversationID: String?
     private var probeConversationID: String?
+    private var hasFlushedOnLaunch = false
     private let conversationState: ConversationState
     private let deliveryCoordinator: MessageDeliveryCoordinator
     private let networkMonitor: NetworkPathMonitoring
@@ -50,6 +58,7 @@ final class ConnectionRecoveryCoordinator: ObservableObject {
         networkMonitor.cancel()
         probeTask?.cancel()
         recoveryTask?.cancel()
+        launchFlushTask?.cancel()
     }
 
     var shouldShowOfflineBanner: Bool {
@@ -114,6 +123,15 @@ final class ConnectionRecoveryCoordinator: ObservableObject {
 
         probeTask?.cancel()
         probeConversationID = nil
+        // Messages queued in a previous session are only drained by an offline→online
+        // transition, which never happens when the app launches already online. Drain
+        // them once on the first online path update instead.
+        if !hasFlushedOnLaunch {
+            hasFlushedOnLaunch = true
+            launchFlushTask = Task { [weak self] in
+                await self?.deliveryCoordinator.flushQueuedMessages()
+            }
+        }
         guard wasOffline, let conversationID = conversationState.activeConversationID else {
             return
         }

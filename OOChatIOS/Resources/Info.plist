@@ -27,6 +27,8 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>ConnectOnion looks for hosted agents running on your local network.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>ConnectOnion uses the camera to scan agent QR codes.</string>
 	<key>UILaunchScreen</key>

@@ -1,5 +1,5 @@
 import SwiftUI
-// Handle the chat input, mode selection and send button.
+
 struct Composer: View {
     @ObservedObject var viewModel: ChatViewModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion

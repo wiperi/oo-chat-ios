@@ -376,16 +376,31 @@ final class MockHostedAgentTests: XCTestCase {
         XCTAssertFalse(request?.id.isEmpty ?? true)
     }
 
-    func testApprovalFrameRejectsMissingToolOrInvalidArguments() {
+    func testApprovalFrameRejectsMissingTool() {
         XCTAssertNil(ToolApprovalRequest.from([
             "type": .string("approval_needed"),
             "arguments": .object([:]),
         ]))
-        XCTAssertNil(ToolApprovalRequest.from([
+    }
+
+    func testApprovalFrameDecodesStringEncodedArguments() {
+        let request = ToolApprovalRequest.from([
+            "type": .string("approval_needed"),
+            "tool": .string("write"),
+            "arguments": .string("{\"path\":\"prompt.md\"}"),
+        ])
+        XCTAssertEqual(request?.arguments, ["path": .string("prompt.md")])
+    }
+
+    /// Arguments the server sends in a shape we cannot interpret must still produce a card —
+    /// failing the frame costs the user the entire round-trip.
+    func testApprovalFramePreservesUndecodableArguments() {
+        let request = ToolApprovalRequest.from([
             "type": .string("approval_needed"),
             "tool": .string("write"),
             "arguments": .string("prompt.md"),
-        ]))
+        ])
+        XCTAssertEqual(request?.arguments, ["value": .string("prompt.md")])
     }
 
     func testApprovalDecisionsEncodeProtocolFrames() {
@@ -463,6 +478,58 @@ final class MockHostedAgentTests: XCTestCase {
             agentAddress: endpointA,
             endpoint: directEndpoint
         )["to"])
+    }
+
+    /// `Int(Double)` traps on out-of-range values, so a hostile frame could crash the app.
+    func testUlwCheckpointFrameRejectsOutOfRangeTurnCounts() {
+        XCTAssertNil(UlwCheckpointRequest.from([
+            "type": .string("ulw_turns_reached"),
+            "turns_used": .number(1e300),
+            "max_turns": .number(100),
+        ]))
+        XCTAssertNil(UlwCheckpointRequest.from([
+            "type": .string("ulw_turns_reached"),
+            "turns_used": .number(1),
+            "max_turns": .number(.nan),
+        ]))
+    }
+
+    /// The placeholder answers on the user's behalf when a payload will not parse, so it must
+    /// carry the ID the frame arrived with rather than inventing one.
+    func testDeclinePlaceholderPreservesFrameIdentifier() {
+        let approval = HostedAgentInteraction.declinePlaceholder(for: [
+            "type": .string("approval_needed"),
+            "approval_id": .string("ap-7"),
+        ])
+        XCTAssertEqual(approval?.id, "ap-7")
+
+        let plan = HostedAgentInteraction.declinePlaceholder(for: [
+            "type": .string("plan_review"),
+            "id": .string("plan-3"),
+        ])
+        XCTAssertEqual(plan?.id, "plan-3")
+
+        XCTAssertNil(HostedAgentInteraction.declinePlaceholder(for: [
+            "type": .string("something_else"),
+        ]))
+    }
+
+    /// `contains("10.")` used to match `x.example.com:8010.` and miss most of 172.16/12.
+    func testPrivateHostClassificationCoversRFC1918AndIPv6() {
+        XCTAssertTrue(HostedAgentDiscovery.isPrivateIPv4("10.0.0.4"))
+        XCTAssertTrue(HostedAgentDiscovery.isPrivateIPv4("172.16.0.1"))
+        XCTAssertTrue(HostedAgentDiscovery.isPrivateIPv4("172.31.255.254"))
+        XCTAssertTrue(HostedAgentDiscovery.isPrivateIPv4("192.168.1.10"))
+
+        XCTAssertFalse(HostedAgentDiscovery.isPrivateIPv4("172.15.0.1"))
+        XCTAssertFalse(HostedAgentDiscovery.isPrivateIPv4("172.32.0.1"))
+        XCTAssertFalse(HostedAgentDiscovery.isPrivateIPv4("192.169.1.10"))
+        XCTAssertFalse(HostedAgentDiscovery.isPrivateIPv4("x.example.com"))
+        XCTAssertFalse(HostedAgentDiscovery.isPrivateIPv4("8.8.8.8"))
+
+        XCTAssertTrue(HostedAgentDiscovery.isPrivateHost("fe80::1"))
+        XCTAssertTrue(HostedAgentDiscovery.isPrivateHost("[fd00::1234]"))
+        XCTAssertFalse(HostedAgentDiscovery.isPrivateHost("2001:4860:4860::8888"))
     }
 
     func testUlwCheckpointFramesMatchUpstreamContract() {
@@ -628,9 +695,9 @@ final class MockHostedAgentTests: XCTestCase {
         let agent = viewModel.saveAgent(name: "Primary", address: endpointA, token: "old-token")
         XCTAssertNotNil(agent)
         let conversation = viewModel.createConversation(for: agent!)
-        let conversationIndex = viewModel.conversations.firstIndex { $0.id == conversation.id }
-        XCTAssertNotNil(conversationIndex)
-        viewModel.conversations[conversationIndex!].serverSession = ["session_id": .string("old")]
+        viewModel.selectConversation(conversation)
+        viewModel.setMode(.plan)
+        XCTAssertNotNil(viewModel.conversations.first { $0.id == conversation.id }?.serverSession)
 
         let updated = viewModel.saveAgent(id: agent!.id, name: "Renamed", address: endpointB, token: "new-token")
 

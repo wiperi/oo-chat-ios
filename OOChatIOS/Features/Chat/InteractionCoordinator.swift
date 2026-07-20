@@ -71,6 +71,8 @@ final class ContinuationGate<Decision>: @unchecked Sendable {
 final class InteractionCoordinator: ObservableObject {
     @Published private var interactionsByConversationID: [String: [HostedAgentInteraction]] = [:]
 
+    private var supersededGateIDs: Set<String> = []
+
     private let approvalGate = ContinuationGate<ApprovalDecision>(
         cancellationDecision: .rejectHard(feedback: "Approval cancelled."),
         unavailableDecision: .rejectHard(feedback: "Approval unavailable.")
@@ -101,28 +103,28 @@ final class InteractionCoordinator: ObservableObject {
             } dismiss: {
                 self.dismiss(interaction, conversationID: conversationID)
             }
-            return .approval(decision)
+            return consumeSuperseded(gateID) ? .superseded : .approval(decision)
         case .ulwCheckpoint:
             let decision = await ulwCheckpointGate.wait(for: gateID) {
                 self.present(interaction, conversationID: conversationID, isConversationAvailable: isConversationAvailable)
             } dismiss: {
                 self.dismiss(interaction, conversationID: conversationID)
             }
-            return .ulwCheckpoint(decision)
+            return consumeSuperseded(gateID) ? .superseded : .ulwCheckpoint(decision)
         case .planReview:
             let decision = await planReviewGate.wait(for: gateID) {
                 self.present(interaction, conversationID: conversationID, isConversationAvailable: isConversationAvailable)
             } dismiss: {
                 self.dismiss(interaction, conversationID: conversationID)
             }
-            return .planReview(decision)
+            return consumeSuperseded(gateID) ? .superseded : .planReview(decision)
         case .askUser:
             let decision = await askUserGate.wait(for: gateID) {
                 self.present(interaction, conversationID: conversationID, isConversationAvailable: isConversationAvailable)
             } dismiss: {
                 self.dismiss(interaction, conversationID: conversationID)
             }
-            return .askUser(decision)
+            return consumeSuperseded(gateID) ? .superseded : .askUser(decision)
         }
     }
 
@@ -198,6 +200,9 @@ final class InteractionCoordinator: ObservableObject {
             return planReviewGate.resolve(id: gateID, with: value)
         case .askUser(let value):
             return askUserGate.resolve(id: gateID, with: value)
+        case .superseded:
+            // Only the coordinator produces this, never the UI.
+            return false
         }
     }
 
@@ -231,6 +236,7 @@ final class InteractionCoordinator: ObservableObject {
 
     func cancelAll() {
         interactionsByConversationID.removeAll()
+        supersededGateIDs.removeAll()
         approvalGate.cancelAll()
         ulwCheckpointGate.cancelAll()
         planReviewGate.cancelAll()
@@ -246,10 +252,42 @@ final class InteractionCoordinator: ObservableObject {
             return false
         }
         var interactions = interactionsByConversationID[conversationID] ?? []
+        // A server that sends a second request of the same kind supersedes the first card.
+        // Its gate has to be resolved too, or the connection's receive loop stays blocked
+        // forever and the conversation can never be stopped.
+        let superseded = interactions.filter {
+            $0.kind == interaction.kind && $0.id != interaction.id
+        }
         interactions.removeAll { $0.kind == interaction.kind }
         interactions.append(interaction)
         interactionsByConversationID[conversationID] = interactions
+        for old in superseded {
+            resolveSuperseded(old, conversationID: conversationID)
+        }
         return true
+    }
+
+    /// Releases the gate of a request the agent replaced with a newer one of the same kind.
+    /// The gate value itself is discarded: `handle` sees the gate ID in `supersededGateIDs`
+    /// and reports `.superseded`, so nothing is written back to a request the agent has
+    /// already moved on from. Without this the receive loop would stay blocked forever.
+    private func resolveSuperseded(_ interaction: HostedAgentInteraction, conversationID: String) {
+        let gateID = Self.gateID(conversationID: conversationID, interaction: interaction)
+        supersededGateIDs.insert(gateID)
+        switch interaction {
+        case .approval:
+            approvalGate.resolve(id: gateID, with: .rejectHard(feedback: "Superseded by a newer request."))
+        case .ulwCheckpoint:
+            ulwCheckpointGate.resolve(id: gateID, with: .switchMode(.safe))
+        case .planReview:
+            planReviewGate.resolve(id: gateID, with: .requestChanges(feedback: "Superseded by a newer request."))
+        case .askUser:
+            askUserGate.resolve(id: gateID, with: .cancel)
+        }
+    }
+
+    private func consumeSuperseded(_ gateID: String) -> Bool {
+        supersededGateIDs.remove(gateID) != nil
     }
 
     private func dismiss(_ interaction: HostedAgentInteraction, conversationID: String) {

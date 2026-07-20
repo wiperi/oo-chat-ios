@@ -1,3 +1,4 @@
+import AVFoundation
 import SwiftUI
 import VisionKit
 
@@ -33,14 +34,33 @@ struct AgentQRCodeScannerView: View {
     let onCode: (String) -> Void
     let onUnavailable: (String) -> Void
     @Environment(\.dismiss) private var dismiss
+    @State private var readiness: ScannerReadiness = .checking
 
+    /// Scanning needs both an authorization answer and a live capture stack, and neither is
+    /// known until `requestAccess` returns — hence a distinct state for "still asking".
+    private enum ScannerReadiness {
+        case checking
+        case ready
+        case unavailable
+    }
+
+    /// Hardware/OS capability only — safe to check before camera access is granted.
+    static var isSupported: Bool {
+        DataScannerViewController.isSupported
+    }
+
+    /// `DataScannerViewController.isAvailable` reports false while camera access is still
+    /// `.notDetermined`, so this is only meaningful after `requestAccess` has resolved.
     static var isAvailable: Bool {
         DataScannerViewController.isSupported && DataScannerViewController.isAvailable
     }
 
     var body: some View {
         ZStack {
-            if Self.isAvailable {
+            switch readiness {
+            case .checking:
+                ProgressView()
+            case .ready:
                 AgentQRCodeScannerController(onCode: onCode, onUnavailable: onUnavailable)
                     .ignoresSafeArea()
                 RoundedRectangle(cornerRadius: 20)
@@ -48,7 +68,7 @@ struct AgentQRCodeScannerView: View {
                     .frame(width: 250, height: 250)
                     .shadow(color: .black.opacity(0.35), radius: 8)
                     .accessibilityHidden(true)
-            } else {
+            case .unavailable:
                 ContentUnavailableView(
                     "Camera Unavailable",
                     systemImage: "camera.fill",
@@ -75,8 +95,14 @@ struct AgentQRCodeScannerView: View {
                 Spacer()
             }
         }
-        .onAppear {
-            guard !Self.isAvailable else {
+        .task {
+            guard readiness == .checking else {
+                return
+            }
+            let granted = await AVCaptureDevice.requestAccess(for: .video)
+            let available = granted && Self.isAvailable
+            readiness = available ? .ready : .unavailable
+            guard !available else {
                 return
             }
             onUnavailable("Camera scanning is unavailable. Enter the agent address manually.")

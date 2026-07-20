@@ -355,6 +355,7 @@ struct ChatSidebarView: View {
             isSelected: selection == .conversation(conversation.id),
             hasPendingInteraction: viewModel.hasPendingInteraction(forConversationID: conversation.id),
             isProcessing: viewModel.isProcessing(conversationID: conversation.id),
+            hasFailedDelivery: viewModel.hasFailedDelivery(forConversationID: conversation.id),
             onSelect: {
                 focusedAgentID = conversation.agentID
                 onSelectConversation(conversation)

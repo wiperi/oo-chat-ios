@@ -14,6 +14,10 @@ final class ConversationState: ObservableObject {
     @Published private(set) var activeAgentID: String?
     @Published private(set) var activeConversationID: String?
     @Published private(set) var persistenceError: ConversationRepositoryError?
+    /// Maintained incrementally on every mutation. The sidebar and the toolbar badge read it
+    /// on each redraw, and rescanning every conversation's messages there costs a full
+    /// O(conversations × messages) sweep per streamed token.
+    @Published private(set) var failedDeliveryConversationIDs: Set<String> = []
 
     private var draftsByConversationID: [String: String] = [:]
     private let store: ConversationRepository
@@ -26,6 +30,11 @@ final class ConversationState: ObservableObject {
         agents = snapshot.agents
         conversations = snapshot.conversations
         activeConversationID = snapshot.activeConversationID
+        failedDeliveryConversationIDs = Set(
+            snapshot.conversations
+                .filter { $0.messages.contains { $0.deliveryState == .failed } }
+                .map(\.id)
+        )
 
         let activeConversationAgentID = snapshot.activeConversationID.flatMap { activeConversationID in
             snapshot.conversations.first { $0.id == activeConversationID }?.agentID
@@ -78,10 +87,6 @@ final class ConversationState: ObservableObject {
         conversations.first { $0.id == id }
     }
 
-    func replaceConversations(_ conversations: [Conversation]) {
-        self.conversations = conversations
-    }
-
     func conversations(for agent: AgentConnection) -> [Conversation] {
         conversations
             .filter { conversationBelongsToAgent($0, agent) }
@@ -111,8 +116,7 @@ final class ConversationState: ObservableObject {
 
     func createConversation(for agent: AgentConnection, currentDraft: String) -> Conversation {
         updateActiveDraft(currentDraft)
-        var conversation = Conversation(agentID: agent.id, agentAddress: agent.address)
-        conversation.title = "New mobile session"
+        let conversation = Conversation(agentID: agent.id, agentAddress: agent.address)
         conversations.insert(conversation, at: 0)
         activeAgentID = agent.id
         activeConversationID = conversation.id
@@ -173,6 +177,7 @@ final class ConversationState: ObservableObject {
             }
         }
         draftsByConversationID[conversation.id] = nil
+        failedDeliveryConversationIDs.remove(conversation.id)
         recordPersistence(store.deleteConversationResult(id: conversation.id))
         persistSelection()
     }
@@ -196,6 +201,7 @@ final class ConversationState: ObservableObject {
 
         for conversationID in deletedConversationIDs {
             draftsByConversationID[conversationID] = nil
+            failedDeliveryConversationIDs.remove(conversationID)
             recordPersistence(store.deleteConversationResult(id: conversationID))
         }
         recordPersistence(store.deleteAgentResult(id: agent.id))
@@ -261,6 +267,7 @@ final class ConversationState: ObservableObject {
         conversation.agentID = agent.id
         conversation.agentAddress = agent.address
         conversations.insert(conversation, at: 0)
+        refreshFailedDeliveryFlag(for: conversation)
         activeConversationID = conversation.id
         recordPersistence(store.upsertConversationResult(conversation))
         persistSelection()
@@ -282,6 +289,7 @@ final class ConversationState: ObservableObject {
         }
         conversations.removeAll { $0.id == next.id }
         conversations.insert(next, at: 0)
+        refreshFailedDeliveryFlag(for: next)
 
         switch persistence {
         case .full:
@@ -314,6 +322,14 @@ final class ConversationState: ObservableObject {
             return agentID == agent.id
         }
         return conversation.agentAddress == agent.address
+    }
+
+    private func refreshFailedDeliveryFlag(for conversation: Conversation) {
+        if conversation.messages.contains(where: { $0.deliveryState == .failed }) {
+            failedDeliveryConversationIDs.insert(conversation.id)
+        } else {
+            failedDeliveryConversationIDs.remove(conversation.id)
+        }
     }
 
     private func touchAgent(id: String) {
