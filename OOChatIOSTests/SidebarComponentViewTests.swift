@@ -46,6 +46,7 @@ final class SidebarRowViewTests: XCTestCase {
     func testAgentRowRendersAgentNameAndInvokesToggle() {
         let agent = ViewFixtures.agent(name: "Orbit Agent")
         var toggled = false
+        var addChatCount = 0
         let window = ViewHost.host(
             SidebarAgentRow(
                 agent: agent,
@@ -54,7 +55,7 @@ final class SidebarRowViewTests: XCTestCase {
                 onToggle: { toggled = true },
                 onRename: {},
                 onEdit: {},
-                onAddChat: {},
+                onAddChat: { addChatCount += 1 },
                 onShowQRCode: { _ in },
                 onDelete: {}
             )
@@ -64,6 +65,32 @@ final class SidebarRowViewTests: XCTestCase {
         XCTAssertNotNil(ViewHost.element(labelContains: "Orbit Agent", in: window))
         XCTAssertTrue(ViewHost.activate(labelContains: "Orbit Agent", in: window))
         XCTAssertTrue(toggled)
+        XCTAssertTrue(ViewHost.activateButton(labelContains: "Add Chat", in: window))
+        XCTAssertEqual(addChatCount, 1)
+    }
+
+    func testAgentRowCompactsDefaultAddressNameForDisplay() {
+        let agent = AgentConnection(
+            id: "default-agent",
+            address: "0x6e0469abcdef1234567890abcdefcd567a"
+        )
+        let window = ViewHost.host(
+            SidebarAgentRow(
+                agent: agent,
+                isExpanded: false,
+                isOnline: false,
+                onToggle: {},
+                onRename: {},
+                onEdit: {},
+                onAddChat: {},
+                onShowQRCode: { _ in },
+                onDelete: {}
+            )
+            .padding()
+        )
+
+        XCTAssertNotNil(ViewHost.element(labelContains: "0x6e04...567a", in: window))
+        XCTAssertNil(ViewHost.element(labelContains: "Agent 0x6e04...567a", in: window))
     }
 
     func testAgentRowFallsBackToDefaultInitialForBlankName() {

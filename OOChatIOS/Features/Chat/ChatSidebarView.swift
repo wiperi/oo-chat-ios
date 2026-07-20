@@ -390,6 +390,7 @@ struct ChatSidebarView: View {
     }
 
     private func saveAgentDraft(_ savedDraft: AgentFormDraft) -> Bool {
+        let isNewAgent = savedDraft.agentID == nil
         guard let agent = viewModel.saveAgent(
             id: savedDraft.agentID,
             name: savedDraft.name,
@@ -405,6 +406,9 @@ struct ChatSidebarView: View {
 
         if savedDraft.shouldConnectAfterSave {
             connect(agent)
+        } else if isNewAgent {
+            viewModel.switchToAgentForChat(agent)
+            onConnected()
         }
 
         return true

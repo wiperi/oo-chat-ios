@@ -222,6 +222,7 @@ final class ChatSidebarViewTests: XCTestCase {
 
     func testSidebarAddAgentSheetSavesAgent() {
         let viewModel = makeViewModel(agents: [], conversations: [])
+        var connectedCount = 0
         let window = ViewHost.host(
             ChatSidebarView(
                 viewModel: viewModel,
@@ -231,7 +232,7 @@ final class ChatSidebarViewTests: XCTestCase {
                 selection: nil,
                 onSelectConversation: { _ in XCTFail("unexpected conversation selection") },
                 onAddChat: { _ in XCTFail("unexpected add chat") },
-                onConnected: { XCTFail("unexpected connection") },
+                onConnected: { connectedCount += 1 },
                 onSettings: {}
             )
         )
@@ -246,6 +247,10 @@ final class ChatSidebarViewTests: XCTestCase {
 
         XCTAssertEqual(viewModel.agents.first?.name, "Saved Agent")
         XCTAssertEqual(viewModel.agents.first?.address, sidebarHostedAddress)
+        XCTAssertEqual(viewModel.conversations.count, 1)
+        XCTAssertEqual(viewModel.activeAgentID, viewModel.agents.first?.id)
+        XCTAssertEqual(viewModel.activeConversationID, viewModel.conversations.first?.id)
+        XCTAssertEqual(connectedCount, 1)
         XCTAssertNotNil(ViewHost.waitForElement(labelContains: "Saved Agent", in: window))
     }
 

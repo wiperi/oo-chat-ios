@@ -44,6 +44,8 @@ enum SidebarMetrics {
     static let avatarSize: CGFloat = 32
     static let agentAvatarSpacing: CGFloat = 10
     static let agentNameSpacing: CGFloat = 8
+    static let agentActionButtonSize: CGFloat = 34
+    static let agentActionIconSize: CGFloat = 16
     static let sessionIndent: CGFloat = 36
     static let sessionIconWidth: CGFloat = 18
     static let sessionContentSpacing: CGFloat = 8

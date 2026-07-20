@@ -12,42 +12,11 @@ struct SidebarAgentRow: View {
     let onDelete: () -> Void
 
     var body: some View {
-        Button {
-            onToggle()
-        } label: {
-            HStack(spacing: SidebarMetrics.agentRowSpacing) {
-                Image(systemName: "chevron.forward")
-                    .imageScale(.small)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.secondary)
-                    .frame(width: SidebarMetrics.chevronWidth, height: SidebarMetrics.agentRowHeight)
-                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+        HStack(spacing: SidebarMetrics.agentRowSpacing) {
+            toggleButton
 
-                HStack(spacing: SidebarMetrics.agentAvatarSpacing) {
-                    Text(agentInitial(for: agent))
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Color(.label))
-                        .frame(width: SidebarMetrics.avatarSize, height: SidebarMetrics.avatarSize)
-                        .background(Color(.quaternarySystemFill), in: Circle())
-
-                    HStack(spacing: SidebarMetrics.agentNameSpacing) {
-                        Text(agent.name)
-                            .font(.body)
-                            .lineLimit(1)
-
-                        if isOnline {
-                            Circle()
-                                .fill(Color(.systemGreen))
-                                .frame(width: SidebarMetrics.statusDotSize, height: SidebarMetrics.statusDotSize)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .contentShape(Rectangle())
+            addChatButton
         }
-        .buttonStyle(AppPressButtonStyle(pressedScale: 0.985, pressedOpacity: 0.90))
         .contextMenu {
             Button {
                 onRename()
@@ -60,13 +29,6 @@ struct SidebarAgentRow: View {
                 onEdit()
             } label: {
                 sidebarContextMenuLabel("Edit Agent", systemImage: "slider.horizontal.3", color: Color(.label))
-            }
-            .tint(Color(.label))
-
-            Button {
-                onAddChat()
-            } label: {
-                sidebarContextMenuLabel("Add Chat", systemImage: "plus.bubble", color: Color(.label))
             }
             .tint(Color(.label))
 
@@ -93,11 +55,80 @@ struct SidebarAgentRow: View {
         }
     }
 
+    private var toggleButton: some View {
+        Button {
+            onToggle()
+        } label: {
+            HStack(spacing: SidebarMetrics.agentRowSpacing) {
+                Image(systemName: "chevron.forward")
+                    .imageScale(.small)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.secondary)
+                    .frame(width: SidebarMetrics.chevronWidth, height: SidebarMetrics.agentRowHeight)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+
+                HStack(spacing: SidebarMetrics.agentAvatarSpacing) {
+                    Text(agentInitial(for: agent))
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color(.label))
+                        .frame(width: SidebarMetrics.avatarSize, height: SidebarMetrics.avatarSize)
+                        .background(Color(.quaternarySystemFill), in: Circle())
+
+                    HStack(spacing: SidebarMetrics.agentNameSpacing) {
+                        Text(sidebarAgentName(for: agent))
+                            .font(.body)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+
+                        if isOnline {
+                            Circle()
+                                .fill(Color(.systemGreen))
+                                .frame(width: SidebarMetrics.statusDotSize, height: SidebarMetrics.statusDotSize)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(AppPressButtonStyle(pressedScale: 0.985, pressedOpacity: 0.90))
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var addChatButton: some View {
+        Button(action: onAddChat) {
+            Image(systemName: "square.and.pencil")
+                .font(.system(size: SidebarMetrics.agentActionIconSize, weight: .regular))
+                .foregroundStyle(Color(.label))
+                .frame(
+                    width: SidebarMetrics.agentActionButtonSize,
+                    height: SidebarMetrics.agentActionButtonSize
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(SidebarFooterButtonStyle())
+        .accessibilityLabel("Add Chat")
+    }
+
     private func agentInitial(for agent: AgentConnection) -> String {
         guard let first = agent.name.trimmingCharacters(in: .whitespacesAndNewlines).first else {
             return "A"
         }
         return String(first).uppercased()
+    }
+
+    private func sidebarAgentName(for agent: AgentConnection) -> String {
+        let trimmedName = agent.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedName == AgentConnection.defaultName(for: agent.address) else {
+            return agent.name
+        }
+
+        guard agent.address.count > 12 else {
+            return trimmedName
+        }
+
+        return "\(agent.address.prefix(6))...\(agent.address.suffix(4))"
     }
 }
 
