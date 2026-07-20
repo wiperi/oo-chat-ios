@@ -27,6 +27,10 @@ struct ChatSidebarView: View {
     @FocusState private var isSearchFieldFocused: Bool
 
     var body: some View {
+        sheets(alerts(baseContent))
+    }
+    
+    private var baseContent: some View {
         ZStack(alignment: .bottom) {
             sidebarList
                 .contentMargins(
@@ -71,66 +75,74 @@ struct ChatSidebarView: View {
                 isSearchFieldFocused = false
             }
         }
-        .alert("Delete Chat", isPresented: isDeleting, presenting: deleteTarget) { conversation in
-            Button("Delete", role: .destructive) {
-                viewModel.deleteConversation(conversation)
-                deleteTarget = nil
+    }
+
+    private func alerts(_ view: some View) -> some View {
+        view
+            .alert("Delete Chat", isPresented: isDeleting, presenting: deleteTarget) { conversation in
+                Button("Delete", role: .destructive) {
+                    viewModel.deleteConversation(conversation)
+                    deleteTarget = nil
+                }
+                Button("Cancel", role: .cancel) {
+                    deleteTarget = nil
+                }
+            } message: { conversation in
+                Text("\"\(conversation.title)\" will be permanently deleted.")
             }
-            Button("Cancel", role: .cancel) {
-                deleteTarget = nil
+            .alert("Rename Chat", isPresented: isRenamingConversation, presenting: conversationRenameTarget) { conversation in
+                TextField("Title", text: $conversationRenameText)
+                Button("Cancel", role: .cancel) {
+                    conversationRenameTarget = nil
+                    conversationRenameText = ""
+                }
+                Button("Save") {
+                    renameConversation(conversation)
+                }
+                .disabled(conversationRenameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            } message: { conversation in
+                Text("Enter a new name for \(conversation.title).")
             }
-        } message: { conversation in
-            Text("\"\(conversation.title)\" will be permanently deleted.")
-        }
-        .alert("Rename Chat", isPresented: isRenamingConversation, presenting: conversationRenameTarget) { conversation in
-            TextField("Title", text: $conversationRenameText)
-            Button("Cancel", role: .cancel) {
-                conversationRenameTarget = nil
-                conversationRenameText = ""
+            .alert("Rename Agent", isPresented: isRenamingAgent, presenting: agentRenameTarget) { agent in
+                TextField("Name", text: $agentRenameText)
+                Button("Cancel", role: .cancel) {
+                    agentRenameTarget = nil
+                    agentRenameText = ""
+                }
+                Button("Save") {
+                    renameAgent(agent)
+                }
+                .disabled(agentRenameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            } message: { agent in
+                Text("Enter a new name for \(agent.name).")
             }
-            Button("Save") {
-                renameConversation(conversation)
+            .alert("Delete Agent?", isPresented: isDeletingAgent, presenting: agentDeleteTarget) { agent in
+                Button("Delete", role: .destructive) {
+                    viewModel.deleteAgent(agent)
+                    agentDeleteTarget = nil
+                }
+                Button("Cancel", role: .cancel) {
+                    agentDeleteTarget = nil
+                }
+            } message: { agent in
+                Text("This removes \(agent.name) and its chat sessions.")
             }
-            .disabled(conversationRenameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        } message: { conversation in
-            Text("Enter a new name for \(conversation.title).")
-        }
-        .alert("Rename Agent", isPresented: isRenamingAgent, presenting: agentRenameTarget) { agent in
-            TextField("Name", text: $agentRenameText)
-            Button("Cancel", role: .cancel) {
-                agentRenameTarget = nil
-                agentRenameText = ""
+    }
+
+    private func sheets(_ view: some View) -> some View {
+        view
+            .sheet(isPresented: isPresentingQRCodeShare) {
+                if let qrCodeShareURL {
+                    AgentQRCodeShareView(url: qrCodeShareURL)
+                }
             }
-            Button("Save") {
-                renameAgent(agent)
+            .sheet(item: $agentFormDraft) { draft in
+                AgentFormView(draft: draft) { savedDraft in
+                    saveAgentDraft(savedDraft)
+                } onCancel: {
+                    agentFormDraft = nil
+                }
             }
-            .disabled(agentRenameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        } message: { agent in
-            Text("Enter a new name for \(agent.name).")
-        }
-        .alert("Delete Agent?", isPresented: isDeletingAgent, presenting: agentDeleteTarget) { agent in
-            Button("Delete", role: .destructive) {
-                viewModel.deleteAgent(agent)
-                agentDeleteTarget = nil
-            }
-            Button("Cancel", role: .cancel) {
-                agentDeleteTarget = nil
-            }
-        } message: { agent in
-            Text("This removes \(agent.name) and its chat sessions.")
-        }
-        .sheet(isPresented: isPresentingQRCodeShare) {
-            if let qrCodeShareURL {
-                AgentQRCodeShareView(url: qrCodeShareURL)
-            }
-        }
-        .sheet(item: $agentFormDraft) { draft in
-            AgentFormView(draft: draft) { savedDraft in
-                saveAgentDraft(savedDraft)
-            } onCancel: {
-                agentFormDraft = nil
-            }
-        }
     }
 
     private var sidebarList: some View {

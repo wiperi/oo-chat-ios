@@ -16,10 +16,10 @@ struct MarkdownMessageView: View {
 
     var body: some View {
         Markdown(content)
-            .markdownTheme(.gitHub)
             .markdownBlockStyle(\.codeBlock) { configuration in
                 MarkdownCodeBlockView(configuration: configuration)
             }
+            .markdownTheme(.gitHub)
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
     }

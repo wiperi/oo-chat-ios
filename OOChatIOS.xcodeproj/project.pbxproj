@@ -25,6 +25,9 @@
 		100000000000000000000109 /* HostedAgentClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000009 /* HostedAgentClient.swift */; };
 		100000000000000000000110 /* MockHostedAgentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000013 /* MockHostedAgentTests.swift */; };
 		100000000000000000000115 /* SwiftDataConversationRepositoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000019 /* SwiftDataConversationRepositoryTests.swift */; };
+		100000000000000000000162 /* ViewTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000067 /* ViewTestSupport.swift */; };
+		100000000000000000000163 /* ChatCardViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000068 /* ChatCardViewTests.swift */; };
+		100000000000000000000164 /* ComposerToolCallViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000069 /* ComposerToolCallViewTests.swift */; };
 		100000000000000000000119 /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000023 /* ChatView.swift */; };
 		100000000000000000000120 /* Composer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000024 /* Composer.swift */; };
 		100000000000000000000121 /* MessageBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000025 /* MessageBubble.swift */; };
@@ -63,7 +66,7 @@
 		100000000000000000000159 /* ChatSidebarHeaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000064 /* ChatSidebarHeaderView.swift */; };
 		100000000000000000000160 /* ChatSidebarFooterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000065 /* ChatSidebarFooterView.swift */; };
 		100000000000000000000161 /* ChatSidebarRows.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000066 /* ChatSidebarRows.swift */; };
-		100000000000000000000162 /* HostedAgentConnectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000067 /* HostedAgentConnectionTests.swift */; };
+		100000000000000000000165 /* HostedAgentConnectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000070 /* HostedAgentConnectionTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -98,6 +101,9 @@
 		100000000000000000000012 /* OOChatIOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OOChatIOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		100000000000000000000013 /* MockHostedAgentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockHostedAgentTests.swift; sourceTree = "<group>"; };
 		100000000000000000000019 /* SwiftDataConversationRepositoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwiftDataConversationRepositoryTests.swift; sourceTree = "<group>"; };
+		100000000000000000000067 /* ViewTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewTestSupport.swift; sourceTree = "<group>"; };
+		100000000000000000000068 /* ChatCardViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatCardViewTests.swift; sourceTree = "<group>"; };
+		100000000000000000000069 /* ComposerToolCallViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerToolCallViewTests.swift; sourceTree = "<group>"; };
 		100000000000000000000014 /* OOChatIOSTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OOChatIOSTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		100000000000000000000023 /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
 		100000000000000000000024 /* Composer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Composer.swift; sourceTree = "<group>"; };
@@ -136,7 +142,7 @@
 		100000000000000000000064 /* ChatSidebarHeaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSidebarHeaderView.swift; sourceTree = "<group>"; };
 		100000000000000000000065 /* ChatSidebarFooterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSidebarFooterView.swift; sourceTree = "<group>"; };
 		100000000000000000000066 /* ChatSidebarRows.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSidebarRows.swift; sourceTree = "<group>"; };
-		100000000000000000000067 /* HostedAgentConnectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostedAgentConnectionTests.swift; sourceTree = "<group>"; };
+		100000000000000000000070 /* HostedAgentConnectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostedAgentConnectionTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -360,10 +366,13 @@
 				100000000000000000000038 /* MarkdownCodeBlockLanguageTests.swift */,
 				100000000000000000000035 /* AgentQRCodePayloadTests.swift */,
 				100000000000000000000031 /* AgentsFeatureTests.swift */,
+				100000000000000000000068 /* ChatCardViewTests.swift */,
+				100000000000000000000069 /* ComposerToolCallViewTests.swift */,
 				100000000000000000000013 /* MockHostedAgentTests.swift */,
 				100000000000000000000034 /* NetworkRecoveryTests.swift */,
 				100000000000000000000019 /* SwiftDataConversationRepositoryTests.swift */,
-				100000000000000000000067 /* HostedAgentConnectionTests.swift */,
+				100000000000000000000067 /* ViewTestSupport.swift */,
+				100000000000000000000070 /* HostedAgentConnectionTests.swift */,
 			);
 			path = OOChatIOSTests;
 			sourceTree = "<group>";
@@ -550,10 +559,13 @@
 				100000000000000000000134 /* MarkdownCodeBlockLanguageTests.swift in Sources */,
 				100000000000000000000131 /* AgentQRCodePayloadTests.swift in Sources */,
 				100000000000000000000127 /* AgentsFeatureTests.swift in Sources */,
+				100000000000000000000163 /* ChatCardViewTests.swift in Sources */,
+				100000000000000000000164 /* ComposerToolCallViewTests.swift in Sources */,
 				100000000000000000000110 /* MockHostedAgentTests.swift in Sources */,
 				100000000000000000000130 /* NetworkRecoveryTests.swift in Sources */,
 				100000000000000000000115 /* SwiftDataConversationRepositoryTests.swift in Sources */,
-				100000000000000000000162 /* HostedAgentConnectionTests.swift in Sources */,
+				100000000000000000000162 /* ViewTestSupport.swift in Sources */,
+				100000000000000000000165 /* HostedAgentConnectionTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
