@@ -88,6 +88,34 @@ enum ViewHost {
         }
     }
 
+    static func waitForElement(
+        identifier: String? = nil,
+        labelContains: String? = nil,
+        valueContains: String? = nil,
+        in window: UIWindow,
+        timeout: TimeInterval = 1.0
+    ) -> NSObject? {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if let match = element(
+                identifier: identifier,
+                labelContains: labelContains,
+                valueContains: valueContains,
+                in: window
+            ) {
+                return match
+            }
+            pump(0.05)
+        } while Date() < deadline
+
+        return element(
+            identifier: identifier,
+            labelContains: labelContains,
+            valueContains: valueContains,
+            in: window
+        )
+    }
+
     @discardableResult
     static func activate(
         identifier: String? = nil,
@@ -95,6 +123,45 @@ enum ViewHost {
         in window: UIWindow
     ) -> Bool {
         guard let match = element(identifier: identifier, labelContains: labelContains, in: window) else {
+            return false
+        }
+        let activated = match.accessibilityActivate()
+        pump()
+        return activated
+    }
+
+    @discardableResult
+    static func enterText(_ text: String, intoTextInput labelContains: String, in window: UIWindow) -> Bool {
+        let inputs = textInputs(in: window)
+        let input = inputs.first(where: { textInputLabel($0).contains(labelContains) })
+            ?? (inputs.count == 1 ? inputs[0] : nil)
+        guard let input else {
+            return false
+        }
+
+        input.becomeFirstResponder()
+        if let field = input as? UITextField {
+            field.text = ""
+            field.sendActions(for: .editingChanged)
+            field.insertText(text)
+            field.sendActions(for: .editingChanged)
+        } else if let textView = input as? UITextView {
+            textView.text = ""
+            textView.delegate?.textViewDidChange?(textView)
+            textView.insertText(text)
+            textView.delegate?.textViewDidChange?(textView)
+            NotificationCenter.default.post(name: UITextView.textDidChangeNotification, object: textView)
+        }
+        pump(0.1)
+        return true
+    }
+
+    @discardableResult
+    static func activateButton(labelContains: String, in window: UIWindow) -> Bool {
+        guard let match = accessibilityElements(in: window).first(where: { element in
+            element.accessibilityLabel?.contains(labelContains) == true &&
+                element.accessibilityTraits.contains(.button)
+        }) else {
             return false
         }
         let activated = match.accessibilityActivate()
@@ -111,6 +178,35 @@ enum ViewHost {
             return nil
         }
         return element.value(forKey: "accessibilityIdentifier") as? String
+    }
+
+    private static func textInputs(in window: UIWindow) -> [UIView] {
+        allViews(in: window).filter { $0 is UITextField || $0 is UITextView }
+    }
+
+    private static func allViews(in root: UIView) -> [UIView] {
+        var found: [UIView] = []
+        var queue: [UIView] = [root]
+        while !queue.isEmpty {
+            let view = queue.removeFirst()
+            found.append(view)
+            queue.append(contentsOf: view.subviews)
+        }
+        return found
+    }
+
+    private static func textInputLabel(_ view: UIView) -> String {
+        if let field = view as? UITextField {
+            return [field.accessibilityLabel, field.placeholder]
+                .compactMap { $0 }
+                .joined(separator: " ")
+        }
+        if let textView = view as? UITextView {
+            return [textView.accessibilityLabel, textView.accessibilityValue]
+                .compactMap { $0 }
+                .joined(separator: " ")
+        }
+        return view.accessibilityLabel ?? ""
     }
 }
 

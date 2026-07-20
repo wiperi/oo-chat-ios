@@ -10,16 +10,26 @@ struct ChatShellView: View {
     @State private var dragOffset: CGFloat = 0
     @State private var activeContent: SidebarContent = .chat
 
-    init(viewModel: ChatViewModel) {
+    init(
+        viewModel: ChatViewModel,
+        startsSidebarOpen: Bool = false,
+        startsInSettings: Bool = false
+    ) {
         self.viewModel = viewModel
+        _isSidebarOpen = State(initialValue: startsSidebarOpen)
+        _activeContent = State(initialValue: startsInSettings ? .settings : .chat)
     }
 
     var body: some View {
         GeometryReader { proxy in
             let drawerWidth = min(proxy.size.width * SidebarShellMetrics.drawerWidthRatio, SidebarShellMetrics.maxDrawerWidth)
             let openOffset = min(drawerWidth, proxy.size.width - SidebarShellMetrics.visibleChatWidth)
-            let contentOffset = contentOffset(openOffset: openOffset)
-            let progress = sidebarProgress(openOffset: openOffset)
+            let contentOffset = SidebarShellLayout.contentOffset(
+                isSidebarOpen: isSidebarOpen,
+                dragOffset: dragOffset,
+                openOffset: openOffset
+            )
+            let progress = SidebarShellLayout.sidebarProgress(contentOffset: contentOffset, openOffset: openOffset)
             let cornerRadius = SidebarShellMetrics.cornerRadius * progress
 
             ZStack(alignment: .leading) {
@@ -158,26 +168,6 @@ struct ChatShellView: View {
         }
     }
 
-    private func contentOffset(openOffset: CGFloat) -> CGFloat {
-        let baseOffset = isSidebarOpen ? openOffset : CGFloat.zero
-        let rawOffset = baseOffset + dragOffset
-
-        if rawOffset < 0 {
-            return -rubberBand(-rawOffset, dimension: openOffset)
-        }
-        if rawOffset > openOffset {
-            return openOffset + rubberBand(rawOffset - openOffset, dimension: openOffset)
-        }
-        return rawOffset
-    }
-
-    private func sidebarProgress(openOffset: CGFloat) -> CGFloat {
-        guard openOffset > 0 else {
-            return 0
-        }
-        return min(1, max(0, contentOffset(openOffset: openOffset) / openOffset))
-    }
-
     private var canOpenSidebar: Bool {
         true
     }
@@ -250,7 +240,11 @@ struct ChatShellView: View {
         openOffset: CGFloat,
         shouldOpen: Bool
     ) -> Animation? {
-        let currentOffset = contentOffset(openOffset: openOffset)
+        let currentOffset = SidebarShellLayout.contentOffset(
+            isSidebarOpen: isSidebarOpen,
+            dragOffset: dragOffset,
+            openOffset: openOffset
+        )
         let targetOffset = shouldOpen ? openOffset : 0
         let remainingDistance = targetOffset - currentOffset
         guard abs(remainingDistance) > 1 else {
@@ -268,14 +262,6 @@ struct ChatShellView: View {
                 )
             )
         )
-    }
-
-    private func rubberBand(_ overshoot: CGFloat, dimension: CGFloat) -> CGFloat {
-        guard dimension > 0 else {
-            return 0
-        }
-        let constant = SidebarShellMetrics.rubberBandConstant
-        return (overshoot * dimension * constant) / (dimension + (constant * overshoot))
     }
 
     private func contentMask(cornerRadius: CGFloat) -> UnevenRoundedRectangle {
@@ -309,6 +295,36 @@ struct ChatShellView: View {
 private enum SidebarContent {
     case chat
     case settings
+}
+
+enum SidebarShellLayout {
+    static func contentOffset(isSidebarOpen: Bool, dragOffset: CGFloat, openOffset: CGFloat) -> CGFloat {
+        let baseOffset = isSidebarOpen ? openOffset : CGFloat.zero
+        let rawOffset = baseOffset + dragOffset
+
+        if rawOffset < 0 {
+            return -rubberBand(-rawOffset, dimension: openOffset)
+        }
+        if rawOffset > openOffset {
+            return openOffset + rubberBand(rawOffset - openOffset, dimension: openOffset)
+        }
+        return rawOffset
+    }
+
+    static func sidebarProgress(contentOffset: CGFloat, openOffset: CGFloat) -> CGFloat {
+        guard openOffset > 0 else {
+            return 0
+        }
+        return min(1, max(0, contentOffset / openOffset))
+    }
+
+    static func rubberBand(_ overshoot: CGFloat, dimension: CGFloat) -> CGFloat {
+        guard dimension > 0 else {
+            return 0
+        }
+        let constant = SidebarShellMetrics.rubberBandConstant
+        return (overshoot * dimension * constant) / (dimension + (constant * overshoot))
+    }
 }
 
 // Sidebar metrics and constants.

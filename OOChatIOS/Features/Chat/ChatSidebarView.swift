@@ -202,7 +202,7 @@ struct ChatSidebarView: View {
     }
 
     private var searchQuery: String {
-        sidebarSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        ChatSidebarSearch.query(from: sidebarSearchText)
     }
 
     private var isSearching: Bool {
@@ -210,25 +210,14 @@ struct ChatSidebarView: View {
     }
 
     private var visibleAgents: [AgentConnection] {
-        guard isSearching else {
-            return viewModel.agents
-        }
-
-        return viewModel.agents.filter { agent in
-            agentMatches(agent, query: searchQuery)
-                || !matchingConversations(for: agent, query: searchQuery).isEmpty
+        ChatSidebarSearch.visibleAgents(agents: viewModel.agents, query: searchQuery) { agent in
+            matchingConversations(for: agent, query: searchQuery)
         }
     }
 
     private var sidebarResultCount: Int {
-        guard isSearching else {
-            return visibleAgents.count
-        }
-
-        return visibleAgents.reduce(0) { count, agent in
-            count
-                + (agentMatches(agent, query: searchQuery) ? 1 : 0)
-                + matchingConversations(for: agent, query: searchQuery).count
+        ChatSidebarSearch.resultCount(visibleAgents: visibleAgents, query: searchQuery) { agent in
+            matchingConversations(for: agent, query: searchQuery)
         }
     }
 
@@ -300,11 +289,6 @@ struct ChatSidebarView: View {
 
     private func matchingConversations(for agent: AgentConnection, query: String) -> [Conversation] {
         viewModel.searchConversations(query, for: agent)
-    }
-
-    private func agentMatches(_ agent: AgentConnection, query: String) -> Bool {
-        agent.name.localizedStandardContains(query)
-            || agent.address.localizedStandardContains(query)
     }
 
     private func toggleSidebarSearch() {
@@ -520,5 +504,47 @@ struct ChatSidebarView: View {
                 }
             }
         )
+    }
+}
+
+enum ChatSidebarSearch {
+    static func query(from text: String) -> String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func visibleAgents(
+        agents: [AgentConnection],
+        query: String,
+        matchingConversations: (AgentConnection) -> [Conversation]
+    ) -> [AgentConnection] {
+        guard !query.isEmpty else {
+            return agents
+        }
+
+        return agents.filter { agent in
+            agentMatches(agent, query: query)
+                || !matchingConversations(agent).isEmpty
+        }
+    }
+
+    static func resultCount(
+        visibleAgents: [AgentConnection],
+        query: String,
+        matchingConversations: (AgentConnection) -> [Conversation]
+    ) -> Int {
+        guard !query.isEmpty else {
+            return visibleAgents.count
+        }
+
+        return visibleAgents.reduce(0) { count, agent in
+            count
+                + (agentMatches(agent, query: query) ? 1 : 0)
+                + matchingConversations(agent).count
+        }
+    }
+
+    static func agentMatches(_ agent: AgentConnection, query: String) -> Bool {
+        agent.name.localizedStandardContains(query)
+            || agent.address.localizedStandardContains(query)
     }
 }
