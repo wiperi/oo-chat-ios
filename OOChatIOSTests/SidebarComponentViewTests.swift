@@ -94,9 +94,7 @@ final class SidebarRowViewTests: XCTestCase {
             SidebarConversationRow(
                 conversation: conversation,
                 isSelected: true,
-                hasPendingInteraction: false,
-                isProcessing: false,
-                hasFailedDelivery: false,
+                activityState: nil,
                 onSelect: { selected = true },
                 onRename: {},
                 onDelete: {}
@@ -117,24 +115,20 @@ final class SidebarRowViewTests: XCTestCase {
             SidebarConversationRow(
                 conversation: conversation,
                 isSelected: false,
-                hasPendingInteraction: true,
-                isProcessing: false,
-                hasFailedDelivery: false,
+                activityState: .actionRequired,
                 onSelect: {},
                 onRename: {},
                 onDelete: {}
             )
             .padding()
         )
-        XCTAssertNotNil(ViewHost.element(labelContains: "Approval required", in: pendingWindow))
+        XCTAssertNotNil(ViewHost.element(labelContains: "Action required", in: pendingWindow))
 
         let processingWindow = ViewHost.host(
             SidebarConversationRow(
                 conversation: conversation,
                 isSelected: false,
-                hasPendingInteraction: false,
-                isProcessing: true,
-                hasFailedDelivery: false,
+                activityState: .working,
                 onSelect: {},
                 onRename: {},
                 onDelete: {}
@@ -147,9 +141,7 @@ final class SidebarRowViewTests: XCTestCase {
             SidebarConversationRow(
                 conversation: conversation,
                 isSelected: false,
-                hasPendingInteraction: false,
-                isProcessing: false,
-                hasFailedDelivery: true,
+                activityState: .failedDelivery,
                 onSelect: {},
                 onRename: {},
                 onDelete: {}
@@ -157,6 +149,19 @@ final class SidebarRowViewTests: XCTestCase {
             .padding()
         )
         XCTAssertNotNil(ViewHost.element(labelContains: "Message failed to send", in: failedWindow))
+
+        let completedWindow = ViewHost.host(
+            SidebarConversationRow(
+                conversation: conversation,
+                isSelected: false,
+                activityState: .completedUnread,
+                onSelect: {},
+                onRename: {},
+                onDelete: {}
+            )
+            .padding()
+        )
+        XCTAssertNotNil(ViewHost.element(labelContains: "Background task completed", in: completedWindow))
     }
 }
 
