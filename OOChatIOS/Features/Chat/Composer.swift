@@ -20,6 +20,8 @@ struct Composer: View {
         }
         .padding(.horizontal, ComposerMetrics.outerHorizontalPadding)
         .padding(.bottom, ComposerMetrics.outerBottomPadding)
+        .frame(maxWidth: ChatReadableWidth.maximum)
+        .frame(maxWidth: .infinity)
         .onChange(of: viewModel.prompt) {
             viewModel.promptDidChange()
         }
@@ -185,8 +187,10 @@ struct Composer: View {
         .buttonStyle(AppPressButtonStyle(pressedScale: 0.96, pressedOpacity: 0.88))
         .disabled(viewModel.activeConversation == nil || viewModel.isProcessing)
         .accessibilityLabel("Chat mode: \(viewModel.activeMode.label)")
-        .sheet(isPresented: $showModeMenu) {
+        .popover(isPresented: $showModeMenu) {
             modeSheet
+                .frame(idealWidth: ComposerMetrics.modePopoverWidth)
+                .presentationCompactAdaptation(.sheet)
                 .presentationDetents([.height(sheetHeight)])
                 .presentationDragIndicator(.visible)
         }
@@ -310,6 +314,7 @@ private enum ComposerMetrics {
     static let modeHorizontalPadding: CGFloat = 10
     static let modeVerticalPadding: CGFloat = 5
     static let modeStrokeOpacity: Double = 0.08
+    static let modePopoverWidth: CGFloat = 340
     static let sendButtonSize: CGFloat = 40
     static let skillPickerMaxHeight: CGFloat = 260
     static let skillPickerCornerRadius: CGFloat = 24

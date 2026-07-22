@@ -3,15 +3,18 @@ import SwiftUI
 struct ChatView: View {
     @ObservedObject var viewModel: ChatViewModel
     let showsComposer: Bool
+    let showsSidebarButton: Bool
     let onOpenSidebar: () -> Void
 
     init(
         viewModel: ChatViewModel,
         showsComposer: Bool = true,
+        showsSidebarButton: Bool = true,
         onOpenSidebar: @escaping () -> Void = {}
     ) {
         self.viewModel = viewModel
         self.showsComposer = showsComposer
+        self.showsSidebarButton = showsSidebarButton
         self.onOpenSidebar = onOpenSidebar
     }
 
@@ -20,6 +23,7 @@ struct ChatView: View {
             ChatScreen(
                 viewModel: viewModel,
                 showsComposer: showsComposer,
+                showsSidebarButton: showsSidebarButton,
                 onOpenSidebar: onOpenSidebar
             )
         }
@@ -29,6 +33,7 @@ struct ChatView: View {
 struct ChatScreen: View {
     @ObservedObject var viewModel: ChatViewModel
     let showsComposer: Bool
+    var showsSidebarButton: Bool = true
     let onOpenSidebar: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var bottomAnchorY: CGFloat = 0
@@ -112,6 +117,8 @@ struct ChatScreen: View {
                         .transition(conversationTransition)
                         .padding(.horizontal)
                         .padding(.vertical, 16)
+                        .frame(maxWidth: ChatReadableWidth.maximum)
+                        .frame(maxWidth: .infinity)
                         .animation(
                             AppMotion.contentArrival(reduceMotion: reduceMotion),
                             value: conversation.messages.map(\.id)
@@ -195,21 +202,23 @@ struct ChatScreen: View {
                 )
             }
 
-            ToolbarItem(placement: .topBarLeading) {
-                Button {
-                    onOpenSidebar()
-                } label: {
-                    Image(systemName: "sidebar.left")
-                        .overlay(alignment: .topTrailing) {
-                            if let state = viewModel.backgroundActivityState {
-                                ConversationStatusDot(state: state)
-                                    .offset(x: 4, y: -3)
-                                    .transition(AppMotion.statusTransition(reduceMotion: reduceMotion))
+            if showsSidebarButton {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        onOpenSidebar()
+                    } label: {
+                        Image(systemName: "sidebar.left")
+                            .overlay(alignment: .topTrailing) {
+                                if let state = viewModel.backgroundActivityState {
+                                    ConversationStatusDot(state: state)
+                                        .offset(x: 4, y: -3)
+                                        .transition(AppMotion.statusTransition(reduceMotion: reduceMotion))
+                                }
                             }
-                        }
-                        .animation(AppMotion.statusChange, value: viewModel.backgroundActivityState)
+                            .animation(AppMotion.statusChange, value: viewModel.backgroundActivityState)
+                    }
+                    .accessibilityLabel(backgroundAttentionLabel)
                 }
-                .accessibilityLabel(backgroundAttentionLabel)
             }
         }
     }
@@ -327,6 +336,13 @@ private struct ChatScrollUpdate: Equatable {
 
 private enum ChatScrollMetrics {
     static let followThreshold: CGFloat = 80
+}
+
+// Caps the message column so text stays at a readable line length on iPad, where the
+// content region is far wider than any phone. Below this width it is inert, so compact
+// layouts keep their existing full-bleed behavior.
+enum ChatReadableWidth {
+    static let maximum: CGFloat = 720
 }
 
 private struct ChatBottomAnchorPreferenceKey: PreferenceKey {
