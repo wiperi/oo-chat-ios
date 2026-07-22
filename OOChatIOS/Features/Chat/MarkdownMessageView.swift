@@ -16,6 +16,11 @@ struct MarkdownMessageView: View {
 
     var body: some View {
         Markdown(content)
+            .markdownTextStyle(\.text) {
+                ForegroundColor(Color(.label))
+                FontSize(16)
+                BackgroundColor(nil)
+            }
             .markdownBlockStyle(\.codeBlock) { configuration in
                 MarkdownCodeBlockView(configuration: configuration)
             }
