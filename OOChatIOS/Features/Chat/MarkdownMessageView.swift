@@ -20,6 +20,11 @@ struct MarkdownMessageView: View {
                 MarkdownCodeBlockView(configuration: configuration)
             }
             .markdownTheme(.gitHub)
+            .markdownTextStyle(\.text) {
+                ForegroundColor(Color(.label))
+                FontSize(16)
+                BackgroundColor(nil)
+            }
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
