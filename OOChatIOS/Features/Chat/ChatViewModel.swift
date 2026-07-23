@@ -20,6 +20,22 @@ final class ChatViewModel: ObservableObject {
             conversationState.updateActiveDraft(prompt)
         }
     }
+    @Published private(set) var pendingImages: [ChatImageAttachment] = [] {
+        didSet {
+            guard let activeConversationID else {
+                return
+            }
+            imageDraftsByConversationID[activeConversationID] = pendingImages
+        }
+    }
+    @Published private(set) var pendingFiles: [ChatFileAttachment] = [] {
+        didSet {
+            guard let activeConversationID else {
+                return
+            }
+            fileDraftsByConversationID[activeConversationID] = pendingFiles
+        }
+    }
 
     var isOffline: Bool {
         recoveryCoordinator.isOffline
@@ -51,6 +67,8 @@ final class ChatViewModel: ObservableObject {
     private var skillChangeCancellable: AnyCancellable?
     private var conversationStateChangeCancellable: AnyCancellable?
     private var persistenceErrorCancellable: AnyCancellable?
+    private var imageDraftsByConversationID: [String: [ChatImageAttachment]] = [:]
+    private var fileDraftsByConversationID: [String: [ChatFileAttachment]] = [:]
 
     var probeInterval: TimeInterval {
         get {
@@ -349,6 +367,7 @@ final class ChatViewModel: ObservableObject {
     func selectAgent(_ agent: AgentConnection) {
         conversationState.selectAgent(agent, currentDraft: prompt)
         prompt = conversationState.activeDraft
+        restorePendingAttachmentDrafts()
         agentAddressDraft = agent.address
         skillCoordinator.loadSkillsIfNeeded(for: agent, isOffline: isOffline)
     }
@@ -356,6 +375,7 @@ final class ChatViewModel: ObservableObject {
     func selectConversation(_ conversation: Conversation) {
         conversationState.selectConversation(conversation, currentDraft: prompt)
         prompt = conversationState.activeDraft
+        restorePendingAttachmentDrafts()
         if let agent = agent(for: conversation) {
             agentAddressDraft = agent.address
             skillCoordinator.loadSkillsIfNeeded(for: agent, isOffline: isOffline)
@@ -372,6 +392,7 @@ final class ChatViewModel: ObservableObject {
     func createConversation(for agent: AgentConnection) -> Conversation {
         let conversation = conversationState.createConversation(for: agent, currentDraft: prompt)
         prompt = conversationState.activeDraft
+        restorePendingAttachmentDrafts()
         recoveryCoordinator.setConnectionState(.disconnected, forConversationID: conversation.id)
         agentAddressDraft = agent.address
         return conversation
@@ -406,6 +427,7 @@ final class ChatViewModel: ObservableObject {
         } else {
             _ = createConversation(for: agent)
         }
+        restorePendingAttachmentDrafts()
         skillCoordinator.loadSkillsIfNeeded(for: agent, isOffline: isOffline)
     }
 
@@ -431,7 +453,10 @@ final class ChatViewModel: ObservableObject {
         cancelPendingInteractions(forConversationID: conversation.id)
         recoveryCoordinator.removeConnectionState(forConversationID: conversation.id)
         conversationState.deleteConversation(conversation, currentDraft: prompt)
+        imageDraftsByConversationID[conversation.id] = nil
+        fileDraftsByConversationID[conversation.id] = nil
         prompt = conversationState.activeDraft
+        restorePendingAttachmentDrafts()
     }
 
     func deleteAgent(_ agent: AgentConnection) {
@@ -441,7 +466,12 @@ final class ChatViewModel: ObservableObject {
             recoveryCoordinator.removeConnectionState(forConversationID: conversationID)
         }
         conversationState.deleteAgent(agent, currentDraft: prompt)
+        for conversationID in deletedConversationIDs {
+            imageDraftsByConversationID[conversationID] = nil
+            fileDraftsByConversationID[conversationID] = nil
+        }
         prompt = conversationState.activeDraft
+        restorePendingAttachmentDrafts()
         agentAddressDraft = activeAgent?.address ?? ""
     }
 
@@ -541,13 +571,17 @@ final class ChatViewModel: ObservableObject {
 
     func sendPrompt() {
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else {
+        let images = pendingImages
+        let files = pendingFiles
+        guard !text.isEmpty || !images.isEmpty || !files.isEmpty else {
             return
         }
         deliveryCoordinator.setDeliveryEnabled(!isOffline)
-        switch deliveryCoordinator.enqueuePrompt(text) {
+        switch deliveryCoordinator.enqueuePrompt(text, images: images, files: files) {
         case .queued:
             prompt = ""
+            pendingImages = []
+            pendingFiles = []
             errorMessage = nil
         case .rejected(let message):
             errorMessage = message
@@ -559,6 +593,116 @@ final class ChatViewModel: ObservableObject {
         if deliveryCoordinator.retryMessage(message) {
             errorMessage = nil
         }
+    }
+
+    @discardableResult
+    func addPendingImage(
+        data: Data,
+        mimeType: String,
+        to conversationID: String? = nil
+    ) -> Bool {
+        guard let targetConversationID = conversationID ?? activeConversationID,
+              conversation(withID: targetConversationID) != nil else {
+            errorMessage = "Start a conversation before adding a photo."
+            return false
+        }
+        var images = targetConversationID == activeConversationID
+            ? pendingImages
+            : imageDraftsByConversationID[targetConversationID] ?? []
+        guard images.count < ChatImageAttachment.maximumCount else {
+            errorMessage = "You can attach up to \(ChatImageAttachment.maximumCount) photos."
+            return false
+        }
+        guard !data.isEmpty else {
+            errorMessage = "That photo could not be loaded."
+            return false
+        }
+        guard data.count <= ChatImageAttachment.maximumByteCount else {
+            errorMessage = "That photo is larger than 10 MB."
+            return false
+        }
+        let normalizedMimeType = mimeType.lowercased()
+        guard normalizedMimeType.hasPrefix("image/") else {
+            errorMessage = "The selected item is not an image."
+            return false
+        }
+
+        images.append(
+            ChatImageAttachment(data: data, mimeType: normalizedMimeType)
+        )
+        if targetConversationID == activeConversationID {
+            pendingImages = images
+        } else {
+            imageDraftsByConversationID[targetConversationID] = images
+        }
+        errorMessage = nil
+        return true
+    }
+
+    func removePendingImage(id: String) {
+        pendingImages.removeAll { $0.id == id }
+    }
+
+    func reportImageImportFailure(_ error: Error) {
+        errorMessage = "Couldn’t load that photo. \(error.localizedDescription)"
+    }
+
+    @discardableResult
+    func addPendingFile(
+        name: String,
+        data: Data,
+        mimeType: String,
+        to conversationID: String? = nil
+    ) -> Bool {
+        guard let targetConversationID = conversationID ?? activeConversationID,
+              conversation(withID: targetConversationID) != nil else {
+            errorMessage = "Start a conversation before adding a file."
+            return false
+        }
+        var files = targetConversationID == activeConversationID
+            ? pendingFiles
+            : fileDraftsByConversationID[targetConversationID] ?? []
+        guard files.count < ChatFileAttachment.maximumCount else {
+            errorMessage = "You can attach up to \(ChatFileAttachment.maximumCount) files."
+            return false
+        }
+        guard !data.isEmpty else {
+            errorMessage = "That file is empty or could not be loaded."
+            return false
+        }
+        guard data.count <= ChatFileAttachment.maximumByteCount else {
+            errorMessage = "That file is larger than 10 MB."
+            return false
+        }
+        let safeName = URL(fileURLWithPath: name).lastPathComponent
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !safeName.isEmpty else {
+            errorMessage = "That file has no valid name."
+            return false
+        }
+
+        files.append(
+            ChatFileAttachment(
+                name: safeName,
+                data: data,
+                mimeType: mimeType.isEmpty ? "application/octet-stream" : mimeType.lowercased()
+            )
+        )
+        if targetConversationID == activeConversationID {
+            pendingFiles = files
+        } else {
+            fileDraftsByConversationID[targetConversationID] = files
+        }
+        errorMessage = nil
+        return true
+    }
+
+    func removePendingFile(id: String) {
+        pendingFiles.removeAll { $0.id == id }
+    }
+
+    func reportFileImportFailure(_ error: Error) {
+        errorMessage = "Couldn’t load that file. \(error.localizedDescription)"
     }
 
     func flushQueuedMessages() async {
@@ -691,6 +835,17 @@ final class ChatViewModel: ObservableObject {
             currentDraft: prompt
         )
         prompt = conversationState.activeDraft
+        restorePendingAttachmentDrafts()
+    }
+
+    private func restorePendingAttachmentDrafts() {
+        guard let activeConversationID else {
+            pendingImages = []
+            pendingFiles = []
+            return
+        }
+        pendingImages = imageDraftsByConversationID[activeConversationID] ?? []
+        pendingFiles = fileDraftsByConversationID[activeConversationID] ?? []
     }
 
 #if DEBUG

@@ -67,6 +67,8 @@ final class MockAgentTransport: HostedAgentTransport {
 
     private(set) var connectedAddresses: [String] = []
     private(set) var sentPrompts: [String] = []
+    private(set) var sentImages: [[String]] = []
+    private(set) var sentFiles: [[HostedAgentFilePayload]] = []
     private(set) var approvalDecisions: [ApprovalDecision] = []
     private(set) var ulwDecisions: [UlwCheckpointDecision] = []
     private(set) var planReviewDecisions: [PlanReviewDecision] = []
@@ -111,10 +113,14 @@ final class MockAgentTransport: HostedAgentTransport {
         agentAddress: String,
         conversation: Conversation,
         prompt: String,
+        images: [String] = [],
+        files: [HostedAgentFilePayload] = [],
         onEvent: (@MainActor (HostedAgentEvent) -> Void)?,
         onInteraction: (@MainActor (HostedAgentInteraction) async -> HostedAgentInteractionDecision)?
     ) async throws -> HostedAgentResult {
         sentPrompts.append(prompt)
+        sentImages.append(images)
+        sentFiles.append(files)
         let behavior = sendBehaviorsByPrompt[prompt] ?? sendBehavior
         let output: String
         switch behavior {

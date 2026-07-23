@@ -145,6 +145,63 @@ final class AgentsFeatureTests: XCTestCase {
         XCTAssertEqual(view.prompt, "unfinished draft")
     }
 
+    func testPhotoDraftStaysWithConversationWhereSelectionStarted() {
+        let agent = makeAgent(id: "agent1", address: "0xaaa", updatedAt: seconds(1000))
+        let first = makeConversation(id: "first", agent: agent, updatedAt: seconds(2000))
+        let second = makeConversation(id: "second", agent: agent, updatedAt: seconds(1000))
+        let repo = SpyConversationRepository(
+            snapshot: ChatSnapshot(
+                agents: [agent],
+                conversations: [first, second],
+                activeAgentID: agent.id,
+                activeConversationID: first.id
+            )
+        )
+        let view = ChatViewModel(store: repo)
+
+        view.selectConversation(second)
+        XCTAssertTrue(
+            view.addPendingImage(
+                data: Data([0x01]),
+                mimeType: "image/png",
+                to: first.id
+            )
+        )
+        XCTAssertTrue(view.pendingImages.isEmpty)
+
+        view.selectConversation(first)
+        XCTAssertEqual(view.pendingImages.map(\.data), [Data([0x01])])
+    }
+
+    func testFileDraftStaysWithConversationWhereSelectionStarted() {
+        let agent = makeAgent(id: "agent1", address: "0xaaa", updatedAt: seconds(1000))
+        let first = makeConversation(id: "first", agent: agent, updatedAt: seconds(2000))
+        let second = makeConversation(id: "second", agent: agent, updatedAt: seconds(1000))
+        let repo = SpyConversationRepository(
+            snapshot: ChatSnapshot(
+                agents: [agent],
+                conversations: [first, second],
+                activeAgentID: agent.id,
+                activeConversationID: first.id
+            )
+        )
+        let view = ChatViewModel(store: repo)
+
+        view.selectConversation(second)
+        XCTAssertTrue(
+            view.addPendingFile(
+                name: "notes.txt",
+                data: Data("hello".utf8),
+                mimeType: "text/plain",
+                to: first.id
+            )
+        )
+        XCTAssertTrue(view.pendingFiles.isEmpty)
+
+        view.selectConversation(first)
+        XCTAssertEqual(view.pendingFiles.map(\.name), ["notes.txt"])
+    }
+
     // Mock delete current conversation delete, the chat also deletes.
     func testDeleteActiveAgentRemovesConAndSelectRemainAgent() {
         let deletedAgent = makeAgent(id: "agent1", address: "0xaaa", updatedAt: seconds(2000))

@@ -69,7 +69,9 @@ final class HostedAgentClient: HostedAgentTransport {
         inputID: String,
         prompt: String,
         mode: ChatMode,
-        timestamp: Double
+        timestamp: Double,
+        images: [String] = [],
+        files: [HostedAgentFilePayload] = []
     ) -> [String: JSONValue] {
         [
             "action": .string("session.input"),
@@ -82,8 +84,8 @@ final class HostedAgentClient: HostedAgentTransport {
             "attachments_sha256": .string(
                 canonicalSHA256(
                     .object([
-                        "images": .array([]),
-                        "files": .array([]),
+                        "images": .array(images.map(JSONValue.string)),
+                        "files": .array(files.map(\.jsonValue)),
                     ])
                 )
             ),
@@ -117,6 +119,8 @@ final class HostedAgentClient: HostedAgentTransport {
         agentAddress: String,
         conversation: Conversation,
         prompt: String,
+        images: [String] = [],
+        files: [HostedAgentFilePayload] = [],
         onEvent: (@MainActor (HostedAgentEvent) -> Void)?,
         onInteraction: (@MainActor (HostedAgentInteraction) async -> HostedAgentInteractionDecision)?
     ) async throws -> HostedAgentResult {
@@ -127,6 +131,8 @@ final class HostedAgentClient: HostedAgentTransport {
             agentAddress: agentAddress,
             conversation: conversation,
             prompt: prompt,
+            images: images,
+            files: files,
             onEvent: onEvent,
             onInteraction: onInteraction
         )

@@ -131,6 +131,8 @@ actor HostedAgentConnectionPool {
         agentAddress: String,
         conversation: Conversation,
         prompt: String,
+        images: [String] = [],
+        files: [HostedAgentFilePayload] = [],
         onEvent: (@MainActor (HostedAgentEvent) -> Void)?,
         onInteraction: (@MainActor (HostedAgentInteraction) async -> HostedAgentInteractionDecision)?
     ) async throws -> HostedAgentResult {
@@ -139,6 +141,8 @@ actor HostedAgentConnectionPool {
             let result = try await lease.connection.sendPrompt(
                 conversation: conversation,
                 prompt: prompt,
+                images: images,
+                files: files,
                 onEvent: onEvent,
                 onInteraction: onInteraction
             )

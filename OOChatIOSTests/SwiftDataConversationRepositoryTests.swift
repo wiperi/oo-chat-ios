@@ -599,6 +599,144 @@ final class SwiftDataConversationRepositoryTests: XCTestCase {
         XCTAssertEqual(loaded, tool)
     }
 
+    func testImageAttachmentsRoundTripWithMessage() throws {
+        let repository = try makeRepository()
+        var conversation = makeConversation(
+            agentID: "a1",
+            address: "0xaaa",
+            title: "photo",
+            updatedAt: seconds(1000)
+        )
+        let image = ChatImageAttachment(
+            id: "image-1",
+            data: Data([0x00, 0x01, 0x02, 0xff]),
+            mimeType: "image/png"
+        )
+        conversation.messages = [
+            ChatMessage(id: "m1", role: .user, content: "Look", images: [image]),
+        ]
+
+        repository.upsertConversation(conversation)
+        let loaded = repository.load().conversations.first?.messages.first
+
+        XCTAssertEqual(loaded?.images, [image])
+        XCTAssertEqual(loaded?.images.first?.dataURL, "data:image/png;base64,AAEC/w==")
+    }
+
+    func testFileAttachmentsRoundTripWithMessage() throws {
+        let repository = try makeRepository()
+        var conversation = makeConversation(
+            agentID: "a1",
+            address: "0xaaa",
+            title: "file",
+            updatedAt: seconds(1000)
+        )
+        let file = ChatFileAttachment(
+            id: "file-1",
+            name: "notes.txt",
+            data: Data("hello".utf8),
+            mimeType: "text/plain"
+        )
+        conversation.messages = [
+            ChatMessage(id: "m1", role: .user, content: "Read this", files: [file]),
+        ]
+
+        repository.upsertConversation(conversation)
+        let loaded = repository.load().conversations.first?.messages.first
+
+        XCTAssertEqual(loaded?.files, [file])
+        XCTAssertEqual(loaded?.files.first?.dataURL, "data:text/plain;base64,aGVsbG8=")
+    }
+
+    func testV1StoreMigratesToV3WithEmptyAttachments() throws {
+        let storeURL = try makeScratchStoreURL()
+        defer { try? FileManager.default.removeItem(at: storeURL.deletingLastPathComponent()) }
+
+        do {
+            let schema = Schema(versionedSchema: StoredModelsSchemaV1.self)
+            let container = try ModelContainer(
+                for: schema,
+                configurations: ModelConfiguration(url: storeURL)
+            )
+            let context = ModelContext(container)
+            context.insert(StoredModelsSchemaV1.StoredConversation(
+                id: "v1-conversation",
+                title: "Before photos",
+                agentID: nil,
+                agentAddress: "0xaaa",
+                modeRaw: "safe",
+                createdAt: seconds(1000),
+                updatedAt: seconds(1001),
+                serverSessionData: nil,
+                messages: [
+                    StoredModelsSchemaV1.StoredMessage(
+                        messageID: "v1-message",
+                        conversationID: "v1-conversation",
+                        roleRaw: "user",
+                        content: "hello",
+                        createdAt: seconds(1001)
+                    ),
+                ]
+            ))
+            try context.save()
+        }
+
+        let repository = try SwiftDataConversationRepository(storeURL: storeURL, defaults: defaults)
+        let message = repository.load().conversations.first?.messages.first
+
+        XCTAssertEqual(message?.id, "v1-message")
+        XCTAssertEqual(message?.content, "hello")
+        XCTAssertEqual(message?.images, [])
+        XCTAssertEqual(message?.files, [])
+    }
+
+    func testV2StoreMigratesToV3PreservingImagesWithEmptyFiles() throws {
+        let storeURL = try makeScratchStoreURL()
+        defer { try? FileManager.default.removeItem(at: storeURL.deletingLastPathComponent()) }
+        let image = ChatImageAttachment(
+            id: "image-1",
+            data: Data([0x00, 0x01]),
+            mimeType: "image/png"
+        )
+
+        do {
+            let schema = Schema(versionedSchema: StoredModelsSchemaV2.self)
+            let container = try ModelContainer(
+                for: schema,
+                configurations: ModelConfiguration(url: storeURL)
+            )
+            let context = ModelContext(container)
+            context.insert(StoredModelsSchemaV2.StoredConversation(
+                id: "v2-conversation",
+                title: "Before files",
+                agentID: nil,
+                agentAddress: "0xaaa",
+                modeRaw: "safe",
+                createdAt: seconds(1000),
+                updatedAt: seconds(1001),
+                serverSessionData: nil,
+                messages: [
+                    StoredModelsSchemaV2.StoredMessage(
+                        messageID: "v2-message",
+                        conversationID: "v2-conversation",
+                        roleRaw: "user",
+                        content: "look",
+                        createdAt: seconds(1001),
+                        imageAttachmentsData: try JSONEncoder().encode([image])
+                    ),
+                ]
+            ))
+            try context.save()
+        }
+
+        let repository = try SwiftDataConversationRepository(storeURL: storeURL, defaults: defaults)
+        let message = repository.load().conversations.first?.messages.first
+
+        XCTAssertEqual(message?.id, "v2-message")
+        XCTAssertEqual(message?.images, [image])
+        XCTAssertEqual(message?.files, [])
+    }
+
     func testMessagesWithSameIDInDifferentConversationsBothSurvive() throws {
         let repository = try makeRepository()
         // Server-chosen tool IDs are not globally unique across conversations.

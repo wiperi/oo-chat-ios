@@ -413,6 +413,18 @@ enum HostedAgentSessionState {
 
 /// Wire-level operations the view model needs from the hosted-agent client,
 /// as a protocol so tests can substitute a scripted transport.
+struct HostedAgentFilePayload: Codable, Equatable {
+    let name: String
+    let data: String
+
+    var jsonValue: JSONValue {
+        .object([
+            "name": .string(name),
+            "data": .string(data),
+        ])
+    }
+}
+
 protocol HostedAgentTransport {
     var onConnectionStateChange: (@MainActor (String, ConnectionState) -> Void)? { get set }
 
@@ -422,6 +434,8 @@ protocol HostedAgentTransport {
         agentAddress: String,
         conversation: Conversation,
         prompt: String,
+        images: [String],
+        files: [HostedAgentFilePayload],
         onEvent: (@MainActor (HostedAgentEvent) -> Void)?,
         onInteraction: (@MainActor (HostedAgentInteraction) async -> HostedAgentInteractionDecision)?
     ) async throws -> HostedAgentResult

@@ -52,7 +52,11 @@ final class MessageDeliveryCoordinator: ObservableObject {
         return deliveryTasksByConversationID[conversationID]
     }
 
-    func enqueuePrompt(_ text: String) -> MessageEnqueueResult {
+    func enqueuePrompt(
+        _ text: String,
+        images: [ChatImageAttachment] = [],
+        files: [ChatFileAttachment] = []
+    ) -> MessageEnqueueResult {
         guard var conversation = conversationState.activeConversation,
               let agent = conversationState.agent(for: conversation),
               HostedAgentClient.isHostedAgentAddress(agent.address) else {
@@ -62,10 +66,20 @@ final class MessageDeliveryCoordinator: ObservableObject {
         conversation.agentID = agent.id
         conversation.agentAddress = agent.address
         if conversation.title == Conversation.defaultTitle {
-            conversation.title = Self.title(from: text)
+            conversation.title = Self.title(
+                from: text,
+                imageCount: images.count,
+                fileCount: files.count
+            )
         }
         conversation.messages.append(
-            ChatMessage(role: .user, content: text, deliveryState: .queued)
+            ChatMessage(
+                role: .user,
+                content: text,
+                deliveryState: .queued,
+                images: images,
+                files: files
+            )
         )
         conversationState.clearCompletedUnread(conversationID: conversation.id)
         conversationState.upsert(conversation)
@@ -208,6 +222,10 @@ final class MessageDeliveryCoordinator: ObservableObject {
                     agentAddress: agent.address,
                     conversation: pending,
                     prompt: message.content,
+                    images: message.images.map(\.dataURL),
+                    files: message.files.map {
+                        HostedAgentFilePayload(name: $0.name, data: $0.dataURL)
+                    },
                     onEvent: { [weak self] event in
                         self?.apply(event, toConversationID: conversationID)
                     },
@@ -362,7 +380,16 @@ final class MessageDeliveryCoordinator: ObservableObject {
         conversationState.upsert(conversation, persistence: persistence)
     }
 
-    private static func title(from text: String) -> String {
+    private static func title(from text: String, imageCount: Int, fileCount: Int) -> String {
+        guard !text.isEmpty else {
+            if imageCount > 0, fileCount > 0 {
+                return "Attachments"
+            }
+            if imageCount > 0 {
+                return imageCount == 1 ? "Photo" : "\(imageCount) Photos"
+            }
+            return fileCount == 1 ? "File" : "\(fileCount) Files"
+        }
         if text.count > 38 {
             return String(text.prefix(35)) + "..."
         }

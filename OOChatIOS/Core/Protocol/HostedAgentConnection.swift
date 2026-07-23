@@ -112,6 +112,8 @@ actor HostedAgentConnection {
     func sendPrompt(
         conversation: Conversation,
         prompt: String,
+        images: [String] = [],
+        files: [HostedAgentFilePayload] = [],
         onEvent: (@MainActor (HostedAgentEvent) -> Void)?,
         onInteraction: (@MainActor (HostedAgentInteraction) async -> HostedAgentInteractionDecision)?
     ) async throws -> HostedAgentResult {
@@ -136,7 +138,13 @@ actor HostedAgentConnection {
                     return
                 }
                 Task { [weak self] in
-                    await self?.transmitPrompt(prompt, conversation: conversation, promptID: promptID)
+                    await self?.transmitPrompt(
+                        prompt,
+                        images: images,
+                        files: files,
+                        conversation: conversation,
+                        promptID: promptID
+                    )
                 }
             }
         } onCancel: {
@@ -251,7 +259,13 @@ actor HostedAgentConnection {
             && Date().timeIntervalSince(lastNetworkActivityAt) > livenessTimeout
     }
 
-    private func transmitPrompt(_ prompt: String, conversation: Conversation, promptID: UUID) async {
+    private func transmitPrompt(
+        _ prompt: String,
+        images: [String],
+        files: [HostedAgentFilePayload],
+        conversation: Conversation,
+        promptID: UUID
+    ) async {
         let generation = socketGeneration
         guard pendingPrompt?.id == promptID else {
             return
@@ -263,7 +277,12 @@ actor HostedAgentConnection {
             return
         }
         do {
-            let inputFrame = try buildInputFrame(prompt: prompt, conversation: conversation)
+            let inputFrame = try buildInputFrame(
+                prompt: prompt,
+                images: images,
+                files: files,
+                conversation: conversation
+            )
             try await send(inputFrame, over: socket)
         } catch {
             failConnection(error, generation: generation)
@@ -586,7 +605,12 @@ actor HostedAgentConnection {
         )
     }
 
-    private func buildInputFrame(prompt: String, conversation: Conversation) throws -> [String: JSONValue] {
+    private func buildInputFrame(
+        prompt: String,
+        images: [String],
+        files: [HostedAgentFilePayload],
+        conversation: Conversation
+    ) throws -> [String: JSONValue] {
         let timestamp = Double(Int(Date().timeIntervalSince1970))
         let inputID = UUID().uuidString
         let payload = HostedAgentClient.inputSignaturePayload(
@@ -595,7 +619,9 @@ actor HostedAgentConnection {
             inputID: inputID,
             prompt: prompt,
             mode: conversation.mode,
-            timestamp: timestamp
+            timestamp: timestamp,
+            images: images,
+            files: files
         )
         var frame = try identityStore.signedEnvelope(type: "INPUT", payload: payload)
         frame["to"] = .string(key.agentAddress)
@@ -603,6 +629,12 @@ actor HostedAgentConnection {
         frame["input_id"] = .string(inputID)
         frame["prompt"] = .string(prompt)
         frame["mode"] = .string(conversation.mode.rawValue)
+        if !images.isEmpty {
+            frame["images"] = .array(images.map(JSONValue.string))
+        }
+        if !files.isEmpty {
+            frame["files"] = .array(files.map(\.jsonValue))
+        }
         return frame
     }
 

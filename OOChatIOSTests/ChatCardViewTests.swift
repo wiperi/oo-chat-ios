@@ -65,6 +65,47 @@ final class MessageBubbleTests: XCTestCase {
         XCTAssertNotNil(ViewHost.element(labelContains: "Queued", in: window))
     }
 
+    func testPhotoThumbnailOpensFullScreenPreview() {
+        let png = Data(base64Encoded:
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+        )!
+        let photoMessage = ChatMessage(
+            id: "photo-message",
+            role: .user,
+            content: "",
+            images: [ChatImageAttachment(id: "photo-1", data: png, mimeType: "image/png")]
+        )
+        let window = ViewHost.host(MessageBubble(message: photoMessage))
+
+        XCTAssertTrue(ViewHost.activate(labelContains: "View photo 1 full screen", in: window))
+        ViewHost.pump(0.4)
+
+        XCTAssertNotNil(
+            ViewHost.waitForElement(labelContains: "Full size photo", in: window)
+        )
+        XCTAssertTrue(ViewHost.activate(labelContains: "Close photo", in: window))
+    }
+
+    func testFileAttachmentShowsDownloadAction() {
+        let fileMessage = ChatMessage(
+            id: "file-message",
+            role: .user,
+            content: "",
+            files: [
+                ChatFileAttachment(
+                    id: "file-1",
+                    name: "notes.txt",
+                    data: Data("hello".utf8),
+                    mimeType: "text/plain"
+                ),
+            ]
+        )
+        let window = ViewHost.host(MessageBubble(message: fileMessage))
+
+        XCTAssertNotNil(ViewHost.element(labelContains: "Download file notes.txt", in: window))
+        XCTAssertTrue(ViewHost.activate(labelContains: "Download file notes.txt", in: window))
+    }
+
     func testFailedDeliveryRetryInvokesCallback() {
         var retried = false
         let bubble = MessageBubble(message: message(role: .user, delivery: .failed)) {

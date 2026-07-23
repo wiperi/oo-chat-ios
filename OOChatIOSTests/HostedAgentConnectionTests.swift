@@ -413,6 +413,13 @@ final class HostedAgentConnectionTests: XCTestCase {
             try await connection.sendPrompt(
                 conversation: conversation,
                 prompt: "hello agent",
+                images: ["data:image/png;base64,AA=="],
+                files: [
+                    HostedAgentFilePayload(
+                        name: "note.txt",
+                        data: "data:text/plain;base64,SGk="
+                    ),
+                ],
                 onEvent: { events.append($0) },
                 onInteraction: { interaction in
                     interactions.append(interaction)
@@ -435,6 +442,19 @@ final class HostedAgentConnectionTests: XCTestCase {
         XCTAssertEqual(input["mode"]?.stringValue, ChatMode.safe.rawValue)
         XCTAssertEqual(input["to"]?.stringValue, agentAddress)
         XCTAssertNotNil(input["input_id"]?.stringValue)
+        XCTAssertEqual(
+            input["images"],
+            .array([.string("data:image/png;base64,AA==")])
+        )
+        XCTAssertEqual(
+            input["files"],
+            .array([
+                .object([
+                    "name": .string("note.txt"),
+                    "data": .string("data:text/plain;base64,SGk="),
+                ]),
+            ])
+        )
 
         try socket.enqueueFrame(["type": .string("PING")])
         _ = try await socket.waitForSentFrame(type: "PONG")

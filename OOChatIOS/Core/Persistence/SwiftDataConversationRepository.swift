@@ -18,7 +18,7 @@ final class SwiftDataConversationRepository: ConversationRepository {
         } else {
             configuration = ModelConfiguration(isStoredInMemoryOnly: inMemory)
         }
-        let schema = Schema(versionedSchema: StoredModelsSchemaV1.self)
+        let schema = Schema(versionedSchema: StoredModelsSchemaV3.self)
         do {
             container = try ModelContainer(
                 for: schema,
@@ -27,8 +27,8 @@ final class SwiftDataConversationRepository: ConversationRepository {
             )
         } catch {
             // Stores written before schema versioning hash-match no plan version, which makes
-            // the staged open throw. A plan-less open lightweight-infers them up to the V1
-            // shape instead; once saved, the next launch matches V1 through the plan.
+            // the staged open throw. A plan-less open lightweight-infers them directly to the
+            // current shape; once saved, later launches match the schema through the plan.
             container = try ModelContainer(for: schema, configurations: configuration)
         }
         context = ModelContext(container)
@@ -329,6 +329,8 @@ final class SwiftDataConversationRepository: ConversationRepository {
         stored.roleRaw = message.role.rawValue
         stored.deliveryStateRaw = message.deliveryState.rawValue
         stored.content = message.content
+        stored.imageAttachmentsData = encodeImageAttachments(message.images)
+        stored.fileAttachmentsData = encodeFileAttachments(message.files)
         stored.toolName = message.toolName
         stored.toolArgumentsData = encodeToolArguments(message.toolArguments)
         stored.toolStateRaw = message.toolState?.rawValue
@@ -370,6 +372,8 @@ final class SwiftDataConversationRepository: ConversationRepository {
             content: stored.content,
             createdAt: stored.createdAt,
             deliveryState: MessageDeliveryState(rawValue: stored.deliveryStateRaw) ?? .sent,
+            images: decodeImageAttachments(stored.imageAttachmentsData),
+            files: decodeFileAttachments(stored.fileAttachmentsData),
             toolName: stored.toolName,
             toolArguments: decodeToolArguments(stored.toolArgumentsData),
             toolState: stored.toolStateRaw.flatMap(ToolCallState.init(rawValue:))
@@ -409,6 +413,8 @@ final class SwiftDataConversationRepository: ConversationRepository {
             content: message.content,
             createdAt: message.createdAt,
             deliveryStateRaw: message.deliveryState.rawValue,
+            imageAttachmentsData: encodeImageAttachments(message.images),
+            fileAttachmentsData: encodeFileAttachments(message.files),
             toolName: message.toolName,
             toolArgumentsData: encodeToolArguments(message.toolArguments),
             toolStateRaw: message.toolState?.rawValue
@@ -433,5 +439,25 @@ final class SwiftDataConversationRepository: ConversationRepository {
     private func decodeToolArguments(_ data: Data?) -> [String: JSONValue]? {
         guard let data else { return nil }
         return try? JSONDecoder().decode([String: JSONValue].self, from: data)
+    }
+
+    private func encodeImageAttachments(_ images: [ChatImageAttachment]) -> Data? {
+        guard !images.isEmpty else { return nil }
+        return try? JSONEncoder().encode(images)
+    }
+
+    private func decodeImageAttachments(_ data: Data?) -> [ChatImageAttachment] {
+        guard let data else { return [] }
+        return (try? JSONDecoder().decode([ChatImageAttachment].self, from: data)) ?? []
+    }
+
+    private func encodeFileAttachments(_ files: [ChatFileAttachment]) -> Data? {
+        guard !files.isEmpty else { return nil }
+        return try? JSONEncoder().encode(files)
+    }
+
+    private func decodeFileAttachments(_ data: Data?) -> [ChatFileAttachment] {
+        guard let data else { return [] }
+        return (try? JSONDecoder().decode([ChatFileAttachment].self, from: data)) ?? []
     }
 }

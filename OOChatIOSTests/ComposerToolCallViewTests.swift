@@ -19,6 +19,102 @@ final class ComposerTests: XCTestCase {
 
         XCTAssertNotNil(ViewHost.element(labelContains: "Send message", in: window))
         XCTAssertNotNil(ViewHost.element(labelContains: "Chat mode: Safe", in: window))
+        XCTAssertNotNil(ViewHost.element(labelContains: "Add attachment", in: window))
+        XCTAssertNil(ViewHost.element(labelContains: "Add photos", in: window))
+        XCTAssertNil(ViewHost.element(labelContains: "Add files", in: window))
+    }
+
+    func testAttachmentMenuShowsPhotoAndFileUploadChoices() {
+        let viewModel = ViewFixtures.chatViewModel(transport: makeTransport())
+        let window = ViewHost.host(Composer(viewModel: viewModel))
+
+        XCTAssertTrue(ViewHost.activate(labelContains: "Add attachment", in: window))
+        ViewHost.pump(0.3)
+
+        let windows = [window] + UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+        XCTAssertTrue(windows.contains { candidate in
+            ViewHost.element(labelContains: "Upload Photo", in: candidate) != nil
+        })
+        XCTAssertTrue(windows.contains { candidate in
+            ViewHost.element(labelContains: "Upload File", in: candidate) != nil
+        })
+    }
+
+    func testImageOnlyMessageCanBePreviewedRemovedAndSent() {
+        let transport = makeTransport()
+        let viewModel = ViewFixtures.chatViewModel(transport: transport)
+        let window = ViewHost.host(Composer(viewModel: viewModel))
+        let png = Data(base64Encoded:
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+        )!
+
+        XCTAssertTrue(viewModel.addPendingImage(data: png, mimeType: "image/png"))
+        ViewHost.pump(0.2)
+        XCTAssertNotNil(ViewHost.element(labelContains: "Selected photos", in: window))
+        XCTAssertTrue(ViewHost.activate(labelContains: "Remove photo 1", in: window))
+        XCTAssertTrue(viewModel.pendingImages.isEmpty)
+
+        XCTAssertTrue(viewModel.addPendingImage(data: png, mimeType: "image/png"))
+        ViewHost.pump(0.2)
+        XCTAssertTrue(ViewHost.activate(labelContains: "Send message", in: window))
+
+        let deadline = Date().addingTimeInterval(3)
+        while transport.sentImages.isEmpty && Date() < deadline {
+            ViewHost.pump(0.1)
+        }
+        XCTAssertEqual(transport.sentPrompts, [""])
+        XCTAssertEqual(transport.sentImages.first?.first, "data:image/png;base64,\(png.base64EncodedString())")
+        XCTAssertTrue(viewModel.pendingImages.isEmpty)
+        XCTAssertEqual(viewModel.activeConversation?.messages.first { $0.role == .user }?.images.count, 1)
+    }
+
+    func testFileOnlyMessageCanBePreviewedRemovedAndSent() {
+        let transport = makeTransport()
+        let viewModel = ViewFixtures.chatViewModel(transport: transport)
+        let window = ViewHost.host(Composer(viewModel: viewModel))
+        let data = Data("hello".utf8)
+
+        XCTAssertTrue(
+            viewModel.addPendingFile(
+                name: "notes.txt",
+                data: data,
+                mimeType: "text/plain"
+            )
+        )
+        ViewHost.pump(0.2)
+        XCTAssertNotNil(ViewHost.element(labelContains: "Selected files", in: window))
+        XCTAssertNotNil(ViewHost.element(labelContains: "Selected file notes.txt", in: window))
+        XCTAssertTrue(ViewHost.activate(labelContains: "Remove file 1", in: window))
+        XCTAssertTrue(viewModel.pendingFiles.isEmpty)
+
+        XCTAssertTrue(
+            viewModel.addPendingFile(
+                name: "notes.txt",
+                data: data,
+                mimeType: "text/plain"
+            )
+        )
+        ViewHost.pump(0.2)
+        XCTAssertTrue(ViewHost.activate(labelContains: "Send message", in: window))
+
+        let deadline = Date().addingTimeInterval(3)
+        while transport.sentFiles.isEmpty && Date() < deadline {
+            ViewHost.pump(0.1)
+        }
+        XCTAssertEqual(transport.sentPrompts, [""])
+        XCTAssertEqual(
+            transport.sentFiles.first,
+            [
+                HostedAgentFilePayload(
+                    name: "notes.txt",
+                    data: "data:text/plain;base64,\(data.base64EncodedString())"
+                ),
+            ]
+        )
+        XCTAssertTrue(viewModel.pendingFiles.isEmpty)
+        XCTAssertEqual(viewModel.activeConversation?.messages.first { $0.role == .user }?.files.count, 1)
     }
 
     func testSlashPromptShowsSkillPickerAndSelectionInsertsSkill() {

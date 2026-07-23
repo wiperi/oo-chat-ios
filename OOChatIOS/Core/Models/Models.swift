@@ -115,6 +115,55 @@ enum ToolCallState: String, Codable, Equatable {
     case failed
 }
 
+struct ChatImageAttachment: Identifiable, Codable, Equatable {
+    static let maximumCount = 10
+    static let maximumByteCount = 10 * 1024 * 1024
+
+    let id: String
+    let data: Data
+    let mimeType: String
+
+    init(
+        id: String = UUID().uuidString,
+        data: Data,
+        mimeType: String
+    ) {
+        self.id = id
+        self.data = data
+        self.mimeType = mimeType
+    }
+
+    var dataURL: String {
+        "data:\(mimeType);base64,\(data.base64EncodedString())"
+    }
+}
+
+struct ChatFileAttachment: Identifiable, Codable, Equatable {
+    static let maximumCount = 10
+    static let maximumByteCount = 10 * 1024 * 1024
+
+    let id: String
+    let name: String
+    let data: Data
+    let mimeType: String
+
+    init(
+        id: String = UUID().uuidString,
+        name: String,
+        data: Data,
+        mimeType: String
+    ) {
+        self.id = id
+        self.name = name
+        self.data = data
+        self.mimeType = mimeType
+    }
+
+    var dataURL: String {
+        "data:\(mimeType);base64,\(data.base64EncodedString())"
+    }
+}
+
 struct ToolApprovalBatchItem: Equatable {
     let tool: String
     let arguments: JSONValue
@@ -310,6 +359,8 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     var content: String
     var createdAt: Date
     var deliveryState: MessageDeliveryState
+    var images: [ChatImageAttachment]
+    var files: [ChatFileAttachment]
     var toolName: String?
     var toolArguments: [String: JSONValue]?
     var toolState: ToolCallState?
@@ -320,6 +371,8 @@ struct ChatMessage: Identifiable, Codable, Equatable {
         content: String,
         createdAt: Date = Date(),
         deliveryState: MessageDeliveryState = .sent,
+        images: [ChatImageAttachment] = [],
+        files: [ChatFileAttachment] = [],
         toolName: String? = nil,
         toolArguments: [String: JSONValue]? = nil,
         toolState: ToolCallState? = nil
@@ -329,6 +382,8 @@ struct ChatMessage: Identifiable, Codable, Equatable {
         self.content = content
         self.createdAt = createdAt
         self.deliveryState = deliveryState
+        self.images = images
+        self.files = files
         self.toolName = toolName
         self.toolArguments = toolArguments
         self.toolState = toolState
@@ -340,6 +395,8 @@ struct ChatMessage: Identifiable, Codable, Equatable {
         case content
         case createdAt
         case deliveryState
+        case images
+        case files
         case toolName
         case toolArguments
         case toolState
@@ -352,6 +409,8 @@ struct ChatMessage: Identifiable, Codable, Equatable {
         content = try container.decode(String.self, forKey: .content)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         deliveryState = try container.decodeIfPresent(MessageDeliveryState.self, forKey: .deliveryState) ?? .sent
+        images = try container.decodeIfPresent([ChatImageAttachment].self, forKey: .images) ?? []
+        files = try container.decodeIfPresent([ChatFileAttachment].self, forKey: .files) ?? []
         toolName = try container.decodeIfPresent(String.self, forKey: .toolName)
         toolArguments = try container.decodeIfPresent([String: JSONValue].self, forKey: .toolArguments)
         toolState = try container.decodeIfPresent(ToolCallState.self, forKey: .toolState)
@@ -364,6 +423,8 @@ struct ChatMessage: Identifiable, Codable, Equatable {
         try container.encode(content, forKey: .content)
         try container.encode(createdAt, forKey: .createdAt)
         try container.encode(deliveryState, forKey: .deliveryState)
+        try container.encode(images, forKey: .images)
+        try container.encode(files, forKey: .files)
         try container.encodeIfPresent(toolName, forKey: .toolName)
         try container.encodeIfPresent(toolArguments, forKey: .toolArguments)
         try container.encodeIfPresent(toolState, forKey: .toolState)

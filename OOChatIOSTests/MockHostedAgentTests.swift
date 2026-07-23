@@ -210,6 +210,45 @@ final class MockHostedAgentTests: XCTestCase {
         XCTAssertFalse(canonical.contains("执行"))
     }
 
+    func testSignedInputPayloadBindsImageAttachments() {
+        let payload = HostedAgentClient.inputSignaturePayload(
+            agentAddress: "0xagent",
+            conversationID: "conversation-1",
+            inputID: "input-1",
+            prompt: "",
+            mode: .safe,
+            timestamp: 1_700_000_000,
+            images: ["data:image/png;base64,AA=="]
+        )
+
+        XCTAssertEqual(
+            payload["attachments_sha256"],
+            .string("eea0aef2c9a60b399cfa9477181304bf863b142efdae3f57526e3f97fbe678ba")
+        )
+    }
+
+    func testSignedInputPayloadBindsFileAttachments() {
+        let payload = HostedAgentClient.inputSignaturePayload(
+            agentAddress: "0xagent",
+            conversationID: "conversation-1",
+            inputID: "input-1",
+            prompt: "",
+            mode: .safe,
+            timestamp: 1_700_000_000,
+            files: [
+                HostedAgentFilePayload(
+                    name: "note.txt",
+                    data: "data:text/plain;base64,SGk="
+                ),
+            ]
+        )
+
+        XCTAssertEqual(
+            payload["attachments_sha256"],
+            .string("0a322d04ff621f8cb555e2569abf297e8784122f9b906178d2f5d796acfeb0f6")
+        )
+    }
+
     func testConnectSessionDigestMatchesPythonForUnicodeSnapshot() {
         let session: [String: JSONValue] = [
             "session_id": .string("conversation-1"),
