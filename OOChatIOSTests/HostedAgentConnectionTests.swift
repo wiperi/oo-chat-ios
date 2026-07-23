@@ -1042,3 +1042,42 @@ final class HostedAgentConnectionPoolTests: XCTestCase {
         _ = try await task.value
     }
 }
+
+/// The wire-error text shown in the banner. Beyond reading clearly, two cases have real
+/// logic worth pinning: a server message is framed as coming from the agent, and an empty
+/// server message falls back to a full sentence instead of a blank banner.
+final class HostedAgentClientErrorMessageTests: XCTestCase {
+    func testInvalidURLPointsAtTheAddressAndSuggestsAFix() {
+        let message = HostedAgentClientError.invalidURL("0xabc").errorDescription ?? ""
+        XCTAssertTrue(message.contains("0xabc"), message)
+        XCTAssertTrue(message.contains("online"), message)
+    }
+
+    func testServerErrorIsAttributedToTheAgent() {
+        let message = HostedAgentClientError.server("rate limit exceeded").errorDescription ?? ""
+        XCTAssertEqual(message, "The agent reported a problem: rate limit exceeded")
+    }
+
+    func testBlankServerErrorFallsBackToAFullSentence() {
+        let message = HostedAgentClientError.server("   ").errorDescription ?? ""
+        XCTAssertEqual(
+            message,
+            "The agent reported a problem but didn't say what went wrong. Try again."
+        )
+    }
+
+    func testBusyErrorTellsTheUserWhatToDoNext() {
+        let message = HostedAgentClientError.busy.errorDescription ?? ""
+        XCTAssertTrue(message.contains("Wait for it to finish"), message)
+    }
+
+    func testEveryOtherCaseProducesNonEmptyText() {
+        let cases: [HostedAgentClientError] = [.invalidAddress, .badFrame, .closed, .timeout]
+        for error in cases {
+            XCTAssertFalse(
+                (error.errorDescription ?? "").isEmpty,
+                "Expected non-empty message for \(error)"
+            )
+        }
+    }
+}

@@ -985,3 +985,41 @@ final class SwiftDataConversationRepositoryTests: XCTestCase {
         return conversation
     }
 }
+
+/// The persistence-error message the user actually reads. Each operation must name what
+/// failed, spell out the consequence in plain language, and still carry the system's own
+/// reason — the point of the clearer wording is that none of those three parts go missing.
+final class ConversationRepositoryErrorMessageTests: XCTestCase {
+    private struct SampleError: LocalizedError {
+        var errorDescription: String? { "the disk is full" }
+    }
+
+    func testEveryOperationExplainsFailureConsequenceAndUnderlyingReason() {
+        let expectedConsequences: [ConversationRepositoryError.Operation: String] = [
+            .load: "Your past conversations may not appear.",
+            .saveConversation: "Your latest messages may be missing when you reopen the app.",
+            .deleteConversation: "It may reappear when you reopen the app.",
+            .saveAgent: "This agent may be missing when you reopen the app.",
+            .deleteAgent: "It may reappear when you reopen the app.",
+            .search: "Some results may be missing.",
+        ]
+
+        for (operation, consequence) in expectedConsequences {
+            let error = ConversationRepositoryError(operation: operation, underlyingError: SampleError())
+            let message = error.errorDescription ?? ""
+
+            XCTAssertTrue(
+                message.contains("Couldn’t \(operation.rawValue)."),
+                "Message should name the failed action for \(operation): \(message)"
+            )
+            XCTAssertTrue(
+                message.contains(consequence),
+                "Message should explain the consequence for \(operation): \(message)"
+            )
+            XCTAssertTrue(
+                message.contains("the disk is full"),
+                "Message should still carry the underlying reason for \(operation): \(message)"
+            )
+        }
+    }
+}

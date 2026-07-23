@@ -100,7 +100,7 @@ struct AgentFormView: View {
                             return
                         }
                         if !onSave(draft) {
-                            validationMessage = "Unable to save this agent configuration."
+                            validationMessage = "Couldn't save this agent. Double-check the address is a valid 0x-prefixed Ed25519 key, then try again."
                         }
                     }
                     .fontWeight(.semibold)
