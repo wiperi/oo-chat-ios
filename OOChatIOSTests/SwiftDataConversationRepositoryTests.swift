@@ -986,9 +986,6 @@ final class SwiftDataConversationRepositoryTests: XCTestCase {
     }
 }
 
-/// The persistence-error message the user actually reads. Each operation must name what
-/// failed, spell out the consequence in plain language, and still carry the system's own
-/// reason — the point of the clearer wording is that none of those three parts go missing.
 final class ConversationRepositoryErrorMessageTests: XCTestCase {
     private struct SampleError: LocalizedError {
         var errorDescription: String? { "the disk is full" }

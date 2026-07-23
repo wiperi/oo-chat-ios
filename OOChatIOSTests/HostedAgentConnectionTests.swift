@@ -1043,9 +1043,6 @@ final class HostedAgentConnectionPoolTests: XCTestCase {
     }
 }
 
-/// The wire-error text shown in the banner. Beyond reading clearly, two cases have real
-/// logic worth pinning: a server message is framed as coming from the agent, and an empty
-/// server message falls back to a full sentence instead of a blank banner.
 final class HostedAgentClientErrorMessageTests: XCTestCase {
     func testInvalidURLPointsAtTheAddressAndSuggestsAFix() {
         let message = HostedAgentClientError.invalidURL("0xabc").errorDescription ?? ""

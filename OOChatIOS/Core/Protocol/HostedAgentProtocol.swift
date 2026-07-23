@@ -18,9 +18,6 @@ enum HostedAgentClientError: LocalizedError {
         case .badFrame:
             return "The agent sent a reply the app couldn't understand. Try again."
         case .server(let message):
-            // The raw server string alone gave no hint of where it came from, and an
-            // empty one showed a blank banner. Frame it as coming from the agent, and
-            // fall back to a full sentence when the agent didn't say what went wrong.
             let detail = message.trimmingCharacters(in: .whitespacesAndNewlines)
             return detail.isEmpty
                 ? "The agent reported a problem but didn't say what went wrong. Try again."

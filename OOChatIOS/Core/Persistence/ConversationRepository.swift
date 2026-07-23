@@ -9,9 +9,7 @@ struct ConversationRepositoryError: LocalizedError {
         case deleteAgent = "delete the agent"
         case search = "search conversations"
 
-        /// What the failure means for the user, in plain language. Without this the
-        /// message was just an action plus a raw system error, which told the user
-        /// nothing about what to expect or what to do next.
+        // error msg
         var consequence: String {
             switch self {
             case .load:
@@ -34,9 +32,6 @@ struct ConversationRepositoryError: LocalizedError {
     let underlyingError: Error
 
     var errorDescription: String? {
-        // Lead with what failed and what it means for the user, then keep the system’s
-        // own reason in parentheses so the sentence reads as a sentence instead of
-        // trailing a bare, cryptic error string.
         "Couldn’t \(operation.rawValue). \(operation.consequence) (Details: \(underlyingError.localizedDescription))"
     }
 }
