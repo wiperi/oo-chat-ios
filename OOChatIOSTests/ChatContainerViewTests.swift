@@ -71,6 +71,53 @@ final class ChatViewTests: XCTestCase {
         XCTAssertNotNil(ViewHost.element(labelContains: "Send message", in: window))
         XCTAssertNotNil(ViewHost.element(labelContains: "Chat mode: Safe", in: window))
     }
+
+    func testEmptyConversationShowsStartersAndPopulatesComposer() {
+        let fixture = ChatContainerFixture()
+        let conversation = fixture.conversation()
+        let viewModel = makeContainerViewModel(
+            agents: [fixture.agent],
+            conversations: [conversation],
+            activeAgentID: fixture.agent.id,
+            activeConversationID: conversation.id
+        )
+        let window = ViewHost.host(ChatView(viewModel: viewModel))
+
+        XCTAssertNotNil(ViewHost.element(labelContains: "Start with \(fixture.agent.name)", in: window))
+        XCTAssertEqual(
+            ChatStarterSuggestion.defaults.map(\.title),
+            ["Plan a feature", "Review code", "Debug issue", "Explain project"]
+        )
+
+        for suggestion in ChatStarterSuggestion.defaults {
+            viewModel.prompt = ""
+            XCTAssertTrue(
+                ViewHost.activateButton(labelContains: suggestion.title, in: window),
+                "Expected starter button for \(suggestion.title)"
+            )
+            XCTAssertEqual(viewModel.prompt, suggestion.prompt)
+        }
+    }
+
+    func testConversationWithMessagesDoesNotShowStarters() {
+        let fixture = ChatContainerFixture()
+        let conversation = fixture.conversation(
+            messages: [
+                ChatMessage(id: "user1", role: .user, content: "Review this change")
+            ]
+        )
+        let viewModel = makeContainerViewModel(
+            agents: [fixture.agent],
+            conversations: [conversation],
+            activeAgentID: fixture.agent.id,
+            activeConversationID: conversation.id
+        )
+        let window = ViewHost.host(ChatView(viewModel: viewModel))
+
+        XCTAssertNil(ViewHost.element(labelContains: "Start with \(fixture.agent.name)", in: window))
+        XCTAssertNil(ViewHost.element(labelContains: "Plan a feature", in: window))
+        XCTAssertNotNil(ViewHost.element(labelContains: "Review this change", in: window))
+    }
 }
 
 @MainActor

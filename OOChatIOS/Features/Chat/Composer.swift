@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 
 struct Composer: View {
     @ObservedObject var viewModel: ChatViewModel
+    var focusRequest = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var isPromptFocused: Bool
     @State private var showModeMenu = false
@@ -43,6 +44,9 @@ struct Composer: View {
         }
         .onChange(of: viewModel.activeConversationID) {
             isPromptFocused = viewModel.activeConversationID != nil
+        }
+        .onChange(of: focusRequest) {
+            isPromptFocused = true
         }
         .onChange(of: selectedPhotoItems) { _, items in
             guard !items.isEmpty else {

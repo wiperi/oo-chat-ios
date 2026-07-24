@@ -39,6 +39,7 @@ struct ChatScreen: View {
     @State private var bottomAnchorY: CGFloat = 0
     @State private var scrollViewportHeight: CGFloat = 0
     @State private var shouldFollowLatest = true
+    @State private var promptFocusRequest = 0
     private let bottomAnchorID = "chat.bottomAnchor"
     private let scrollCoordinateSpace = "chat.scroll"
 
@@ -48,6 +49,22 @@ struct ChatScreen: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 20) {
+                            if shouldShowEmptyState(for: conversation) {
+                                EmptyChatState(
+                                    agentName: viewModel.activeAgent?.name ?? "Your agent",
+                                    showsSuggestions: showsComposer
+                                ) { suggestion in
+                                    viewModel.prompt = suggestion.prompt
+                                    promptFocusRequest += 1
+                                }
+                                .frame(
+                                    maxWidth: .infinity,
+                                    minHeight: max(0, scrollViewportHeight - 32),
+                                    alignment: .bottom
+                                )
+                                .transition(AppMotion.materialize(reduceMotion: reduceMotion))
+                            }
+
                             ForEach(timelineEntries(for: conversation)) { entry in
                                 timelineView(for: entry)
                                     .id(entry.id)
@@ -167,7 +184,10 @@ struct ChatScreen: View {
                     }
                     .safeAreaInset(edge: .bottom, spacing: 0) {
                         if showsComposer {
-                            Composer(viewModel: viewModel)
+                            Composer(
+                                viewModel: viewModel,
+                                focusRequest: promptFocusRequest
+                            )
                                 .padding(.top, 8)
                                 .background {
                                     Color(.systemBackground)
@@ -221,6 +241,10 @@ struct ChatScreen: View {
                 }
             }
         }
+    }
+
+    private func shouldShowEmptyState(for conversation: Conversation) -> Bool {
+        conversation.messages.isEmpty && viewModel.pendingInteractionID == nil
     }
 
     private var backgroundAttentionLabel: String {
@@ -315,6 +339,367 @@ struct ChatScreen: View {
             removal: .opacity
         )
     }
+}
+
+struct EmptyChatState: View {
+    let agentName: String
+    let showsSuggestions: Bool
+    let onSelectSuggestion: (ChatStarterSuggestion) -> Void
+
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var logoPulse = false
+
+    var body: some View {
+        VStack(spacing: EmptyChatMetrics.sectionSpacing) {
+            VStack(spacing: EmptyChatMetrics.headingSpacing) {
+                brandMark
+
+                VStack(spacing: EmptyChatMetrics.titleSpacing) {
+                    Text("What can we work on")
+                        .font(.headline.weight(.medium))
+                        .foregroundStyle(EmptyChatPalette.heading)
+
+                    Text("Pick one, then edit before sending.")
+                        .font(.footnote.weight(.regular))
+                        .foregroundStyle(EmptyChatPalette.subtitle)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                }
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: EmptyChatMetrics.headingMaximumWidth)
+            }
+
+            if showsSuggestions {
+                LazyVGrid(columns: suggestionColumns, spacing: EmptyChatMetrics.chipSpacing) {
+                    ForEach(ChatStarterSuggestion.defaults) { suggestion in
+                        suggestionButton(for: suggestion)
+                    }
+                }
+                .frame(maxWidth: EmptyChatMetrics.suggestionGroupMaximumWidth)
+            }
+        }
+        .padding(.top, EmptyChatMetrics.topOffset)
+        .padding(.vertical, EmptyChatMetrics.verticalPadding)
+        .accessibilityLabel("Start with \(agentName)")
+        .accessibilityElement(children: .contain)
+    }
+
+    private var brandMark: some View {
+        return ZStack {
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            AppTheme.primary.opacity(EmptyChatMetrics.logoOuterAuraCoreOpacity),
+                            AppTheme.primary.opacity(EmptyChatMetrics.logoOuterAuraEdgeOpacity),
+                            AppTheme.primary.opacity(0),
+                        ],
+                        center: .center,
+                        startRadius: EmptyChatMetrics.logoOuterAuraStartRadius,
+                        endRadius: EmptyChatMetrics.logoOuterAuraEndRadius
+                    )
+                )
+                .frame(
+                    width: EmptyChatMetrics.logoOuterAuraSize,
+                    height: EmptyChatMetrics.logoOuterAuraSize
+                )
+                .blur(radius: EmptyChatMetrics.logoOuterAuraBlur)
+
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            AppTheme.primary.opacity(EmptyChatMetrics.logoAuraCoreOpacity),
+                            AppTheme.primary.opacity(EmptyChatMetrics.logoAuraEdgeOpacity),
+                            AppTheme.primary.opacity(0),
+                        ],
+                        center: .center,
+                        startRadius: EmptyChatMetrics.logoAuraStartRadius,
+                        endRadius: EmptyChatMetrics.logoAuraEndRadius
+                    )
+                )
+                .frame(
+                    width: EmptyChatMetrics.logoAuraSize,
+                    height: EmptyChatMetrics.logoAuraSize
+                )
+                .blur(radius: EmptyChatMetrics.logoAuraBlur)
+
+            Image("OnionLogo")
+                .resizable()
+                .scaledToFit()
+                .frame(
+                    width: EmptyChatMetrics.logoSize,
+                    height: EmptyChatMetrics.logoSize
+                )
+                .opacity(EmptyChatMetrics.logoImageOpacity)
+                .offset(y: EmptyChatMetrics.logoImageVerticalOffset)
+                .shadow(
+                    color: AppTheme.primary.opacity(logoPulse ? 0.12 : 0.07),
+                    radius: logoPulse ? EmptyChatMetrics.logoActiveShadowRadius : EmptyChatMetrics.logoIdleShadowRadius,
+                    y: logoPulse ? EmptyChatMetrics.logoActiveShadowOffset : EmptyChatMetrics.logoIdleShadowOffset
+                )
+        }
+        .frame(
+            width: EmptyChatMetrics.logoStageSize,
+            height: EmptyChatMetrics.logoStageSize
+        )
+        .scaleEffect(logoPulse && !reduceMotion ? 1.015 : 1)
+        .animation(
+            reduceMotion
+                ? nil
+                : .easeInOut(duration: EmptyChatMetrics.logoPulseDuration)
+                    .repeatForever(autoreverses: true),
+            value: logoPulse
+        )
+        .onAppear {
+            guard !reduceMotion else {
+                return
+            }
+            logoPulse = true
+        }
+        .accessibilityHidden(true)
+    }
+
+    private var suggestionColumns: [GridItem] {
+        if dynamicTypeSize.isAccessibilitySize {
+            return [GridItem(.flexible())]
+        }
+
+        return [
+            GridItem(.flexible(), spacing: EmptyChatMetrics.chipSpacing),
+            GridItem(.flexible()),
+        ]
+    }
+
+    private func suggestionButton(for suggestion: ChatStarterSuggestion) -> some View {
+        Button {
+            onSelectSuggestion(suggestion)
+        } label: {
+            suggestionChip(suggestion)
+        }
+        .buttonStyle(EmptyChatSuggestionButtonStyle())
+        .accessibilityHint("\(suggestion.detail). Adds this starter to the message field")
+    }
+
+    private func suggestionChip(_ suggestion: ChatStarterSuggestion) -> some View {
+        let chipShape = RoundedRectangle(
+            cornerRadius: EmptyChatMetrics.chipCornerRadius,
+            style: .continuous
+        )
+
+        return HStack(spacing: EmptyChatMetrics.chipContentSpacing) {
+            Image(systemName: suggestion.systemImage)
+                .font(.footnote.weight(.regular))
+                .symbolRenderingMode(.monochrome)
+                .foregroundStyle(EmptyChatPalette.chipIcon)
+                .frame(
+                    width: EmptyChatMetrics.chipIconSize,
+                    height: EmptyChatMetrics.chipIconSize
+                )
+
+            Text(suggestion.title)
+                .font(.subheadline.weight(.regular))
+                .foregroundStyle(EmptyChatPalette.chipText)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, EmptyChatMetrics.chipHorizontalPadding)
+        .frame(
+            maxWidth: .infinity,
+            minHeight: EmptyChatMetrics.chipMinimumHeight,
+            alignment: .leading
+        )
+        .background(
+            EmptyChatPalette.chipFill,
+            in: chipShape
+        )
+        .overlay {
+            chipShape
+                .stroke(
+                    EmptyChatPalette.chipStroke,
+                    lineWidth: 0.5
+                )
+        }
+        .contentShape(chipShape)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct EmptyChatSuggestionButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        let chipShape = RoundedRectangle(
+            cornerRadius: EmptyChatMetrics.chipCornerRadius,
+            style: .continuous
+        )
+
+        configuration.label
+            .overlay {
+                chipShape
+                    .fill(EmptyChatPalette.chipPressedFill)
+                    .opacity(configuration.isPressed ? 1 : 0)
+                    .allowsHitTesting(false)
+            }
+            .overlay {
+                chipShape
+                    .stroke(
+                        EmptyChatPalette.chipPressedStroke,
+                        lineWidth: configuration.isPressed ? 1 : 0
+                    )
+                    .opacity(configuration.isPressed ? 1 : 0)
+                    .allowsHitTesting(false)
+            }
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.965 : 1)
+            .opacity(isEnabled ? 1 : 0.38)
+            .animation(AppMotion.press, value: configuration.isPressed)
+            .animation(AppMotion.press, value: isEnabled)
+    }
+}
+
+struct ChatStarterSuggestion: Identifiable, Equatable {
+    let id: String
+    let title: String
+    let detail: String
+    let systemImage: String
+    let prompt: String
+
+    static let defaults = [
+        ChatStarterSuggestion(
+            id: "plan-feature",
+            title: "Plan a feature",
+            detail: "Shape an idea into clear next steps",
+            systemImage: "checklist",
+            prompt: "Help me plan a feature. Ask for the goal and constraints, then give me a focused implementation plan."
+        ),
+        ChatStarterSuggestion(
+            id: "review-code",
+            title: "Review code",
+            detail: "Find concrete issues and improvements",
+            systemImage: "doc.text.magnifyingglass",
+            prompt: "Review the relevant code for correctness, clarity, and maintainability. Prioritize concrete issues."
+        ),
+        ChatStarterSuggestion(
+            id: "debug-problem",
+            title: "Debug issue",
+            detail: "Trace the cause and smallest fix",
+            systemImage: "wrench.adjustable",
+            prompt: "Help me debug a problem. Start by asking for the symptoms and expected behavior."
+        ),
+        ChatStarterSuggestion(
+            id: "explain-project",
+            title: "Explain project",
+            detail: "Map the architecture and data flow",
+            systemImage: "square.stack.3d.up",
+            prompt: "Explain this project's architecture and trace the main data flow in plain language."
+        ),
+    ]
+}
+
+private enum EmptyChatPalette {
+    static let heading = Color(uiColor: UIColor { traits in
+        if traits.userInterfaceStyle == .dark {
+            return UIColor(red: 199.0 / 255.0, green: 183.0 / 255.0, blue: 232.0 / 255.0, alpha: 1)
+        } else {
+            return UIColor(red: 122.0 / 255.0, green: 92.0 / 255.0, blue: 166.0 / 255.0, alpha: 1)
+        }
+    })
+
+    static let subtitle = Color(uiColor: UIColor { traits in
+        if traits.userInterfaceStyle == .dark {
+            return UIColor(red: 160.0 / 255.0, green: 151.0 / 255.0, blue: 176.0 / 255.0, alpha: 1)
+        } else {
+            return UIColor(red: 139.0 / 255.0, green: 129.0 / 255.0, blue: 151.0 / 255.0, alpha: 1)
+        }
+    })
+
+    static let chipText = Color(uiColor: UIColor { traits in
+        if traits.userInterfaceStyle == .dark {
+            return UIColor(red: 214.0 / 255.0, green: 206.0 / 255.0, blue: 227.0 / 255.0, alpha: 1)
+        } else {
+            return UIColor(red: 60.0 / 255.0, green: 53.0 / 255.0, blue: 72.0 / 255.0, alpha: 1)
+        }
+    })
+
+    static let chipIcon = Color(uiColor: UIColor { traits in
+        if traits.userInterfaceStyle == .dark {
+            return UIColor(red: 173.0 / 255.0, green: 143.0 / 255.0, blue: 239.0 / 255.0, alpha: 1)
+        } else {
+            return UIColor(red: 124.0 / 255.0, green: 73.0 / 255.0, blue: 222.0 / 255.0, alpha: 0.72)
+        }
+    })
+
+    static let chipFill = Color(uiColor: UIColor { traits in
+        if traits.userInterfaceStyle == .dark {
+            return UIColor(red: 39.0 / 255.0, green: 35.0 / 255.0, blue: 46.0 / 255.0, alpha: 0.72)
+        } else {
+            return UIColor(red: 250.0 / 255.0, green: 248.0 / 255.0, blue: 253.0 / 255.0, alpha: 0.78)
+        }
+    })
+
+    static let chipStroke = Color(uiColor: UIColor { traits in
+        if traits.userInterfaceStyle == .dark {
+            return UIColor(red: 166.0 / 255.0, green: 129.0 / 255.0, blue: 244.0 / 255.0, alpha: 0.13)
+        } else {
+            return UIColor(red: 126.0 / 255.0, green: 88.0 / 255.0, blue: 208.0 / 255.0, alpha: 0.08)
+        }
+    })
+
+    static let chipPressedFill = Color(uiColor: UIColor { traits in
+        if traits.userInterfaceStyle == .dark {
+            return UIColor(red: 129.0 / 255.0, green: 84.0 / 255.0, blue: 228.0 / 255.0, alpha: 0.18)
+        } else {
+            return UIColor(red: 124.0 / 255.0, green: 73.0 / 255.0, blue: 222.0 / 255.0, alpha: 0.10)
+        }
+    })
+
+    static let chipPressedStroke = Color(uiColor: UIColor { traits in
+        if traits.userInterfaceStyle == .dark {
+            return UIColor(red: 178.0 / 255.0, green: 143.0 / 255.0, blue: 247.0 / 255.0, alpha: 0.28)
+        } else {
+            return UIColor(red: 124.0 / 255.0, green: 73.0 / 255.0, blue: 222.0 / 255.0, alpha: 0.22)
+        }
+    })
+}
+
+private enum EmptyChatMetrics {
+    static let sectionSpacing: CGFloat = 22
+    static let headingSpacing: CGFloat = 6
+    static let titleSpacing: CGFloat = 7
+    static let topOffset: CGFloat = 58
+    static let verticalPadding: CGFloat = 36
+    static let logoStageSize: CGFloat = 132
+    static let logoSize: CGFloat = 72
+    static let logoImageOpacity: Double = 0.88
+    static let logoImageVerticalOffset: CGFloat = 1
+    static let logoOuterAuraSize: CGFloat = 230
+    static let logoOuterAuraCoreOpacity: Double = 0.055
+    static let logoOuterAuraEdgeOpacity: Double = 0.025
+    static let logoOuterAuraStartRadius: CGFloat = 24
+    static let logoOuterAuraEndRadius: CGFloat = 124
+    static let logoOuterAuraBlur: CGFloat = 38
+    static let logoAuraSize: CGFloat = 168
+    static let logoAuraCoreOpacity: Double = 0.13
+    static let logoAuraEdgeOpacity: Double = 0.055
+    static let logoAuraStartRadius: CGFloat = 12
+    static let logoAuraEndRadius: CGFloat = 92
+    static let logoAuraBlur: CGFloat = 28
+    static let logoIdleShadowRadius: CGFloat = 10
+    static let logoActiveShadowRadius: CGFloat = 16
+    static let logoIdleShadowOffset: CGFloat = 4
+    static let logoActiveShadowOffset: CGFloat = 6
+    static let logoPulseDuration: TimeInterval = 3.4
+    static let headingMaximumWidth: CGFloat = 280
+    static let suggestionGroupMaximumWidth: CGFloat = 344
+    static let chipSpacing: CGFloat = 7
+    static let chipContentSpacing: CGFloat = 6
+    static let chipMinimumHeight: CGFloat = 36
+    static let chipHorizontalPadding: CGFloat = 12
+    static let chipIconSize: CGFloat = 15
+    static let chipCornerRadius: CGFloat = 16
 }
 
 private struct ChatScrollUpdate: Equatable {
