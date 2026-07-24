@@ -26,6 +26,12 @@ actor HostedAgentConnection {
         let continuation: CheckedContinuation<HostedAgentResult, Error>
         let onEvent: (@MainActor (HostedAgentEvent) -> Void)?
         let onInteraction: (@MainActor (HostedAgentInteraction) async -> HostedAgentInteractionDecision)?
+        let prompt: String
+        let images: [String]
+        let files: [HostedAgentFilePayload]
+        // false until the INPUT frame reached the socket: a resume may resend it,
+        // but only then — resending a delivered INPUT would run the prompt twice
+        var inputDelivered = false
     }
 
     private let key: HostedAgentConnectionKey
@@ -36,6 +42,8 @@ actor HostedAgentConnection {
     private let connectTimeout: TimeInterval
     private let livenessTimeout: TimeInterval
     private let livenessCheckInterval: TimeInterval
+    private let resumeAttemptLimit: Int
+    private let resumeRetryDelay: TimeInterval
 
     private var state: State = .disconnected
     private var socket: (any HostedAgentWebSocketTask)?
@@ -43,6 +51,7 @@ actor HostedAgentConnection {
     private var receiveTask: Task<Void, Never>?
     private var connectTimeoutTask: Task<Void, Never>?
     private var livenessTask: Task<Void, Never>?
+    private var resumeTask: Task<Void, Never>?
     private var interactionTasks: [UUID: Task<Void, Never>] = [:]
     // rejects frames and failures from sockets that were already replaced
     private var socketGeneration = 0
@@ -51,6 +60,8 @@ actor HostedAgentConnection {
     private var serverSession: [String: JSONValue]?
     private var connectionStatus: String?
     private var lastNetworkActivityAt = Date()
+    private var resumeAttemptsUsed = 0
+    private var lastConversation: Conversation?
 
     init(
         key: HostedAgentConnectionKey,
@@ -62,7 +73,9 @@ actor HostedAgentConnection {
         endpointResolver: HostedAgentEndpointResolver? = nil,
         connectTimeout: TimeInterval = 45,
         livenessTimeout: TimeInterval = 75,
-        livenessCheckInterval: TimeInterval = 10
+        livenessCheckInterval: TimeInterval = 10,
+        resumeAttemptLimit: Int = 3,
+        resumeRetryDelay: TimeInterval = 1
     ) {
         self.key = key
         self.identityStore = identityStore
@@ -74,10 +87,13 @@ actor HostedAgentConnection {
         self.connectTimeout = connectTimeout
         self.livenessTimeout = livenessTimeout
         self.livenessCheckInterval = livenessCheckInterval
+        self.resumeAttemptLimit = resumeAttemptLimit
+        self.resumeRetryDelay = resumeRetryDelay
     }
 
     // shares one connection attempt across callers for the same conversation
     func ensureConnected(conversation: Conversation) async throws -> HostedAgentResult {
+        lastConversation = conversation
         if state == .connected, socket != nil, let endpoint {
             return HostedAgentResult(output: nil, endpointLabel: endpoint.label, serverSession: serverSession)
         }
@@ -123,6 +139,7 @@ actor HostedAgentConnection {
         guard pendingPrompt == nil else {
             throw HostedAgentClientError.busy
         }
+        resumeAttemptsUsed = 0
 
         let promptID = UUID()
         return try await withTaskCancellationHandler {
@@ -131,7 +148,10 @@ actor HostedAgentConnection {
                     id: promptID,
                     continuation: continuation,
                     onEvent: onEvent,
-                    onInteraction: onInteraction
+                    onInteraction: onInteraction,
+                    prompt: prompt,
+                    images: images,
+                    files: files
                 )
                 guard !Task.isCancelled else {
                     disconnect(with: CancellationError(), closeCode: .goingAway)
@@ -156,6 +176,12 @@ actor HostedAgentConnection {
 
     func close() {
         disconnect(with: HostedAgentClientError.closed, closeCode: .goingAway)
+    }
+
+    // wall-clock silence while the app was suspended says nothing about socket health,
+    // so returning to the foreground grants the liveness monitor a fresh window
+    func noteApplicationBecameActive() {
+        lastNetworkActivityAt = Date()
     }
 
     func waitForPendingInteractionResponses() async {
@@ -284,6 +310,9 @@ actor HostedAgentConnection {
                 conversation: conversation
             )
             try await send(inputFrame, over: socket)
+            if pendingPrompt?.id == promptID {
+                pendingPrompt?.inputDelivered = true
+            }
         } catch {
             failConnection(error, generation: generation)
         }
@@ -338,9 +367,11 @@ actor HostedAgentConnection {
             for waiter in waiters {
                 waiter.resume(returning: result)
             }
+            await resumePendingPrompt(from: frame, generation: generation)
         case "OUTPUT":
             updateServerSession(from: frame)
             connectionStatus = "connected"
+            resumeAttemptsUsed = 0
             guard let pending = pendingPrompt else {
                 return
             }
@@ -380,6 +411,95 @@ actor HostedAgentConnection {
         default:
             break
         }
+    }
+
+    // A CONNECTED frame while a prompt is pending is a mid-prompt reconnect. The server's
+    // `status` says where the run stands: "running" means events and the OUTPUT will stream
+    // on this socket; anything else means the run finished while we were away (the reply is
+    // the trailing agent entry in `chat_items`) or the INPUT never started it (resend it).
+    private func resumePendingPrompt(from frame: [String: JSONValue], generation: Int) async {
+        guard let pending = pendingPrompt else {
+            return
+        }
+        guard frame["status"]?.stringValue != "running" else {
+            return
+        }
+
+        if !pending.inputDelivered {
+            guard var conversation = lastConversation else {
+                failConnection(HostedAgentClientError.closed, generation: generation)
+                return
+            }
+            if let serverSession {
+                conversation.serverSession = serverSession
+            }
+            await transmitPrompt(
+                pending.prompt,
+                images: pending.images,
+                files: pending.files,
+                conversation: conversation,
+                promptID: pending.id
+            )
+            return
+        }
+
+        let missedItems = Self.itemsAfterLastUserMessage(in: frame)
+        for item in missedItems {
+            guard let event = Self.replayedToolResult(item) else {
+                continue
+            }
+            await pending.onEvent?(event)
+        }
+        guard pendingPrompt?.id == pending.id else {
+            return
+        }
+        pendingPrompt = nil
+        cancelInteractionTasks()
+        let reply = missedItems.last { $0["type"]?.stringValue == "agent" }?["content"]?.stringValue
+        if let reply, !reply.isEmpty {
+            pending.continuation.resume(
+                returning: HostedAgentResult(
+                    output: reply,
+                    endpointLabel: endpoint?.label ?? key.agentAddress,
+                    serverSession: serverSession
+                )
+            )
+        } else {
+            // the server no longer has the run or its reply, so let the user retry
+            pending.continuation.resume(throwing: HostedAgentClientError.closed)
+        }
+    }
+
+    private static func itemsAfterLastUserMessage(in frame: [String: JSONValue]) -> [[String: JSONValue]] {
+        guard case .array(let values)? = frame["chat_items"] else {
+            return []
+        }
+        var turn: [[String: JSONValue]] = []
+        for value in values {
+            guard case .object(let item) = value else {
+                continue
+            }
+            if item["type"]?.stringValue == "user" {
+                turn.removeAll()
+            } else {
+                turn.append(item)
+            }
+        }
+        return turn
+    }
+
+    private static func replayedToolResult(_ item: [String: JSONValue]) -> HostedAgentEvent? {
+        guard item["type"]?.stringValue == "tool_call",
+              let id = item["id"]?.stringValue,
+              !id.isEmpty else {
+            return nil
+        }
+        return .toolResult(
+            id: id,
+            name: item["name"]?.stringValue,
+            output: HostedAgentEvent.messageText(item),
+            state: item["status"]?.stringValue == "error" ? .failed : .completed
+        )
     }
 
     private func startInteractionTask(
@@ -520,7 +640,83 @@ actor HostedAgentConnection {
         guard generation == socketGeneration else {
             return
         }
+        if canResume(after: error) {
+            beginResumeAttempt()
+            return
+        }
         disconnect(with: normalizedConnectionError(error), closeCode: .goingAway)
+    }
+
+    // A dropped socket does not end the round-trip: the server keeps the run alive and
+    // re-attaches it when the same session reconnects, so a pending prompt is worth
+    // resuming for connection-loss errors. Server rejections and cancellations are final.
+    private func canResume(after error: Error) -> Bool {
+        guard pendingPrompt != nil,
+              connectWaiters.isEmpty,
+              lastConversation != nil,
+              resumeAttemptsUsed < resumeAttemptLimit else {
+            return false
+        }
+        switch error {
+        case is CancellationError:
+            return false
+        case let clientError as HostedAgentClientError:
+            switch clientError {
+            case .closed, .timeout:
+                return true
+            default:
+                return false
+            }
+        default:
+            return true
+        }
+    }
+
+    private func beginResumeAttempt() {
+        resumeAttemptsUsed += 1
+        socketGeneration += 1
+        let generation = socketGeneration
+        setState(.connecting)
+        connectionStatus = nil
+
+        connectTimeoutTask?.cancel()
+        connectTimeoutTask = nil
+        livenessTask?.cancel()
+        livenessTask = nil
+        receiveTask?.cancel()
+        receiveTask = nil
+        // gates from the dead socket unblock here; the server replays any interaction
+        // request that is still waiting once the new socket attaches
+        cancelInteractionTasks()
+
+        let socket = socket
+        self.socket = nil
+        endpoint = nil
+        socket?.cancel(with: .goingAway, reason: nil)
+
+        let delay = resumeRetryDelay * pow(2, Double(resumeAttemptsUsed - 1))
+        resumeTask = Task { [weak self] in
+            if delay > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            }
+            guard !Task.isCancelled else {
+                return
+            }
+            await self?.resumeConnection(generation: generation)
+        }
+    }
+
+    private func resumeConnection(generation: Int) async {
+        guard generation == socketGeneration,
+              state == .connecting,
+              pendingPrompt != nil,
+              var conversation = lastConversation else {
+            return
+        }
+        if let serverSession {
+            conversation.serverSession = serverSession
+        }
+        await openConnection(conversation: conversation, generation: generation)
     }
 
     private func disconnect(with error: Error, closeCode: URLSessionWebSocketTask.CloseCode) {
@@ -535,6 +731,9 @@ actor HostedAgentConnection {
         livenessTask = nil
         receiveTask?.cancel()
         receiveTask = nil
+        resumeTask?.cancel()
+        resumeTask = nil
+        resumeAttemptsUsed = 0
         cancelInteractionTasks()
 
         let socket = socket

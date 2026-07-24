@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import SwiftUI
+import UIKit
 
 enum ConversationActivityState: Hashable {
     case actionRequired
@@ -69,6 +70,7 @@ final class ChatViewModel: ObservableObject {
     private var persistenceErrorCancellable: AnyCancellable?
     private var imageDraftsByConversationID: [String: [ChatImageAttachment]] = [:]
     private var fileDraftsByConversationID: [String: [ChatFileAttachment]] = [:]
+    private var backgroundDeliveryTaskID: UIBackgroundTaskIdentifier = .invalid
 
     var probeInterval: TimeInterval {
         get {
@@ -328,6 +330,9 @@ final class ChatViewModel: ObservableObject {
                 return
             }
             self?.errorMessage = message
+        }
+        deliveryCoordinator.onDeliveriesIdle = { [weak self] in
+            self?.endBackgroundDeliveryHold()
         }
         interactionChangeCancellable = interactionCoordinator.objectWillChange.sink { [weak self] in
             self?.objectWillChange.send()
@@ -811,6 +816,42 @@ final class ChatViewModel: ObservableObject {
 
     func dismissError() {
         errorMessage = nil
+    }
+
+    /// Keeps an in-flight round-trip alive across app suspension: entering the background
+    /// buys extended execution time while a delivery is running, and returning to the
+    /// foreground refreshes the transport's liveness clock so the suspended interval is
+    /// not mistaken for a dead connection.
+    func handleScenePhaseChange(_ phase: ScenePhase) {
+        switch phase {
+        case .background:
+            beginBackgroundDeliveryHold()
+        case .active:
+            client.applicationDidBecomeActive()
+            endBackgroundDeliveryHold()
+        default:
+            break
+        }
+    }
+
+    private func beginBackgroundDeliveryHold() {
+        guard backgroundDeliveryTaskID == .invalid,
+              deliveryCoordinator.hasActiveDeliveries else {
+            return
+        }
+        backgroundDeliveryTaskID = UIApplication.shared.beginBackgroundTask(
+            withName: "HostedAgentDelivery"
+        ) { [weak self] in
+            self?.endBackgroundDeliveryHold()
+        }
+    }
+
+    private func endBackgroundDeliveryHold() {
+        guard backgroundDeliveryTaskID != .invalid else {
+            return
+        }
+        UIApplication.shared.endBackgroundTask(backgroundDeliveryTaskID)
+        backgroundDeliveryTaskID = .invalid
     }
 
     private func upsertAgent(_ agent: AgentConnection) -> AgentConnection {

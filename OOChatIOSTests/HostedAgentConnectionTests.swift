@@ -674,6 +674,161 @@ final class HostedAgentConnectionTests: XCTestCase {
         await assertClientError(.closed, from: pingPrompt)
     }
 
+    func testPromptResumesOnNewSocketWhileAgentStillRunning() async throws {
+        let factory = MockHostedAgentSocketFactory()
+        let connection = makeConnection(factory: factory, resumeAttemptLimit: 3)
+        let conversation = makeConversation(id: "resume-running")
+        _ = try await establish(connection, conversation: conversation, factory: factory)
+        let socket = try await factory.socket(at: 0)
+
+        let promptTask = Task {
+            try await connection.sendPrompt(
+                conversation: conversation,
+                prompt: "long think",
+                onEvent: nil,
+                onInteraction: nil
+            )
+        }
+        _ = try await socket.waitForSentFrame(type: "INPUT")
+
+        // the app was suspended and the socket died under the pending prompt
+        socket.enqueueError()
+
+        let resumedSocket = try await factory.socket(at: 1)
+        let reconnect = try await resumedSocket.waitForSentFrame(type: "CONNECT")
+        XCTAssertEqual(reconnect["session_id"]?.stringValue, conversation.id)
+        try resumedSocket.enqueueFrame(
+            ["type": .string("CONNECTED"), "status": .string("running")]
+        )
+        try resumedSocket.enqueueFrame(
+            ["type": .string("OUTPUT"), "result": .string("recovered reply")]
+        )
+
+        let result = try await promptTask.value
+        XCTAssertEqual(result.output, "recovered reply")
+        let resentInputs = try resumedSocket.sentFrames().filter { $0["type"]?.stringValue == "INPUT" }
+        XCTAssertTrue(resentInputs.isEmpty, "a delivered INPUT must not be resent on resume")
+        await connection.close()
+    }
+
+    func testPromptRecoversMissedReplyFromReconnectChatItems() async throws {
+        let factory = MockHostedAgentSocketFactory()
+        let connection = makeConnection(factory: factory, resumeAttemptLimit: 3)
+        let conversation = makeConversation(id: "resume-finished")
+        _ = try await establish(connection, conversation: conversation, factory: factory)
+        let socket = try await factory.socket(at: 0)
+        var events: [HostedAgentEvent] = []
+
+        let promptTask = Task {
+            try await connection.sendPrompt(
+                conversation: conversation,
+                prompt: "long think",
+                onEvent: { events.append($0) },
+                onInteraction: nil
+            )
+        }
+        _ = try await socket.waitForSentFrame(type: "INPUT")
+        socket.enqueueError()
+
+        let resumedSocket = try await factory.socket(at: 1)
+        _ = try await resumedSocket.waitForSentFrame(type: "CONNECT")
+        // the run finished while disconnected; the reply only exists in chat_items
+        try resumedSocket.enqueueFrame(
+            [
+                "type": .string("CONNECTED"),
+                "status": .string("connected"),
+                "server_newer": .bool(true),
+                "session": .object(["mode": .string("safe")]),
+                "chat_items": .array([
+                    .object([
+                        "id": .string("msg-0"),
+                        "type": .string("user"),
+                        "content": .string("long think"),
+                    ]),
+                    .object([
+                        "id": .string("tool-1"),
+                        "type": .string("tool_call"),
+                        "name": .string("shell"),
+                        "status": .string("done"),
+                        "result": .string("ok"),
+                    ]),
+                    .object([
+                        "id": .string("msg-1"),
+                        "type": .string("agent"),
+                        "content": .string("missed reply"),
+                    ]),
+                ]),
+            ]
+        )
+
+        let result = try await promptTask.value
+        XCTAssertEqual(result.output, "missed reply")
+        XCTAssertEqual(
+            events,
+            [.toolResult(id: "tool-1", name: "shell", output: "ok", state: .completed)]
+        )
+        await connection.close()
+    }
+
+    func testPromptResendsInputThatNeverReachedTheAgent() async throws {
+        let factory = MockHostedAgentSocketFactory()
+        let connection = makeConnection(factory: factory, resumeAttemptLimit: 3)
+        let conversation = makeConversation(id: "resume-resend")
+        _ = try await establish(connection, conversation: conversation, factory: factory)
+        let socket = try await factory.socket(at: 0)
+        socket.failNextSend()
+
+        let promptTask = Task {
+            try await connection.sendPrompt(
+                conversation: conversation,
+                prompt: "never delivered",
+                onEvent: nil,
+                onInteraction: nil
+            )
+        }
+
+        let resumedSocket = try await factory.socket(at: 1)
+        _ = try await resumedSocket.waitForSentFrame(type: "CONNECT")
+        try resumedSocket.enqueueFrame(
+            ["type": .string("CONNECTED"), "status": .string("new")]
+        )
+        let resentInput = try await resumedSocket.waitForSentFrame(type: "INPUT")
+        XCTAssertEqual(resentInput["prompt"]?.stringValue, "never delivered")
+        try resumedSocket.enqueueFrame(
+            ["type": .string("OUTPUT"), "result": .string("made it")]
+        )
+
+        let result = try await promptTask.value
+        XCTAssertEqual(result.output, "made it")
+        await connection.close()
+    }
+
+    func testResumeGivesUpAfterAttemptLimitAndFailsPrompt() async throws {
+        let factory = MockHostedAgentSocketFactory()
+        let connection = makeConnection(factory: factory, resumeAttemptLimit: 1)
+        let conversation = makeConversation(id: "resume-exhausted")
+        _ = try await establish(connection, conversation: conversation, factory: factory)
+        let socket = try await factory.socket(at: 0)
+
+        let promptTask = Task {
+            try await connection.sendPrompt(
+                conversation: conversation,
+                prompt: "doomed",
+                onEvent: nil,
+                onInteraction: nil
+            )
+        }
+        _ = try await socket.waitForSentFrame(type: "INPUT")
+        socket.enqueueError()
+
+        let resumedSocket = try await factory.socket(at: 1)
+        _ = try await resumedSocket.waitForSentFrame(type: "CONNECT")
+        resumedSocket.enqueueError()
+
+        await assertClientError(.closed, from: promptTask)
+        XCTAssertEqual(factory.count, 2)
+    }
+
     private var agentAddress: String {
         "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     }
@@ -702,7 +857,9 @@ final class HostedAgentConnectionTests: XCTestCase {
         observer: HostedAgentConnectionStateObserver = HostedAgentConnectionStateObserver(),
         connectTimeout: TimeInterval = 1,
         livenessTimeout: TimeInterval = 5,
-        livenessCheckInterval: TimeInterval = 0.1
+        livenessCheckInterval: TimeInterval = 0.1,
+        resumeAttemptLimit: Int = 0,
+        resumeRetryDelay: TimeInterval = 0
     ) -> HostedAgentConnection {
         let endpoint = endpoint
         return HostedAgentConnection(
@@ -715,7 +872,9 @@ final class HostedAgentConnectionTests: XCTestCase {
             endpointResolver: resolver ?? { _ in endpoint },
             connectTimeout: connectTimeout,
             livenessTimeout: livenessTimeout,
-            livenessCheckInterval: livenessCheckInterval
+            livenessCheckInterval: livenessCheckInterval,
+            resumeAttemptLimit: resumeAttemptLimit,
+            resumeRetryDelay: resumeRetryDelay
         )
     }
 
@@ -1023,6 +1182,8 @@ final class HostedAgentConnectionPoolTests: XCTestCase {
             connectTimeout: 1,
             livenessTimeout: 5,
             livenessCheckInterval: 0.1,
+            resumeAttemptLimit: 0,
+            resumeRetryDelay: 0,
             now: { clock.now() }
         )
     }

@@ -80,6 +80,8 @@ actor HostedAgentConnectionPool {
     private let connectTimeout: TimeInterval
     private let livenessTimeout: TimeInterval
     private let livenessCheckInterval: TimeInterval
+    private let resumeAttemptLimit: Int
+    private let resumeRetryDelay: TimeInterval
     private let now: @Sendable () -> Date
 
     private var connections: [HostedAgentConnectionKey: Entry] = [:]
@@ -97,6 +99,8 @@ actor HostedAgentConnectionPool {
         connectTimeout: TimeInterval = 45,
         livenessTimeout: TimeInterval = 75,
         livenessCheckInterval: TimeInterval = 10,
+        resumeAttemptLimit: Int = 3,
+        resumeRetryDelay: TimeInterval = 1,
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.identityStore = identityStore
@@ -110,6 +114,8 @@ actor HostedAgentConnectionPool {
         self.connectTimeout = connectTimeout
         self.livenessTimeout = livenessTimeout
         self.livenessCheckInterval = livenessCheckInterval
+        self.resumeAttemptLimit = resumeAttemptLimit
+        self.resumeRetryDelay = resumeRetryDelay
         self.now = now
     }
 
@@ -164,6 +170,12 @@ actor HostedAgentConnectionPool {
         await connection.waitForPendingInteractionResponses()
     }
 
+    func noteApplicationBecameActive() async {
+        for entry in connections.values {
+            await entry.connection.noteApplicationBecameActive()
+        }
+    }
+
     func closeAll() async {
         cleanupTask?.cancel()
         cleanupTask = nil
@@ -201,7 +213,9 @@ actor HostedAgentConnectionPool {
             endpointResolver: endpointResolver,
             connectTimeout: connectTimeout,
             livenessTimeout: livenessTimeout,
-            livenessCheckInterval: livenessCheckInterval
+            livenessCheckInterval: livenessCheckInterval,
+            resumeAttemptLimit: resumeAttemptLimit,
+            resumeRetryDelay: resumeRetryDelay
         )
         connections[key] = Entry(connection: connection, activeLeases: 1, lastUsedAt: now())
         return Lease(key: key, connection: connection)

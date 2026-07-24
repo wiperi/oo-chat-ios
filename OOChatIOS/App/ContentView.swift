@@ -4,6 +4,7 @@ import SwiftUI
 struct ContentView: View {
     @StateObject var viewModel: ChatViewModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("appAppearance") private var appAppearance = AppAppearance.system.rawValue
 
     var body: some View {
@@ -37,6 +38,9 @@ struct ContentView: View {
             if AppAppearance(rawValue: appAppearance) == nil {
                 appAppearance = AppAppearance.system.rawValue
             }
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            viewModel.handleScenePhaseChange(newPhase)
         }
     }
 }

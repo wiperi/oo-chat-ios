@@ -443,4 +443,11 @@ protocol HostedAgentTransport {
         onInteraction: (@MainActor (HostedAgentInteraction) async -> HostedAgentInteractionDecision)?
     ) async throws -> HostedAgentResult
     func waitForPendingInteractionResponses(agentAddress: String, conversationID: String) async
+    /// Called when the app returns to the foreground, so transports can refresh liveness
+    /// bookkeeping that would otherwise treat the suspended time as a dead connection.
+    func applicationDidBecomeActive()
+}
+
+extension HostedAgentTransport {
+    func applicationDidBecomeActive() {}
 }

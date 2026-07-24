@@ -145,6 +145,13 @@ final class HostedAgentClient: HostedAgentTransport {
         )
     }
 
+    func applicationDidBecomeActive() {
+        let connectionPool = connectionPool
+        Task {
+            await connectionPool.noteApplicationBecameActive()
+        }
+    }
+
     static func approvalResponseFrame(
         decision: ApprovalDecision,
         agentAddress: String,

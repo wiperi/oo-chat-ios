@@ -13,6 +13,11 @@ final class MessageDeliveryCoordinator: ObservableObject {
     var onConnectionStateChange: ((String, ConnectionState) -> Void)?
     var connectionState: ((String) -> ConnectionState)?
     var onDeliveryError: ((String, String) -> Void)?
+    var onDeliveriesIdle: (() -> Void)?
+
+    var hasActiveDeliveries: Bool {
+        !deliveryTasksByConversationID.isEmpty
+    }
 
     private var deliveryTasksByConversationID: [String: Task<Void, Never>] = [:]
     private var activeMessageIDsByConversationID: [String: String] = [:]
@@ -265,6 +270,9 @@ final class MessageDeliveryCoordinator: ObservableObject {
         processingConversationIDs.remove(conversationID)
         if isDeliveryEnabled, !pausedConversationIDs.contains(conversationID) {
             startNextQueuedMessage(in: conversationID)
+        }
+        if deliveryTasksByConversationID.isEmpty {
+            onDeliveriesIdle?()
         }
     }
 
