@@ -190,7 +190,7 @@ struct ChatScreen: View {
                             )
                                 .padding(.top, 8)
                                 .background {
-                                    Color(.systemBackground)
+                                    ChatSurfacePalette.backgroundBase
                                         .ignoresSafeArea(edges: .bottom)
                                 }
                         }
@@ -200,7 +200,10 @@ struct ChatScreen: View {
                 ContentUnavailableView("No Conversation", systemImage: "bubble.left")
             }
         }
-        .background(Color(.systemBackground))
+        .background {
+            ChatScreenBackdrop()
+                .ignoresSafeArea()
+        }
         .navigationTitle(viewModel.activeConversation?.title ?? "Chat")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -341,11 +344,73 @@ struct ChatScreen: View {
     }
 }
 
+private struct ChatScreenBackdrop: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        ZStack {
+            ChatSurfacePalette.backgroundBase
+
+            if colorScheme == .dark {
+                LinearGradient(
+                    colors: [
+                        ChatSurfacePalette.darkTopWash,
+                        ChatSurfacePalette.darkMidnight,
+                        ChatSurfacePalette.darkLowerInk,
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+
+                RadialGradient(
+                    colors: [
+                        AppTheme.primary.opacity(0.14),
+                        AppTheme.primary.opacity(0.05),
+                        AppTheme.primary.opacity(0),
+                    ],
+                    center: UnitPoint(x: 0.50, y: 0.40),
+                    startRadius: 18,
+                    endRadius: 320
+                )
+                .blendMode(.screen)
+
+                RadialGradient(
+                    colors: [
+                        ChatSurfacePalette.darkWarmLift,
+                        ChatSurfacePalette.darkWarmLift.opacity(0),
+                    ],
+                    center: UnitPoint(x: 0.18, y: 0.16),
+                    startRadius: 10,
+                    endRadius: 260
+                )
+                .blendMode(.screen)
+            }
+        }
+    }
+}
+
+private enum ChatSurfacePalette {
+    static let backgroundBase = Color(uiColor: UIColor { traits in
+        if traits.userInterfaceStyle == .dark {
+            return UIColor(red: 7.0 / 255.0, green: 6.0 / 255.0, blue: 10.0 / 255.0, alpha: 1)
+        } else {
+            return .systemBackground
+        }
+    })
+
+    static let darkTopWash = Color(red: 13.0 / 255.0, green: 10.0 / 255.0, blue: 18.0 / 255.0)
+    static let darkMidnight = Color(red: 6.0 / 255.0, green: 5.0 / 255.0, blue: 9.0 / 255.0)
+    static let darkLowerInk = Color(red: 3.0 / 255.0, green: 3.0 / 255.0, blue: 5.0 / 255.0)
+    static let darkWarmLift = Color(red: 76.0 / 255.0, green: 48.0 / 255.0, blue: 128.0 / 255.0)
+        .opacity(0.07)
+}
+
 struct EmptyChatState: View {
     let agentName: String
     let showsSuggestions: Bool
     let onSelectSuggestion: (ChatStarterSuggestion) -> Void
 
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var logoPulse = false
@@ -355,19 +420,11 @@ struct EmptyChatState: View {
             VStack(spacing: EmptyChatMetrics.headingSpacing) {
                 brandMark
 
-                VStack(spacing: EmptyChatMetrics.titleSpacing) {
-                    Text("What can we work on")
-                        .font(.headline.weight(.medium))
-                        .foregroundStyle(EmptyChatPalette.heading)
-
-                    Text("Pick one, then edit before sending.")
-                        .font(.footnote.weight(.regular))
-                        .foregroundStyle(EmptyChatPalette.subtitle)
-                        .multilineTextAlignment(.center)
-                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
-                }
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: EmptyChatMetrics.headingMaximumWidth)
+                Text("What can we work on")
+                    .font(.headline.weight(.medium))
+                    .foregroundStyle(EmptyChatPalette.heading)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: EmptyChatMetrics.headingMaximumWidth)
             }
 
             if showsSuggestions {
@@ -391,8 +448,12 @@ struct EmptyChatState: View {
                 .fill(
                     RadialGradient(
                         colors: [
-                            AppTheme.primary.opacity(EmptyChatMetrics.logoOuterAuraCoreOpacity),
-                            AppTheme.primary.opacity(EmptyChatMetrics.logoOuterAuraEdgeOpacity),
+                            AppTheme.primary.opacity(
+                                EmptyChatMetrics.logoOuterAuraCoreOpacity(for: colorScheme)
+                            ),
+                            AppTheme.primary.opacity(
+                                EmptyChatMetrics.logoOuterAuraEdgeOpacity(for: colorScheme)
+                            ),
                             AppTheme.primary.opacity(0),
                         ],
                         center: .center,
@@ -410,8 +471,12 @@ struct EmptyChatState: View {
                 .fill(
                     RadialGradient(
                         colors: [
-                            AppTheme.primary.opacity(EmptyChatMetrics.logoAuraCoreOpacity),
-                            AppTheme.primary.opacity(EmptyChatMetrics.logoAuraEdgeOpacity),
+                            AppTheme.primary.opacity(
+                                EmptyChatMetrics.logoAuraCoreOpacity(for: colorScheme)
+                            ),
+                            AppTheme.primary.opacity(
+                                EmptyChatMetrics.logoAuraEdgeOpacity(for: colorScheme)
+                            ),
                             AppTheme.primary.opacity(0),
                         ],
                         center: .center,
@@ -425,6 +490,25 @@ struct EmptyChatState: View {
                 )
                 .blur(radius: EmptyChatMetrics.logoAuraBlur)
 
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            EmptyChatPalette.logoBacklightCore,
+                            EmptyChatPalette.logoBacklightEdge,
+                            EmptyChatPalette.logoBacklightEdge.opacity(0),
+                        ],
+                        center: .center,
+                        startRadius: EmptyChatMetrics.logoBacklightStartRadius,
+                        endRadius: EmptyChatMetrics.logoBacklightEndRadius
+                    )
+                )
+                .frame(
+                    width: EmptyChatMetrics.logoBacklightSize,
+                    height: EmptyChatMetrics.logoBacklightSize
+                )
+                .blur(radius: EmptyChatMetrics.logoBacklightBlur)
+
             Image("OnionLogo")
                 .resizable()
                 .scaledToFit()
@@ -432,10 +516,15 @@ struct EmptyChatState: View {
                     width: EmptyChatMetrics.logoSize,
                     height: EmptyChatMetrics.logoSize
                 )
-                .opacity(EmptyChatMetrics.logoImageOpacity)
+                .opacity(EmptyChatMetrics.logoImageOpacity(for: colorScheme))
                 .offset(y: EmptyChatMetrics.logoImageVerticalOffset)
                 .shadow(
-                    color: AppTheme.primary.opacity(logoPulse ? 0.12 : 0.07),
+                    color: EmptyChatPalette.logoShadow.opacity(
+                        EmptyChatMetrics.logoShadowOpacity(
+                            isActive: logoPulse,
+                            colorScheme: colorScheme
+                        )
+                    ),
                     radius: logoPulse ? EmptyChatMetrics.logoActiveShadowRadius : EmptyChatMetrics.logoIdleShadowRadius,
                     y: logoPulse ? EmptyChatMetrics.logoActiveShadowOffset : EmptyChatMetrics.logoIdleShadowOffset
                 )
@@ -522,6 +611,11 @@ struct EmptyChatState: View {
                     lineWidth: 0.5
                 )
         }
+        .shadow(
+            color: EmptyChatPalette.chipShadow,
+            radius: EmptyChatMetrics.chipShadowRadius,
+            y: EmptyChatMetrics.chipShadowOffset
+        )
         .contentShape(chipShape)
         .accessibilityElement(children: .combine)
     }
@@ -602,23 +696,15 @@ struct ChatStarterSuggestion: Identifiable, Equatable {
 private enum EmptyChatPalette {
     static let heading = Color(uiColor: UIColor { traits in
         if traits.userInterfaceStyle == .dark {
-            return UIColor(red: 199.0 / 255.0, green: 183.0 / 255.0, blue: 232.0 / 255.0, alpha: 1)
+            return UIColor(red: 214.0 / 255.0, green: 199.0 / 255.0, blue: 246.0 / 255.0, alpha: 1)
         } else {
             return UIColor(red: 122.0 / 255.0, green: 92.0 / 255.0, blue: 166.0 / 255.0, alpha: 1)
         }
     })
 
-    static let subtitle = Color(uiColor: UIColor { traits in
-        if traits.userInterfaceStyle == .dark {
-            return UIColor(red: 160.0 / 255.0, green: 151.0 / 255.0, blue: 176.0 / 255.0, alpha: 1)
-        } else {
-            return UIColor(red: 139.0 / 255.0, green: 129.0 / 255.0, blue: 151.0 / 255.0, alpha: 1)
-        }
-    })
-
     static let chipText = Color(uiColor: UIColor { traits in
         if traits.userInterfaceStyle == .dark {
-            return UIColor(red: 214.0 / 255.0, green: 206.0 / 255.0, blue: 227.0 / 255.0, alpha: 1)
+            return UIColor(red: 225.0 / 255.0, green: 216.0 / 255.0, blue: 239.0 / 255.0, alpha: 1)
         } else {
             return UIColor(red: 60.0 / 255.0, green: 53.0 / 255.0, blue: 72.0 / 255.0, alpha: 1)
         }
@@ -626,7 +712,7 @@ private enum EmptyChatPalette {
 
     static let chipIcon = Color(uiColor: UIColor { traits in
         if traits.userInterfaceStyle == .dark {
-            return UIColor(red: 173.0 / 255.0, green: 143.0 / 255.0, blue: 239.0 / 255.0, alpha: 1)
+            return UIColor(red: 188.0 / 255.0, green: 158.0 / 255.0, blue: 248.0 / 255.0, alpha: 1)
         } else {
             return UIColor(red: 124.0 / 255.0, green: 73.0 / 255.0, blue: 222.0 / 255.0, alpha: 0.72)
         }
@@ -634,7 +720,7 @@ private enum EmptyChatPalette {
 
     static let chipFill = Color(uiColor: UIColor { traits in
         if traits.userInterfaceStyle == .dark {
-            return UIColor(red: 39.0 / 255.0, green: 35.0 / 255.0, blue: 46.0 / 255.0, alpha: 0.72)
+            return UIColor(red: 40.0 / 255.0, green: 36.0 / 255.0, blue: 49.0 / 255.0, alpha: 0.76)
         } else {
             return UIColor(red: 250.0 / 255.0, green: 248.0 / 255.0, blue: 253.0 / 255.0, alpha: 0.78)
         }
@@ -642,7 +728,7 @@ private enum EmptyChatPalette {
 
     static let chipStroke = Color(uiColor: UIColor { traits in
         if traits.userInterfaceStyle == .dark {
-            return UIColor(red: 166.0 / 255.0, green: 129.0 / 255.0, blue: 244.0 / 255.0, alpha: 0.13)
+            return UIColor(red: 189.0 / 255.0, green: 154.0 / 255.0, blue: 248.0 / 255.0, alpha: 0.18)
         } else {
             return UIColor(red: 126.0 / 255.0, green: 88.0 / 255.0, blue: 208.0 / 255.0, alpha: 0.08)
         }
@@ -663,30 +749,60 @@ private enum EmptyChatPalette {
             return UIColor(red: 124.0 / 255.0, green: 73.0 / 255.0, blue: 222.0 / 255.0, alpha: 0.22)
         }
     })
+
+    static let chipShadow = Color(uiColor: UIColor { traits in
+        if traits.userInterfaceStyle == .dark {
+            return UIColor(white: 0, alpha: 0.28)
+        } else {
+            return UIColor(white: 0, alpha: 0.02)
+        }
+    })
+
+    static let logoBacklightCore = Color(uiColor: UIColor { traits in
+        if traits.userInterfaceStyle == .dark {
+            return UIColor(red: 222.0 / 255.0, green: 208.0 / 255.0, blue: 255.0 / 255.0, alpha: 0.14)
+        } else {
+            return UIColor(white: 1, alpha: 0)
+        }
+    })
+
+    static let logoBacklightEdge = Color(uiColor: UIColor { traits in
+        if traits.userInterfaceStyle == .dark {
+            return UIColor(red: 152.0 / 255.0, green: 111.0 / 255.0, blue: 244.0 / 255.0, alpha: 0.06)
+        } else {
+            return UIColor(white: 1, alpha: 0)
+        }
+    })
+
+    static let logoShadow = Color(uiColor: UIColor { traits in
+        if traits.userInterfaceStyle == .dark {
+            return UIColor(red: 182.0 / 255.0, green: 146.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
+        } else {
+            return UIColor(red: 109.0 / 255.0, green: 40.0 / 255.0, blue: 217.0 / 255.0, alpha: 1)
+        }
+    })
 }
 
 private enum EmptyChatMetrics {
     static let sectionSpacing: CGFloat = 22
     static let headingSpacing: CGFloat = 6
-    static let titleSpacing: CGFloat = 7
     static let topOffset: CGFloat = 58
     static let verticalPadding: CGFloat = 36
     static let logoStageSize: CGFloat = 132
     static let logoSize: CGFloat = 72
-    static let logoImageOpacity: Double = 0.88
     static let logoImageVerticalOffset: CGFloat = 1
     static let logoOuterAuraSize: CGFloat = 230
-    static let logoOuterAuraCoreOpacity: Double = 0.055
-    static let logoOuterAuraEdgeOpacity: Double = 0.025
     static let logoOuterAuraStartRadius: CGFloat = 24
     static let logoOuterAuraEndRadius: CGFloat = 124
     static let logoOuterAuraBlur: CGFloat = 38
     static let logoAuraSize: CGFloat = 168
-    static let logoAuraCoreOpacity: Double = 0.13
-    static let logoAuraEdgeOpacity: Double = 0.055
     static let logoAuraStartRadius: CGFloat = 12
     static let logoAuraEndRadius: CGFloat = 92
     static let logoAuraBlur: CGFloat = 28
+    static let logoBacklightSize: CGFloat = 104
+    static let logoBacklightStartRadius: CGFloat = 5
+    static let logoBacklightEndRadius: CGFloat = 56
+    static let logoBacklightBlur: CGFloat = 11
     static let logoIdleShadowRadius: CGFloat = 10
     static let logoActiveShadowRadius: CGFloat = 16
     static let logoIdleShadowOffset: CGFloat = 4
@@ -700,6 +816,36 @@ private enum EmptyChatMetrics {
     static let chipHorizontalPadding: CGFloat = 12
     static let chipIconSize: CGFloat = 15
     static let chipCornerRadius: CGFloat = 16
+    static let chipShadowRadius: CGFloat = 8
+    static let chipShadowOffset: CGFloat = 2
+
+    static func logoImageOpacity(for colorScheme: ColorScheme) -> Double {
+        colorScheme == .dark ? 0.96 : 0.88
+    }
+
+    static func logoOuterAuraCoreOpacity(for colorScheme: ColorScheme) -> Double {
+        colorScheme == .dark ? 0.085 : 0.055
+    }
+
+    static func logoOuterAuraEdgeOpacity(for colorScheme: ColorScheme) -> Double {
+        colorScheme == .dark ? 0.035 : 0.025
+    }
+
+    static func logoAuraCoreOpacity(for colorScheme: ColorScheme) -> Double {
+        colorScheme == .dark ? 0.17 : 0.13
+    }
+
+    static func logoAuraEdgeOpacity(for colorScheme: ColorScheme) -> Double {
+        colorScheme == .dark ? 0.065 : 0.055
+    }
+
+    static func logoShadowOpacity(isActive: Bool, colorScheme: ColorScheme) -> Double {
+        if colorScheme == .dark {
+            return isActive ? 0.20 : 0.13
+        }
+
+        return isActive ? 0.12 : 0.07
+    }
 }
 
 private struct ChatScrollUpdate: Equatable {
