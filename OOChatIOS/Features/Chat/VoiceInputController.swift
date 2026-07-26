@@ -97,39 +97,14 @@ final class AppleSpeechTranscriber: SpeechTranscribing {
             throw VoiceInputError.recognizerUnavailable
         }
 
-        let audioSession = AVAudioSession.sharedInstance()
-        previousAudioCategory = audioSession.category
-        previousAudioMode = audioSession.mode
-        previousAudioOptions = audioSession.categoryOptions
-        do {
-            try audioSession.setCategory(.record, mode: .measurement, options: [])
-            try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
-            hasActiveAudioSession = true
-        } catch {
-            restoreAudioSessionConfiguration()
-            throw error
-        }
+        try configureAudioSession()
 
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
         request.taskHint = .dictation
         recognitionRequest = request
 
-        let inputNode = audioEngine.inputNode
-        let recordingFormat = inputNode.outputFormat(forBus: 0)
-        guard recordingFormat.sampleRate > 0, recordingFormat.channelCount > 0 else {
-            cleanup()
-            throw VoiceInputError.invalidAudioInput
-        }
-
-        inputNode.installTap(
-            onBus: 0,
-            bufferSize: 1_024,
-            format: recordingFormat
-        ) { [weak request] buffer, _ in
-            request?.append(buffer)
-        }
-        hasInstalledAudioTap = true
+        try installAudioTap(for: request)
 
         recognitionTask = speechRecognizer.recognitionTask(with: request) { [weak self, weak request] result, error in
             Task { @MainActor in
@@ -163,6 +138,41 @@ final class AppleSpeechTranscriber: SpeechTranscribing {
 
     func stop() {
         cleanup()
+    }
+
+    private func configureAudioSession() throws {
+        let audioSession = AVAudioSession.sharedInstance()
+        previousAudioCategory = audioSession.category
+        previousAudioMode = audioSession.mode
+        previousAudioOptions = audioSession.categoryOptions
+        do {
+            try audioSession.setCategory(.record, mode: .measurement, options: [])
+            try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+            hasActiveAudioSession = true
+        } catch {
+            restoreAudioSessionConfiguration()
+            throw error
+        }
+    }
+
+    private func installAudioTap(
+        for request: SFSpeechAudioBufferRecognitionRequest
+    ) throws {
+        let inputNode = audioEngine.inputNode
+        let recordingFormat = inputNode.outputFormat(forBus: 0)
+        guard recordingFormat.sampleRate > 0, recordingFormat.channelCount > 0 else {
+            cleanup()
+            throw VoiceInputError.invalidAudioInput
+        }
+
+        inputNode.installTap(
+            onBus: 0,
+            bufferSize: 1_024,
+            format: recordingFormat
+        ) { [weak request] buffer, _ in
+            request?.append(buffer)
+        }
+        hasInstalledAudioTap = true
     }
 
     private func cleanup() {
