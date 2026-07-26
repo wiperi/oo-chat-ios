@@ -20,6 +20,7 @@ final class ComposerTests: XCTestCase {
         XCTAssertNotNil(ViewHost.element(labelContains: "Send message", in: window))
         XCTAssertNotNil(ViewHost.element(labelContains: "Chat mode: Safe", in: window))
         XCTAssertNotNil(ViewHost.element(labelContains: "Add attachment", in: window))
+        XCTAssertNotNil(ViewHost.element(labelContains: "Start voice input", in: window))
         XCTAssertNil(ViewHost.element(labelContains: "Add photos", in: window))
         XCTAssertNil(ViewHost.element(labelContains: "Add files", in: window))
     }
@@ -147,6 +148,138 @@ final class ComposerTests: XCTestCase {
         XCTAssertEqual(transport.sentPrompts, ["Hello agent"])
     }
 
+    func testVoiceInputButtonStartsAndStopsListening() {
+        let transcriber = MockSpeechTranscriber()
+        let controller = VoiceInputController(transcriber: transcriber)
+        let viewModel = ViewFixtures.chatViewModel(voiceInputController: controller)
+        let window = ViewHost.host(Composer(viewModel: viewModel))
+
+        XCTAssertTrue(ViewHost.activate(labelContains: "Start voice input", in: window))
+        waitForVoiceInputState(.listening, viewModel: viewModel)
+        XCTAssertEqual(transcriber.authorizationRequestCount, 1)
+        XCTAssertEqual(transcriber.startCount, 1)
+        XCTAssertNotNil(ViewHost.element(labelContains: "Stop voice input", in: window))
+
+        XCTAssertTrue(ViewHost.activate(labelContains: "Stop voice input", in: window))
+        XCTAssertEqual(viewModel.voiceInputState, .idle)
+        XCTAssertEqual(transcriber.stopCount, 1)
+        XCTAssertNotNil(ViewHost.element(labelContains: "Start voice input", in: window))
+
+        XCTAssertTrue(ViewHost.activate(labelContains: "Start voice input", in: window))
+        waitForVoiceInputState(.listening, viewModel: viewModel)
+        XCTAssertEqual(transcriber.startCount, 2)
+        XCTAssertTrue(ViewHost.activate(labelContains: "Stop voice input", in: window))
+        XCTAssertEqual(transcriber.stopCount, 2)
+    }
+
+    func testVoiceInputPartialsReplaceTranscriptWithoutDuplicatingPrefix() {
+        let transcriber = MockSpeechTranscriber()
+        let controller = VoiceInputController(transcriber: transcriber)
+        let viewModel = ViewFixtures.chatViewModel(voiceInputController: controller)
+        let window = ViewHost.host(Composer(viewModel: viewModel))
+        viewModel.prompt = "Draft"
+        ViewHost.pump()
+
+        XCTAssertTrue(ViewHost.activate(labelContains: "Start voice input", in: window))
+        waitForVoiceInputState(.listening, viewModel: viewModel)
+
+        transcriber.emit("hello")
+        XCTAssertEqual(viewModel.prompt, "Draft hello")
+
+        transcriber.emit("hello world", isFinal: true)
+        XCTAssertEqual(viewModel.prompt, "Draft hello world")
+        XCTAssertEqual(viewModel.voiceInputState, .idle)
+        ViewHost.pump()
+        XCTAssertNotNil(ViewHost.element(labelContains: "Start voice input", in: window))
+    }
+
+    func testStoppedVoiceInputIgnoresLateResults() {
+        let transcriber = MockSpeechTranscriber()
+        let controller = VoiceInputController(transcriber: transcriber)
+        let viewModel = ViewFixtures.chatViewModel(voiceInputController: controller)
+        let window = ViewHost.host(Composer(viewModel: viewModel))
+        viewModel.prompt = "Draft"
+        ViewHost.pump()
+
+        XCTAssertTrue(ViewHost.activate(labelContains: "Start voice input", in: window))
+        waitForVoiceInputState(.listening, viewModel: viewModel)
+        transcriber.emit("first")
+        XCTAssertEqual(viewModel.prompt, "Draft first")
+
+        XCTAssertTrue(ViewHost.activate(labelContains: "Stop voice input", in: window))
+        transcriber.emit("late result", session: 0)
+        XCTAssertEqual(viewModel.prompt, "Draft first")
+    }
+
+    func testVoiceInputFailureDisplaysError() {
+        let transcriber = MockSpeechTranscriber()
+        let controller = VoiceInputController(transcriber: transcriber)
+        let viewModel = ViewFixtures.chatViewModel(voiceInputController: controller)
+        let window = ViewHost.host(ContentView(viewModel: viewModel))
+
+        XCTAssertTrue(ViewHost.activate(labelContains: "Start voice input", in: window))
+        waitForVoiceInputState(.listening, viewModel: viewModel)
+        transcriber.fail(VoiceInputError.recognizerUnavailable)
+        ViewHost.pump(0.2)
+
+        XCTAssertEqual(
+            viewModel.errorMessage,
+            VoiceInputError.recognizerUnavailable.localizedDescription
+        )
+        XCTAssertNotNil(
+            ViewHost.element(
+                labelContains: VoiceInputError.recognizerUnavailable.localizedDescription,
+                in: window
+            )
+        )
+        XCTAssertEqual(viewModel.voiceInputState, .idle)
+    }
+
+    func testDeniedVoiceInputPermissionPreservesDraft() {
+        let transcriber = MockSpeechTranscriber()
+        transcriber.authorizationError = VoiceInputError.microphoneDenied
+        let controller = VoiceInputController(transcriber: transcriber)
+        let viewModel = ViewFixtures.chatViewModel(voiceInputController: controller)
+        let window = ViewHost.host(Composer(viewModel: viewModel))
+        viewModel.prompt = "Keep this draft"
+        ViewHost.pump()
+
+        XCTAssertTrue(ViewHost.activate(labelContains: "Start voice input", in: window))
+        waitForVoiceInputState(.idle, viewModel: viewModel)
+
+        XCTAssertEqual(viewModel.prompt, "Keep this draft")
+        XCTAssertEqual(transcriber.startCount, 0)
+        XCTAssertEqual(
+            viewModel.errorMessage,
+            VoiceInputError.microphoneDenied.localizedDescription
+        )
+    }
+
+    func testSendingStopsVoiceInput() {
+        let transport = makeTransport()
+        let transcriber = MockSpeechTranscriber()
+        let controller = VoiceInputController(transcriber: transcriber)
+        let viewModel = ViewFixtures.chatViewModel(
+            transport: transport,
+            voiceInputController: controller
+        )
+        let window = ViewHost.host(Composer(viewModel: viewModel))
+        viewModel.prompt = "Dictated message"
+        ViewHost.pump()
+
+        XCTAssertTrue(ViewHost.activate(labelContains: "Start voice input", in: window))
+        waitForVoiceInputState(.listening, viewModel: viewModel)
+        XCTAssertTrue(ViewHost.activate(labelContains: "Send message", in: window))
+
+        let deadline = Date().addingTimeInterval(3)
+        while transport.sentPrompts.isEmpty && Date() < deadline {
+            ViewHost.pump(0.1)
+        }
+        XCTAssertEqual(viewModel.voiceInputState, .idle)
+        XCTAssertEqual(transcriber.stopCount, 1)
+        XCTAssertEqual(transport.sentPrompts, ["Dictated message"])
+    }
+
     func testProcessingShowsStopButtonAndStops() {
         let transport = makeTransport()
         transport.sendBehavior = .waitUntilCancelled
@@ -194,6 +327,19 @@ final class ComposerTests: XCTestCase {
             ViewHost.pump(0.5)
             XCTAssertEqual(viewModel.activeMode, .accept)
         }
+    }
+
+    private func waitForVoiceInputState(
+        _ expectedState: VoiceInputState,
+        viewModel: ChatViewModel,
+        timeout: TimeInterval = 1
+    ) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while viewModel.voiceInputState != expectedState && Date() < deadline {
+            ViewHost.pump(0.05)
+        }
+        XCTAssertEqual(viewModel.voiceInputState, expectedState)
+        ViewHost.pump()
     }
 }
 

@@ -256,6 +256,70 @@ final class InMemoryConversationRepository: ConversationRepository {
     }
 }
 
+@MainActor
+final class MockSpeechTranscriber: SpeechTranscribing {
+    typealias ResultHandler = (_ transcript: String, _ isFinal: Bool) -> Void
+    typealias FailureHandler = (Error) -> Void
+
+    var authorizationError: Error?
+    var startError: Error?
+    private(set) var authorizationRequestCount = 0
+    private(set) var startCount = 0
+    private(set) var stopCount = 0
+    private var resultHandlers: [ResultHandler] = []
+    private var failureHandlers: [FailureHandler] = []
+
+    func requestAuthorization() async throws {
+        authorizationRequestCount += 1
+        if let authorizationError {
+            throw authorizationError
+        }
+    }
+
+    func start(
+        resultHandler: @escaping ResultHandler,
+        failureHandler: @escaping FailureHandler
+    ) throws {
+        if let startError {
+            throw startError
+        }
+        startCount += 1
+        resultHandlers.append(resultHandler)
+        failureHandlers.append(failureHandler)
+    }
+
+    func stop() {
+        stopCount += 1
+    }
+
+    func emit(
+        _ transcript: String,
+        isFinal: Bool = false,
+        session index: Int? = nil
+    ) {
+        guard let handler = handler(in: resultHandlers, at: index) else {
+            XCTFail("No speech result handler is available")
+            return
+        }
+        handler(transcript, isFinal)
+    }
+
+    func fail(_ error: Error, session index: Int? = nil) {
+        guard let handler = handler(in: failureHandlers, at: index) else {
+            XCTFail("No speech failure handler is available")
+            return
+        }
+        handler(error)
+    }
+
+    private func handler<T>(in handlers: [T], at index: Int?) -> T? {
+        if let index {
+            return handlers.indices.contains(index) ? handlers[index] : nil
+        }
+        return handlers.last
+    }
+}
+
 enum ViewFixtures {
     static func agent(
         id: String = "agent1",
@@ -302,7 +366,8 @@ enum ViewFixtures {
     @MainActor
     static func chatViewModel(
         transport: MockAgentTransport = MockAgentTransport(),
-        messages: [ChatMessage] = []
+        messages: [ChatMessage] = [],
+        voiceInputController: VoiceInputController? = nil
     ) -> ChatViewModel {
         let agent = agent()
         let conversation = conversation(agent: agent, messages: messages)
@@ -315,6 +380,11 @@ enum ViewFixtures {
             )
         )
         let monitor = MockNetworkMonitor()
-        return ChatViewModel(store: repo, client: transport, networkMonitor: monitor)
+        return ChatViewModel(
+            store: repo,
+            client: transport,
+            networkMonitor: monitor,
+            voiceInputController: voiceInputController
+        )
     }
 }
