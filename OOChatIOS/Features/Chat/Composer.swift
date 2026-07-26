@@ -7,6 +7,7 @@ struct Composer: View {
     @ObservedObject var viewModel: ChatViewModel
     var focusRequest = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
     @FocusState private var isPromptFocused: Bool
     @State private var showModeMenu = false
     @State private var sheetHeight: CGFloat = 400
@@ -43,10 +44,16 @@ struct Composer: View {
             viewModel.promptDidChange()
         }
         .onChange(of: viewModel.activeConversationID) {
+            viewModel.stopVoiceInput()
             isPromptFocused = viewModel.activeConversationID != nil
         }
         .onChange(of: focusRequest) {
             isPromptFocused = true
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background {
+                viewModel.stopVoiceInput()
+            }
         }
         .onChange(of: selectedPhotoItems) { _, items in
             guard !items.isEmpty else {
@@ -59,6 +66,9 @@ struct Composer: View {
         }
         .onAppear {
             viewModel.prefetchActiveAgentSkills()
+        }
+        .onDisappear {
+            viewModel.stopVoiceInput()
         }
         .photosPicker(
             isPresented: $isPhotoPickerPresented,
@@ -189,7 +199,9 @@ struct Composer: View {
                 .tint(AppTheme.primary)
                 .frame(minHeight: ComposerMetrics.sendButtonSize, alignment: .center)
                 .padding(.vertical, ComposerMetrics.inputVerticalPadding)
+                .allowsHitTesting(!viewModel.isVoiceInputActive)
 
+            voiceInputButton
             sendButton
         }
         .padding(.leading, ComposerMetrics.horizontalPadding)
@@ -214,6 +226,71 @@ struct Composer: View {
             y: ComposerMetrics.focusedInputShadowYOffset
         )
         .animation(AppMotion.press, value: isPromptFocused)
+    }
+
+    private var voiceInputButton: some View {
+        Button {
+            let wasActive = viewModel.isVoiceInputActive
+            viewModel.toggleVoiceInput()
+            isPromptFocused = wasActive
+        } label: {
+            Group {
+                if viewModel.voiceInputState == .requestingPermission {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(
+                        systemName: viewModel.voiceInputState == .listening
+                            ? "mic.fill"
+                            : "mic"
+                    )
+                    .font(.body.weight(.semibold))
+                    .contentTransition(.symbolEffect(.replace))
+                    .symbolEffect(
+                        .pulse,
+                        options: .repeating,
+                        isActive: viewModel.voiceInputState == .listening && !reduceMotion
+                    )
+                }
+            }
+            .foregroundStyle(
+                viewModel.voiceInputState == .listening
+                    ? Color.red
+                    : AppTheme.primary
+            )
+            .frame(
+                width: ComposerMetrics.voiceInputButtonSize,
+                height: ComposerMetrics.sendButtonSize
+            )
+            .background {
+                if viewModel.voiceInputState == .listening {
+                    Circle()
+                        .fill(
+                            Color.red.opacity(
+                                ComposerMetrics.voiceInputActiveBackgroundOpacity
+                            )
+                        )
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(AppPressButtonStyle(pressedScale: 0.92, pressedOpacity: 0.85))
+        .disabled(viewModel.activeConversation == nil || viewModel.isProcessing)
+        .accessibilityLabel(voiceInputAccessibilityLabel)
+        .accessibilityValue(
+            viewModel.voiceInputState == .listening ? "Listening" : ""
+        )
+    }
+
+    private var voiceInputAccessibilityLabel: String {
+        switch viewModel.voiceInputState {
+        case .idle:
+            return "Start voice input"
+        case .requestingPermission:
+            return "Cancel voice input"
+        case .listening:
+            return "Stop voice input"
+        }
     }
 
     private var attachmentMenu: some View {
@@ -623,6 +700,8 @@ private enum ComposerMetrics {
     static let modeStrokeOpacity: Double = 0.08
     static let modePopoverWidth: CGFloat = 340
     static let sendButtonSize: CGFloat = 40
+    static let voiceInputButtonSize: CGFloat = 32
+    static let voiceInputActiveBackgroundOpacity: Double = 0.10
     static let attachmentButtonSize: CGFloat = 32
     static let attachmentPreviewSize: CGFloat = 72
     static let attachmentCornerRadius: CGFloat = 14
