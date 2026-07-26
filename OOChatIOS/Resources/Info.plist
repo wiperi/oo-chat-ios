@@ -31,6 +31,10 @@
 	<string>ConnectOnion looks for hosted agents running on your local network.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>ConnectOnion uses the camera to scan agent QR codes.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>ConnectOnion uses the microphone to turn your speech into message text.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>ConnectOnion uses speech recognition to transcribe your voice into message text.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>
