@@ -68,8 +68,10 @@ final class ChatViewModel: ObservableObject {
     private var skillChangeCancellable: AnyCancellable?
     private var conversationStateChangeCancellable: AnyCancellable?
     private var persistenceErrorCancellable: AnyCancellable?
+    private var voiceInputChangeCancellable: AnyCancellable?
     private var imageDraftsByConversationID: [String: [ChatImageAttachment]] = [:]
     private var fileDraftsByConversationID: [String: [ChatFileAttachment]] = [:]
+    private let voiceInputController: VoiceInputController
     private var backgroundDeliveryTaskID: UIBackgroundTaskIdentifier = .invalid
 
     var probeInterval: TimeInterval {
@@ -124,6 +126,14 @@ final class ChatViewModel: ObservableObject {
             return false
         }
         return deliveryCoordinator.isProcessing(conversationID: activeConversationID)
+    }
+
+    var voiceInputState: VoiceInputState {
+        voiceInputController.state
+    }
+
+    var isVoiceInputActive: Bool {
+        voiceInputController.isActive
     }
 
     var sendTask: Task<Void, Never>? {
@@ -268,7 +278,8 @@ final class ChatViewModel: ObservableObject {
         store: ConversationRepository? = nil,
         identityStore: IdentityStore = IdentityStore(),
         client: HostedAgentTransport? = nil,
-        networkMonitor: NetworkPathMonitoring? = nil
+        networkMonitor: NetworkPathMonitoring? = nil,
+        voiceInputController: VoiceInputController? = nil
     ) {
         let resolvedStore: ConversationRepository
         let storeError: Error?
@@ -302,6 +313,7 @@ final class ChatViewModel: ObservableObject {
         self.recoveryCoordinator = recoveryCoordinator
         self.skillCoordinator = skillCoordinator
         self.client = transport
+        self.voiceInputController = voiceInputController ?? VoiceInputController()
         self.agentAddressDraft = conversationState.activeAgent?.address ?? ""
         do {
             self.identity = try identityStore.loadOrCreateIdentity()
@@ -353,6 +365,10 @@ final class ChatViewModel: ObservableObject {
             .compactMap { $0 }
             .sink { [weak self] error in
                 self?.errorMessage = error.localizedDescription
+            }
+        voiceInputChangeCancellable = self.voiceInputController.objectWillChange
+            .sink { [weak self] in
+                self?.objectWillChange.send()
             }
         recoveryCoordinator.start()
     }
@@ -575,6 +591,7 @@ final class ChatViewModel: ObservableObject {
     }
 
     func sendPrompt() {
+        stopVoiceInput()
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let images = pendingImages
         let files = pendingFiles
@@ -591,6 +608,39 @@ final class ChatViewModel: ObservableObject {
         case .rejected(let message):
             errorMessage = message
         }
+    }
+
+    func toggleVoiceInput() {
+        if voiceInputController.isActive {
+            stopVoiceInput()
+            return
+        }
+        guard let conversationID = activeConversationID else {
+            errorMessage = "Start a conversation before using voice input."
+            return
+        }
+
+        errorMessage = nil
+        voiceInputController.start(
+            promptPrefix: prompt,
+            conversationID: conversationID,
+            transcriptHandler: { [weak self] targetConversationID, text in
+                guard self?.activeConversationID == targetConversationID else {
+                    return
+                }
+                self?.prompt = text
+            },
+            failureHandler: { [weak self] targetConversationID, message in
+                guard self?.activeConversationID == targetConversationID else {
+                    return
+                }
+                self?.errorMessage = message
+            }
+        )
+    }
+
+    func stopVoiceInput() {
+        voiceInputController.stop()
     }
 
     func retryMessage(_ message: ChatMessage) {
