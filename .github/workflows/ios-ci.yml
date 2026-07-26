@@ -5,19 +5,52 @@ on:
     branches:
       - main
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ios-ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
-  build-and-test:
-    name: Build and Test
+  lint:
+    name: SwiftLint
     runs-on: macos-26
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
+      - name: Install SwiftLint
+        env:
+          SWIFTLINT_VERSION: 0.63.2
+          SWIFTLINT_SHA256: c59a405c85f95b92ced677a500804e081596a4cae4a6a485af76065557d6ed29
+        run: |
+          archive="$RUNNER_TEMP/portable_swiftlint.zip"
+          install_dir="$RUNNER_TEMP/swiftlint"
+          curl --fail --location --retry 3 \
+            --output "$archive" \
+            "https://github.com/realm/SwiftLint/releases/download/${SWIFTLINT_VERSION}/portable_swiftlint.zip"
+          echo "${SWIFTLINT_SHA256}  ${archive}" | shasum -a 256 --check
+          mkdir -p "$install_dir"
+          unzip -q "$archive" -d "$install_dir"
+          chmod +x "$install_dir/swiftlint"
+          echo "$install_dir" >> "$GITHUB_PATH"
+
+      - name: Lint Swift
+        run: swiftlint lint --config .swiftlint.yml
+
+  test-and-coverage:
+    name: Tests and Coverage
+    runs-on: macos-26
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
 
       - name: Show Xcode and simulators
         run: |
@@ -25,7 +58,7 @@ jobs:
           xcode-select -p
           xcrun simctl list devices available
 
-      - name: Build and test
+      - name: Run tests with coverage
         run: |
           set -o pipefail
           xcodebuild test \
@@ -34,4 +67,24 @@ jobs:
             -configuration Debug \
             -sdk iphonesimulator \
             -destination 'platform=iOS Simulator,name=iPhone 17,OS=latest' \
+            -enableCodeCoverage YES \
+            -resultBundlePath build/TestResults.xcresult \
             -derivedDataPath build/DerivedData
+
+      - name: Enforce coverage above 70%
+        run: scripts/check_coverage.sh build/TestResults.xcresult 70 OOChatIOS.app
+
+      - name: Export coverage report
+        if: always() && hashFiles('build/TestResults.xcresult/**') != ''
+        run: xcrun xccov view --report build/TestResults.xcresult > build/coverage.txt
+
+      - name: Upload test and coverage results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ios-test-results
+          path: |
+            build/TestResults.xcresult
+            build/coverage.txt
+          if-no-files-found: warn
+          retention-days: 14

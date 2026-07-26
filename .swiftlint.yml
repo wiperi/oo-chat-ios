@@ -1,0 +1,39 @@
+included:
+  - OOChatIOS
+  - OOChatIOSTests
+
+excluded:
+  - OOChatIOS/Core/Protocol/HostedAgentClient.bak.swift
+  - build
+  - DerivedData
+  - submodules
+
+# Existing violations are recorded separately so CI can fail on new issues
+# without forcing unrelated cleanup into every pull request.
+baseline: .swiftlint-baseline.json
+strict: true
+reporter: xcode
+
+opt_in_rules:
+  - empty_count
+  - empty_string
+  - first_where
+  - last_where
+  - redundant_nil_coalescing
+  - sorted_first_last
+  - toggle_bool
+
+analyzer_rules:
+  - unused_import
+
+line_length:
+  warning: 140
+  error: 180
+  ignores_comments: true
+  ignores_urls: true
+
+identifier_name:
+  excluded:
+    - id
+    - x
+    - y
