@@ -1,9 +1,14 @@
+// swiftlint:disable file_length
+// Every schema version keeps its own copy of the model classes, so this file grows by roughly
+// one version's worth of lines per migration. Split it into one file per version if it keeps
+// accruing; shrinking it is not possible without deleting shipped versions.
+
 import Foundation
 import SwiftData
 
-typealias StoredAgent = StoredModelsSchemaV3.StoredAgent
-typealias StoredConversation = StoredModelsSchemaV3.StoredConversation
-typealias StoredMessage = StoredModelsSchemaV3.StoredMessage
+typealias StoredAgent = StoredModelsSchemaV4.StoredAgent
+typealias StoredConversation = StoredModelsSchemaV4.StoredConversation
+typealias StoredMessage = StoredModelsSchemaV4.StoredMessage
 
 // V1 pins the shape shipped when schema versioning was adopted (2026-07). Structural changes
 // go into a new StoredModelsSchemaV(N+1) enum plus a MigrationStage in StoredModelsMigrationPlan;
@@ -334,12 +339,126 @@ enum StoredModelsSchemaV3: VersionedSchema {
     }
 }
 
+// V4 drops StoredAgent.token. Agents are addressed by their Ed25519 address alone, so the field
+// carried a credential that nothing read; deleting a property is a lightweight migration and the
+// stored values go away with the column.
+enum StoredModelsSchemaV4: VersionedSchema {
+    static let versionIdentifier = Schema.Version(4, 0, 0)
+    static var models: [any PersistentModel.Type] {
+        [StoredAgent.self, StoredConversation.self, StoredMessage.self]
+    }
+
+    @Model
+    final class StoredAgent {
+        @Attribute(.unique) var id: String
+        var name: String
+        var address: String
+        var createdAt: Date
+        var updatedAt: Date
+
+        init(id: String, name: String, address: String, createdAt: Date, updatedAt: Date) {
+            self.id = id
+            self.name = name
+            self.address = address
+            self.createdAt = createdAt
+            self.updatedAt = updatedAt
+        }
+    }
+
+    @Model
+    final class StoredConversation {
+        @Attribute(.unique) var id: String
+        var title: String
+        var agentID: String?
+        var agentAddress: String
+        var modeRaw: String
+        var createdAt: Date
+        var updatedAt: Date
+        var serverSessionData: Data?
+        @Relationship(deleteRule: .cascade, inverse: \StoredMessage.conversation)
+        var messages: [StoredMessage]
+
+        init(
+            id: String,
+            title: String,
+            agentID: String?,
+            agentAddress: String,
+            modeRaw: String,
+            createdAt: Date,
+            updatedAt: Date,
+            serverSessionData: Data?,
+            messages: [StoredMessage]
+        ) {
+            self.id = id
+            self.title = title
+            self.agentID = agentID
+            self.agentAddress = agentAddress
+            self.modeRaw = modeRaw
+            self.createdAt = createdAt
+            self.updatedAt = updatedAt
+            self.serverSessionData = serverSessionData
+            self.messages = messages
+        }
+    }
+
+    @Model
+    final class StoredMessage {
+        @Attribute(.unique) var id: String
+        var messageID: String = ""
+        var roleRaw: String
+        var content: String
+        var createdAt: Date
+        var deliveryStateRaw: String = "sent"
+        @Attribute(.externalStorage) var imageAttachmentsData: Data?
+        @Attribute(.externalStorage) var fileAttachmentsData: Data?
+        var toolName: String?
+        var toolArgumentsData: Data?
+        var toolStateRaw: String?
+        var conversation: StoredConversation?
+
+        init(
+            messageID: String,
+            conversationID: String,
+            roleRaw: String,
+            content: String,
+            createdAt: Date,
+            deliveryStateRaw: String = "sent",
+            imageAttachmentsData: Data? = nil,
+            fileAttachmentsData: Data? = nil,
+            toolName: String? = nil,
+            toolArgumentsData: Data? = nil,
+            toolStateRaw: String? = nil
+        ) {
+            self.id = StoredMessage.compositeID(conversationID: conversationID, messageID: messageID)
+            self.messageID = messageID
+            self.roleRaw = roleRaw
+            self.content = content
+            self.createdAt = createdAt
+            self.deliveryStateRaw = deliveryStateRaw
+            self.imageAttachmentsData = imageAttachmentsData
+            self.fileAttachmentsData = fileAttachmentsData
+            self.toolName = toolName
+            self.toolArgumentsData = toolArgumentsData
+            self.toolStateRaw = toolStateRaw
+        }
+
+        static func compositeID(conversationID: String, messageID: String) -> String {
+            "\(conversationID.utf8.count)#\(conversationID)#\(messageID)"
+        }
+    }
+}
+
 // Stores older than V1 (written before versioning) hash-match no version here and make the
 // staged open throw; SwiftDataConversationRepository then falls back to a plan-less open whose
 // lightweight inference carries them to the current shape, so later opens match the plan.
 enum StoredModelsMigrationPlan: SchemaMigrationPlan {
     static var schemas: [any VersionedSchema.Type] {
-        [StoredModelsSchemaV1.self, StoredModelsSchemaV2.self, StoredModelsSchemaV3.self]
+        [
+            StoredModelsSchemaV1.self,
+            StoredModelsSchemaV2.self,
+            StoredModelsSchemaV3.self,
+            StoredModelsSchemaV4.self
+        ]
     }
 
     static var stages: [MigrationStage] {
@@ -351,6 +470,10 @@ enum StoredModelsMigrationPlan: SchemaMigrationPlan {
             .lightweight(
                 fromVersion: StoredModelsSchemaV2.self,
                 toVersion: StoredModelsSchemaV3.self
+            ),
+            .lightweight(
+                fromVersion: StoredModelsSchemaV3.self,
+                toVersion: StoredModelsSchemaV4.self
             ),
         ]
     }

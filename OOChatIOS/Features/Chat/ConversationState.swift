@@ -134,19 +134,15 @@ final class ConversationState: ObservableObject {
     func saveAgent(
         id: String?,
         name: String,
-        address: String,
-        token: String
+        address: String
     ) -> AgentConnection {
         let existing = id.flatMap(agent(withID:))
         let now = Date()
-        let shouldResetSessions = existing.map {
-            $0.address != address || $0.token != token
-        } ?? false
+        let shouldResetSessions = existing.map { $0.address != address } ?? false
         var next = AgentConnection(
             id: existing?.id ?? UUID().uuidString,
             address: address,
             name: name.isEmpty ? nil : name,
-            token: token,
             createdAt: existing?.createdAt ?? now,
             updatedAt: now
         )

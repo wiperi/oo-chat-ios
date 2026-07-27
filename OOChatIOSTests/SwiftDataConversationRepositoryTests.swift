@@ -5,6 +5,8 @@ import XCTest
 // The stored-message schema as shipped before `messageID` existed (commit 5bdf20b^), used
 // to seed an on-disk store so tests exercise the real upgrade path. Entity names match the
 // production models, so the production schema opens these stores via lightweight migration.
+// `StoredAgent.token` is kept here on purpose: it is what old stores actually contain, and
+// opening them proves the V4 column drop migrates cleanly.
 private enum LegacyStoredModels {
     @Model
     final class StoredAgent {
@@ -287,7 +289,7 @@ final class SwiftDataConversationRepositoryTests: XCTestCase {
 
     func testDeleteAgentKeepsSiblingAgentSharingSameAddress() throws {
         let repository = try makeRepository()
-        // Two distinct agents on the same address (different tokens/configs).
+        // Two distinct agents on the same address (different names/configs).
         let a = AgentConnection(id: "a1", address: "0xaaa")
         let b = AgentConnection(id: "a2", address: "0xaaa")
         repository.upsertAgent(a)
@@ -305,12 +307,15 @@ final class SwiftDataConversationRepositoryTests: XCTestCase {
         XCTAssertEqual(loaded.conversations.map(\.id), [convB.id])
     }
 
-    func testAgentTokenRoundTrips() throws {
+    func testAgentRoundTrips() throws {
         let repository = try makeRepository()
-        let agent = AgentConnection(id: "a1", address: "0xaaa", name: "Primary", token: "secret-token")
+        let agent = AgentConnection(id: "a1", address: "0xaaa", name: "Primary")
         repository.upsertAgent(agent)
 
-        XCTAssertEqual(repository.load().agents.first?.token, "secret-token")
+        let loaded = repository.load().agents.first
+        XCTAssertEqual(loaded?.id, "a1")
+        XCTAssertEqual(loaded?.address, "0xaaa")
+        XCTAssertEqual(loaded?.name, "Primary")
     }
 
     func testAppendingMessageKeepsExistingMessagesAndAddsOne() throws {

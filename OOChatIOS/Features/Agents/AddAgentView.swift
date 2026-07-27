@@ -5,14 +5,12 @@ struct AgentFormDraft: Identifiable {
     let agentID: String?
     var name: String
     var address: String
-    var token: String
     var shouldConnectAfterSave = false
 
     init(agent: AgentConnection? = nil) {
         self.agentID = agent?.id
         self.name = agent?.name ?? ""
         self.address = agent?.address ?? ""
-        self.token = agent?.token ?? ""
     }
 
     var title: String {
@@ -68,12 +66,6 @@ struct AgentFormView: View {
                             .foregroundStyle(.red)
                             .transition(AppMotion.materialize(reduceMotion: reduceMotion, edge: .top))
                     }
-                    SecureField("Token (stored only)", text: $draft.token)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    Text("Saved with this configuration; not used for ConnectOnion connection.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
                 }
                 .listRowBackground(Color(.secondarySystemGroupedBackground))
                 .animation(

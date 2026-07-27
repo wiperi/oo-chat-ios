@@ -18,7 +18,7 @@ final class SwiftDataConversationRepository: ConversationRepository {
         } else {
             configuration = ModelConfiguration(isStoredInMemoryOnly: inMemory)
         }
-        let schema = Schema(versionedSchema: StoredModelsSchemaV3.self)
+        let schema = Schema(versionedSchema: StoredModelsSchemaV4.self)
         do {
             container = try ModelContainer(
                 for: schema,
@@ -189,8 +189,8 @@ final class SwiftDataConversationRepository: ConversationRepository {
     }
 
     func deleteAgentResult(id: String) -> Result<Void, ConversationRepositoryError> {
-        // Cascade by agentID only. Multiple agents can share one address (distinct tokens),
-        // so an address-based cascade would wrongly delete a sibling agent's conversations.
+        // Cascade by agentID only. Multiple agents can share one address, so an address-based
+        // cascade would wrongly delete a sibling agent's conversations.
         capture(.deleteAgent) {
             if let stored = try storedAgent(id: id) {
                 context.delete(stored)
@@ -285,7 +285,6 @@ final class SwiftDataConversationRepository: ConversationRepository {
     private func apply(_ agent: AgentConnection, to stored: StoredAgent) {
         stored.name = agent.name
         stored.address = agent.address
-        stored.token = agent.token
         stored.createdAt = agent.createdAt
         stored.updatedAt = agent.updatedAt
     }
@@ -343,7 +342,6 @@ final class SwiftDataConversationRepository: ConversationRepository {
             id: stored.id,
             address: stored.address,
             name: stored.name,
-            token: stored.token,
             createdAt: stored.createdAt,
             updatedAt: stored.updatedAt
         )
@@ -385,7 +383,6 @@ final class SwiftDataConversationRepository: ConversationRepository {
             id: agent.id,
             name: agent.name,
             address: agent.address,
-            token: agent.token,
             createdAt: agent.createdAt,
             updatedAt: agent.updatedAt
         )

@@ -420,10 +420,9 @@ final class ChatViewModel: ObservableObject {
     }
 
     @discardableResult
-    func saveAgent(id: String? = nil, name: String, address: String, token: String) -> AgentConnection? {
+    func saveAgent(id: String? = nil, name: String, address: String) -> AgentConnection? {
         let trimmedAddress = address.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard HostedAgentClient.isHostedAgentAddress(trimmedAddress) else {
             errorMessage = "That doesn't look like an agent address. It should start with 0x followed by 64 characters."
@@ -433,8 +432,7 @@ final class ChatViewModel: ObservableObject {
         let next = conversationState.saveAgent(
             id: id,
             name: trimmedName,
-            address: trimmedAddress,
-            token: trimmedToken
+            address: trimmedAddress
         )
         agentAddressDraft = next.address
         return next

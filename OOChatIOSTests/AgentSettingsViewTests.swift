@@ -20,7 +20,6 @@ final class AgentFormViewTests: XCTestCase {
         XCTAssertNotNil(ViewHost.element(labelContains: "Name", in: window))
         XCTAssertNotNil(ViewHost.element(labelContains: "Agent address", in: window))
         XCTAssertNotNil(ViewHost.element(labelContains: "Scan QR Code", in: window))
-        XCTAssertNotNil(ViewHost.element(labelContains: "Saved with this configuration", in: window))
         XCTAssertTrue(ViewHost.activateButton(labelContains: "Cancel", in: window))
         XCTAssertTrue(didCancel)
     }
@@ -59,7 +58,6 @@ final class AgentFormViewTests: XCTestCase {
             id: "agent-edit",
             address: hostedAddress,
             name: "Orbit Agent",
-            token: "secret-token",
             createdAt: Date(timeIntervalSince1970: 1_000),
             updatedAt: Date(timeIntervalSince1970: 2_000)
         )
@@ -77,7 +75,6 @@ final class AgentFormViewTests: XCTestCase {
         XCTAssertEqual(savedDraft?.agentID, "agent-edit")
         XCTAssertEqual(savedDraft?.name, "Orbit Agent")
         XCTAssertEqual(savedDraft?.address, hostedAddress)
-        XCTAssertEqual(savedDraft?.token, "secret-token")
         XCTAssertEqual(savedDraft?.shouldConnectAfterSave, false)
     }
 }
@@ -141,13 +138,11 @@ private let hostedAddress = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 
 private func makeDraft(
     name: String = "",
-    address: String = "",
-    token: String = ""
+    address: String = ""
 ) -> AgentFormDraft {
     var draft = AgentFormDraft()
     draft.name = name
     draft.address = address
-    draft.token = token
     return draft
 }
 

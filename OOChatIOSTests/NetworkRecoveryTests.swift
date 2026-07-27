@@ -238,7 +238,7 @@ final class NetworkRecoveryTests: XCTestCase {
         let firstAgent = setUpAgentAndConversation(viewModel)
         let firstConversation = viewModel.activeConversation!
         let secondAddress = "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
-        let secondAgent = viewModel.saveAgent(name: "Second", address: secondAddress, token: "")!
+        let secondAgent = viewModel.saveAgent(name: "Second", address: secondAddress)!
         _ = viewModel.createConversation(for: secondAgent)
 
         transport.simulateConnectionState(.connected, conversationID: firstConversation.id)
@@ -510,7 +510,7 @@ final class NetworkRecoveryTests: XCTestCase {
         let firstAgent = setUpAgentAndConversation(viewModel)
         let firstConversation = viewModel.activeConversation!
         let secondAddress = "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
-        let secondAgent = viewModel.saveAgent(name: "Second", address: secondAddress, token: "")!
+        let secondAgent = viewModel.saveAgent(name: "Second", address: secondAddress)!
         let secondConversation = viewModel.createConversation(for: secondAgent)
         viewModel.selectConversation(firstConversation)
         let gate = PromptGate()
@@ -682,42 +682,6 @@ final class NetworkRecoveryTests: XCTestCase {
         let loaded = store.load().conversations.first { $0.id == conversation.id }
         let message = loaded?.messages.first { $0.content == "pending" }
         XCTAssertEqual(message?.deliveryState, .failed)
-    }
-
-    func testChatMessageDecodingDefaultsDeliveryStateToSent() throws {
-        let json = """
-        {
-          "id": "message-1",
-          "role": "user",
-          "content": "legacy",
-          "createdAt": "2026-07-09T01:00:00Z"
-        }
-        """
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-
-        let message = try decoder.decode(ChatMessage.self, from: Data(json.utf8))
-
-        XCTAssertEqual(message.deliveryState, .sent)
-    }
-
-    func testChatMessageDecodesLegacyPayloadWithoutToolFields() throws {
-        let json = """
-        {
-          "id": "message-1",
-          "role": "agent",
-          "content": "legacy response",
-          "createdAt": "2026-07-09T01:00:00Z"
-        }
-        """
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-
-        let message = try decoder.decode(ChatMessage.self, from: Data(json.utf8))
-
-        XCTAssertNil(message.toolName)
-        XCTAssertNil(message.toolArguments)
-        XCTAssertNil(message.toolState)
     }
 
     func testStreamingToolCallIsUpdatedInPlaceAndPersistsWithResponse() async {
@@ -1714,7 +1678,7 @@ final class NetworkRecoveryTests: XCTestCase {
         let (viewModel, transport, _) = makeEnvironment()
         let first = setUpAgentAndConversation(viewModel)
         let secondAddress = "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
-        let second = viewModel.saveAgent(name: "Second", address: secondAddress, token: "")!
+        let second = viewModel.saveAgent(name: "Second", address: secondAddress)!
         _ = viewModel.createConversation(for: second)
         transport.skillsByAddress = [
             first.address: [AgentSkill(name: "first")],
@@ -1832,7 +1796,7 @@ final class NetworkRecoveryTests: XCTestCase {
 
     @discardableResult
     private func setUpAgentAndConversation(_ viewModel: ChatViewModel) -> AgentConnection {
-        let agent = viewModel.saveAgent(name: "Recovery Agent", address: address, token: "")!
+        let agent = viewModel.saveAgent(name: "Recovery Agent", address: address)!
         _ = viewModel.createConversation(for: agent)
         return agent
     }

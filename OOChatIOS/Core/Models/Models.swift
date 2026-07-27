@@ -38,11 +38,10 @@ enum ChatMode: String, CaseIterable, Codable, Identifiable, Equatable {
     }
 }
 
-struct AgentConnection: Identifiable, Codable, Equatable {
+struct AgentConnection: Identifiable, Equatable {
     let id: String
     var name: String
     var address: String
-    var token: String
     var createdAt: Date
     var updatedAt: Date
 
@@ -50,48 +49,14 @@ struct AgentConnection: Identifiable, Codable, Equatable {
         id: String = UUID().uuidString,
         address: String,
         name: String? = nil,
-        token: String = "",
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
         self.id = id
         self.address = address
         self.name = name ?? Self.defaultName(for: address)
-        self.token = token
         self.createdAt = createdAt
         self.updatedAt = updatedAt
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case id
-        case name
-        case address
-        case token
-        case createdAt
-        case updatedAt
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decode(String.self, forKey: .id)
-        address = try container.decode(String.self, forKey: .address)
-        name = try container.decodeIfPresent(String.self, forKey: .name) ?? Self.defaultName(for: address)
-        token = try container.decodeIfPresent(String.self, forKey: .token) ?? ""
-        createdAt = try container.decode(Date.self, forKey: .createdAt)
-        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
-    }
-
-    /// Note: `token` is a credential and is encoded here. Any new call site that serializes an
-    /// `AgentConnection` — export, share, a debug dump — leaks it, so route those through a
-    /// redacted projection instead of encoding this type directly.
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(id, forKey: .id)
-        try container.encode(name, forKey: .name)
-        try container.encode(address, forKey: .address)
-        try container.encode(token, forKey: .token)
-        try container.encode(createdAt, forKey: .createdAt)
-        try container.encode(updatedAt, forKey: .updatedAt)
     }
 
     static func defaultName(for address: String) -> String {
@@ -353,7 +318,7 @@ struct PendingAskUser: Identifiable, Equatable {
     var id: String { request.id }
 }
 
-struct ChatMessage: Identifiable, Codable, Equatable {
+struct ChatMessage: Identifiable, Equatable {
     let id: String
     var role: ChatRole
     var content: String
@@ -388,50 +353,9 @@ struct ChatMessage: Identifiable, Codable, Equatable {
         self.toolArguments = toolArguments
         self.toolState = toolState
     }
-
-    private enum CodingKeys: String, CodingKey {
-        case id
-        case role
-        case content
-        case createdAt
-        case deliveryState
-        case images
-        case files
-        case toolName
-        case toolArguments
-        case toolState
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decode(String.self, forKey: .id)
-        role = try container.decode(ChatRole.self, forKey: .role)
-        content = try container.decode(String.self, forKey: .content)
-        createdAt = try container.decode(Date.self, forKey: .createdAt)
-        deliveryState = try container.decodeIfPresent(MessageDeliveryState.self, forKey: .deliveryState) ?? .sent
-        images = try container.decodeIfPresent([ChatImageAttachment].self, forKey: .images) ?? []
-        files = try container.decodeIfPresent([ChatFileAttachment].self, forKey: .files) ?? []
-        toolName = try container.decodeIfPresent(String.self, forKey: .toolName)
-        toolArguments = try container.decodeIfPresent([String: JSONValue].self, forKey: .toolArguments)
-        toolState = try container.decodeIfPresent(ToolCallState.self, forKey: .toolState)
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(id, forKey: .id)
-        try container.encode(role, forKey: .role)
-        try container.encode(content, forKey: .content)
-        try container.encode(createdAt, forKey: .createdAt)
-        try container.encode(deliveryState, forKey: .deliveryState)
-        try container.encode(images, forKey: .images)
-        try container.encode(files, forKey: .files)
-        try container.encodeIfPresent(toolName, forKey: .toolName)
-        try container.encodeIfPresent(toolArguments, forKey: .toolArguments)
-        try container.encodeIfPresent(toolState, forKey: .toolState)
-    }
 }
 
-struct Conversation: Identifiable, Codable, Equatable {
+struct Conversation: Identifiable, Equatable {
     let id: String
     var title: String
     var agentID: String?
@@ -480,46 +404,9 @@ struct Conversation: Identifiable, Codable, Equatable {
         self.serverSession = serverSession
     }
 
-    private enum CodingKeys: String, CodingKey {
-        case id
-        case title
-        case agentID
-        case agentAddress
-        case mode
-        case createdAt
-        case updatedAt
-        case messages
-        case serverSession
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decode(String.self, forKey: .id)
-        title = try container.decode(String.self, forKey: .title)
-        agentID = try container.decodeIfPresent(String.self, forKey: .agentID)
-        agentAddress = try container.decode(String.self, forKey: .agentAddress)
-        mode = try container.decodeIfPresent(ChatMode.self, forKey: .mode) ?? .safe
-        createdAt = try container.decode(Date.self, forKey: .createdAt)
-        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
-        messages = try container.decode([ChatMessage].self, forKey: .messages)
-        serverSession = try container.decodeIfPresent([String: JSONValue].self, forKey: .serverSession)
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(id, forKey: .id)
-        try container.encode(title, forKey: .title)
-        try container.encodeIfPresent(agentID, forKey: .agentID)
-        try container.encode(agentAddress, forKey: .agentAddress)
-        try container.encode(mode, forKey: .mode)
-        try container.encode(createdAt, forKey: .createdAt)
-        try container.encode(updatedAt, forKey: .updatedAt)
-        try container.encode(messages, forKey: .messages)
-        try container.encodeIfPresent(serverSession, forKey: .serverSession)
-    }
 }
 
-struct ChatSnapshot: Codable, Equatable {
+struct ChatSnapshot: Equatable {
     var agents: [AgentConnection]
     var conversations: [Conversation]
     var activeAgentID: String?

@@ -31,26 +31,6 @@ final class MockHostedAgentTests: XCTestCase {
         XCTAssertTrue(conversation.messages.isEmpty)
     }
 
-    func testAgentConnectionDecodesLegacyPayloadWithoutToken() throws {
-        let json = """
-        {
-          "id": "agent-1",
-          "name": "Legacy",
-          "address": "\(endpointA)",
-          "createdAt": "2026-07-09T01:00:00Z",
-          "updatedAt": "2026-07-09T01:00:00Z"
-        }
-        """
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-
-        let agent = try decoder.decode(AgentConnection.self, from: Data(json.utf8))
-
-        XCTAssertEqual(agent.name, "Legacy")
-        XCTAssertEqual(agent.address, endpointA)
-        XCTAssertEqual(agent.token, "")
-    }
-
     func testAgentInfoDecodesDirectAndRelayAdvertisedSkills() throws {
         let direct = try JSONDecoder().decode(AgentInfo.self, from: Data("""
         {
@@ -729,21 +709,20 @@ final class MockHostedAgentTests: XCTestCase {
     }
 
     @MainActor
-    func testSaveAgentUpdatesTokenEndpointAndClearsSessions() {
+    func testSaveAgentUpdatesEndpointAndClearsSessions() {
         let viewModel = makeViewModel()
-        let agent = viewModel.saveAgent(name: "Primary", address: endpointA, token: "old-token")
+        let agent = viewModel.saveAgent(name: "Primary", address: endpointA)
         XCTAssertNotNil(agent)
         let conversation = viewModel.createConversation(for: agent!)
         viewModel.selectConversation(conversation)
         viewModel.setMode(.plan)
         XCTAssertNotNil(viewModel.conversations.first { $0.id == conversation.id }?.serverSession)
 
-        let updated = viewModel.saveAgent(id: agent!.id, name: "Renamed", address: endpointB, token: "new-token")
+        let updated = viewModel.saveAgent(id: agent!.id, name: "Renamed", address: endpointB)
 
         XCTAssertEqual(updated?.id, agent?.id)
         XCTAssertEqual(updated?.name, "Renamed")
         XCTAssertEqual(updated?.address, endpointB)
-        XCTAssertEqual(updated?.token, "new-token")
         XCTAssertEqual(viewModel.conversations.first?.agentID, agent?.id)
         XCTAssertEqual(viewModel.conversations.first?.agentAddress, endpointB)
         XCTAssertNil(viewModel.conversations.first?.serverSession)
@@ -753,25 +732,25 @@ final class MockHostedAgentTests: XCTestCase {
     func testDuplicateEndpointsRemainDistinctConfigurations() {
         let viewModel = makeViewModel()
 
-        let first = viewModel.saveAgent(name: "First", address: endpointA, token: "token-one")
-        let second = viewModel.saveAgent(name: "Second", address: endpointA, token: "token-two")
+        let first = viewModel.saveAgent(name: "First", address: endpointA)
+        let second = viewModel.saveAgent(name: "Second", address: endpointA)
 
         XCTAssertNotEqual(first?.id, second?.id)
         XCTAssertEqual(viewModel.agents.count, 2)
-        XCTAssertEqual(Set(viewModel.agents.map(\.token)), ["token-one", "token-two"])
+        XCTAssertEqual(Set(viewModel.agents.map(\.name)), ["First", "Second"])
     }
 
     @MainActor
-    func testDeletingAgentRemovesCredentialsAndConversations() {
+    func testDeletingAgentRemovesAgentAndConversations() {
         let viewModel = makeViewModel()
-        let first = viewModel.saveAgent(name: "First", address: endpointA, token: "token-one")!
-        let second = viewModel.saveAgent(name: "Second", address: endpointB, token: "token-two")!
+        let first = viewModel.saveAgent(name: "First", address: endpointA)!
+        let second = viewModel.saveAgent(name: "Second", address: endpointB)!
         let deletedConversation = viewModel.createConversation(for: first)
         let remainingConversation = viewModel.createConversation(for: second)
 
         viewModel.deleteAgent(first)
 
-        XCTAssertFalse(viewModel.agents.contains { $0.id == first.id || $0.token == "token-one" })
+        XCTAssertFalse(viewModel.agents.contains { $0.id == first.id })
         XCTAssertFalse(viewModel.conversations.contains { $0.id == deletedConversation.id })
         XCTAssertTrue(viewModel.conversations.contains { $0.id == remainingConversation.id })
         XCTAssertEqual(viewModel.activeAgentID, second.id)
@@ -780,7 +759,7 @@ final class MockHostedAgentTests: XCTestCase {
     @MainActor
     func testSwitchToAgentForChatCreatesConversationWhenMissing() {
         let viewModel = makeViewModel()
-        let agent = viewModel.saveAgent(name: "Primary", address: endpointA, token: "")!
+        let agent = viewModel.saveAgent(name: "Primary", address: endpointA)!
 
         viewModel.switchToAgentForChat(agent)
 

@@ -394,8 +394,7 @@ struct ChatSidebarView: View {
         guard let agent = viewModel.saveAgent(
             id: savedDraft.agentID,
             name: savedDraft.name,
-            address: savedDraft.address,
-            token: savedDraft.token
+            address: savedDraft.address
         ) else {
             return false
         }
@@ -440,8 +439,7 @@ struct ChatSidebarView: View {
         _ = viewModel.saveAgent(
             id: agent.id,
             name: trimmedName,
-            address: agent.address,
-            token: agent.token
+            address: agent.address
         )
     }
 

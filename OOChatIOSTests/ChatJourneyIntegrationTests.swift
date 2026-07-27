@@ -13,7 +13,7 @@ final class ChatJourneyIntegrationTests: XCTestCase {
         var viewModel = try app.launch()
 
         let agent = try XCTUnwrap(
-            viewModel.saveAgent(name: "Release Bot", address: Self.address, token: "sk-test")
+            viewModel.saveAgent(name: "Release Bot", address: Self.address)
         )
         let conversation = viewModel.createConversation(for: agent)
 
@@ -52,7 +52,6 @@ final class ChatJourneyIntegrationTests: XCTestCase {
 
         XCTAssertEqual(viewModel.agents.map(\.address), [Self.address])
         XCTAssertEqual(viewModel.agents.first?.name, "Release Bot")
-        XCTAssertEqual(viewModel.agents.first?.token, "sk-test")
         XCTAssertEqual(viewModel.activeAgentID, agent.id)
         XCTAssertEqual(viewModel.activeConversationID, conversation.id)
         assertReleaseNotesTimeline(viewModel.activeConversation, when: "after relaunch")
@@ -66,7 +65,7 @@ final class ChatJourneyIntegrationTests: XCTestCase {
         defer { app.tearDown() }
         var viewModel = try app.launch()
 
-        let agent = try XCTUnwrap(viewModel.saveAgent(name: "Ops", address: Self.address, token: ""))
+        let agent = try XCTUnwrap(viewModel.saveAgent(name: "Ops", address: Self.address))
         let conversation = viewModel.createConversation(for: agent)
 
         app.monitor.simulate(online: false)
@@ -108,7 +107,7 @@ final class ChatJourneyIntegrationTests: XCTestCase {
         defer { app.tearDown() }
         var viewModel = try app.launch()
 
-        let agent = try XCTUnwrap(viewModel.saveAgent(name: "Deployer", address: Self.address, token: ""))
+        let agent = try XCTUnwrap(viewModel.saveAgent(name: "Deployer", address: Self.address))
 
         let staging = viewModel.createConversation(for: agent)
         app.transport.streamedEvents = [
@@ -163,7 +162,7 @@ final class ChatJourneyIntegrationTests: XCTestCase {
         defer { app.tearDown() }
         let viewModel = try app.launch()
 
-        let agent = try XCTUnwrap(viewModel.saveAgent(name: "Runner", address: Self.address, token: ""))
+        let agent = try XCTUnwrap(viewModel.saveAgent(name: "Runner", address: Self.address))
         let conversation = viewModel.createConversation(for: agent)
 
         app.transport.streamedEvents = [
@@ -204,7 +203,7 @@ final class ChatJourneyIntegrationTests: XCTestCase {
         defer { app.tearDown() }
         var viewModel = try app.launch()
 
-        let agent = try XCTUnwrap(viewModel.saveAgent(name: "Worker", address: Self.address, token: ""))
+        let agent = try XCTUnwrap(viewModel.saveAgent(name: "Worker", address: Self.address))
         let conversation = viewModel.createConversation(for: agent)
 
         viewModel.agentAddressDraft = Self.address
