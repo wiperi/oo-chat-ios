@@ -44,6 +44,7 @@
 		100000000000000000000128 /* NetworkMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000032 /* NetworkMonitor.swift */; };
 		100000000000000000000129 /* OfflineBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000033 /* OfflineBanner.swift */; };
 		100000000000000000000130 /* NetworkRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000034 /* NetworkRecoveryTests.swift */; };
+		100000000000000000000190 /* ChatJourneyIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000090 /* ChatJourneyIntegrationTests.swift */; };
 		100000000000000000000131 /* AgentQRCodePayloadTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000035 /* AgentQRCodePayloadTests.swift */; };
 		100000000000000000000170 /* IdentityStoreErrorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000075 /* IdentityStoreErrorTests.swift */; };
 		100000000000000000000132 /* AgentQRCodeScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000036 /* AgentQRCodeScanner.swift */; };
@@ -127,6 +128,7 @@
 		100000000000000000000032 /* NetworkMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkMonitor.swift; sourceTree = "<group>"; };
 		100000000000000000000033 /* OfflineBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineBanner.swift; sourceTree = "<group>"; };
 		100000000000000000000034 /* NetworkRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkRecoveryTests.swift; sourceTree = "<group>"; };
+		100000000000000000000090 /* ChatJourneyIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatJourneyIntegrationTests.swift; sourceTree = "<group>"; };
 		100000000000000000000035 /* AgentQRCodePayloadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentQRCodePayloadTests.swift; sourceTree = "<group>"; };
 		100000000000000000000075 /* IdentityStoreErrorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentityStoreErrorTests.swift; sourceTree = "<group>"; };
 		100000000000000000000036 /* AgentQRCodeScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentQRCodeScanner.swift; sourceTree = "<group>"; };
@@ -381,6 +383,7 @@
 				100000000000000000000075 /* IdentityStoreErrorTests.swift */,
 				100000000000000000000072 /* AgentSettingsViewTests.swift */,
 				100000000000000000000031 /* AgentsFeatureTests.swift */,
+				100000000000000000000090 /* ChatJourneyIntegrationTests.swift */,
 				100000000000000000000068 /* ChatCardViewTests.swift */,
 				100000000000000000000074 /* ChatContainerViewTests.swift */,
 				100000000000000000000073 /* ChatSidebarViewTests.swift */,
@@ -586,6 +589,7 @@
 				100000000000000000000164 /* ComposerToolCallViewTests.swift in Sources */,
 				100000000000000000000110 /* MockHostedAgentTests.swift in Sources */,
 				100000000000000000000130 /* NetworkRecoveryTests.swift in Sources */,
+				100000000000000000000190 /* ChatJourneyIntegrationTests.swift in Sources */,
 				100000000000000000000166 /* SidebarComponentViewTests.swift in Sources */,
 				100000000000000000000115 /* SwiftDataConversationRepositoryTests.swift in Sources */,
 				100000000000000000000162 /* ViewTestSupport.swift in Sources */,
