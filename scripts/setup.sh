@@ -3,10 +3,11 @@
 set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly PROJECT_PATH="${SCRIPT_DIR}/OOChatIOS.xcodeproj"
+readonly REPOSITORY_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+readonly PROJECT_PATH="${REPOSITORY_ROOT}/OOChatIOS.xcodeproj"
 readonly SCHEME_NAME="OOChatIOS"
 readonly MINIMUM_IOS_MAJOR=17
-readonly DEFAULT_DERIVED_DATA_PATH="${SCRIPT_DIR}/build/SetupDerivedData"
+readonly DEFAULT_DERIVED_DATA_PATH="${REPOSITORY_ROOT}/build/SetupDerivedData"
 
 info() {
   printf '[setup] %s\n' "$1"
