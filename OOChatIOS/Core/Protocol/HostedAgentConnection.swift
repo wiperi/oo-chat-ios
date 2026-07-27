@@ -23,6 +23,8 @@ actor HostedAgentConnection {
 
     private struct PendingPrompt {
         let id: UUID
+        // Allocated once and reused by every resend of this prompt. 
+        let inputID: String
         let continuation: CheckedContinuation<HostedAgentResult, Error>
         let onEvent: (@MainActor (HostedAgentEvent) -> Void)?
         let onInteraction: (@MainActor (HostedAgentInteraction) async -> HostedAgentInteractionDecision)?
@@ -146,6 +148,7 @@ actor HostedAgentConnection {
             try await withCheckedThrowingContinuation { continuation in
                 pendingPrompt = PendingPrompt(
                     id: promptID,
+                    inputID: UUID().uuidString,
                     continuation: continuation,
                     onEvent: onEvent,
                     onInteraction: onInteraction,
@@ -293,7 +296,7 @@ actor HostedAgentConnection {
         promptID: UUID
     ) async {
         let generation = socketGeneration
-        guard pendingPrompt?.id == promptID else {
+        guard let pending = pendingPrompt, pending.id == promptID else {
             return
         }
         // the socket may close after connection checks but before this task sends
@@ -307,7 +310,8 @@ actor HostedAgentConnection {
                 prompt: prompt,
                 images: images,
                 files: files,
-                conversation: conversation
+                conversation: conversation,
+                inputID: pending.inputID
             )
             try await send(inputFrame, over: socket)
             if pendingPrompt?.id == promptID {
@@ -808,10 +812,10 @@ actor HostedAgentConnection {
         prompt: String,
         images: [String],
         files: [HostedAgentFilePayload],
-        conversation: Conversation
+        conversation: Conversation,
+        inputID: String
     ) throws -> [String: JSONValue] {
         let timestamp = Double(Int(Date().timeIntervalSince1970))
-        let inputID = UUID().uuidString
         let payload = HostedAgentClient.inputSignaturePayload(
             agentAddress: key.agentAddress,
             conversationID: conversation.id,

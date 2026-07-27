@@ -16,6 +16,7 @@ private final class MockHostedAgentWebSocket: HostedAgentWebSocketTask, @uncheck
     private var receiveContinuation: CheckedContinuation<Message, Error>?
     private var storedSentMessages: [Message] = []
     private var storedNextSendError: Error?
+    private var storedRecordsFailedSend = false
     private var storedIsResumed = false
     private var storedCloseCode: URLSessionWebSocketTask.CloseCode?
 
@@ -57,6 +58,10 @@ private final class MockHostedAgentWebSocket: HostedAgentWebSocketTask, @uncheck
         lock.lock()
         if let error = storedNextSendError {
             storedNextSendError = nil
+            if storedRecordsFailedSend {
+                storedRecordsFailedSend = false
+                storedSentMessages.append(message)
+            }
             lock.unlock()
             return error
         }
@@ -84,9 +89,10 @@ private final class MockHostedAgentWebSocket: HostedAgentWebSocketTask, @uncheck
         }
     }
 
-    func failNextSend(with error: Error = HostedAgentTestError.failed) {
+    func failNextSend(with error: Error = HostedAgentTestError.failed, afterRecording: Bool = false) {
         lock.lock()
         storedNextSendError = error
+        storedRecordsFailedSend = afterRecording
         lock.unlock()
     }
 
@@ -800,6 +806,45 @@ final class HostedAgentConnectionTests: XCTestCase {
 
         let result = try await promptTask.value
         XCTAssertEqual(result.output, "made it")
+        await connection.close()
+    }
+
+    func testResentInputKeepsTheOriginalInputID() async throws {
+        let factory = MockHostedAgentSocketFactory()
+        let connection = makeConnection(factory: factory, resumeAttemptLimit: 3)
+        let conversation = makeConversation(id: "resume-duplicate")
+        _ = try await establish(connection, conversation: conversation, factory: factory)
+        let socket = try await factory.socket(at: 0)
+        socket.failNextSend(afterRecording: true)
+
+        let promptTask = Task {
+            try await connection.sendPrompt(
+                conversation: conversation,
+                prompt: "charge the card once",
+                onEvent: nil,
+                onInteraction: nil
+            )
+        }
+        let firstInput = try await socket.waitForSentFrame(type: "INPUT")
+
+        let resumedSocket = try await factory.socket(at: 1)
+        _ = try await resumedSocket.waitForSentFrame(type: "CONNECT")
+        try resumedSocket.enqueueFrame(
+            ["type": .string("CONNECTED"), "status": .string("new")]
+        )
+        let resentInput = try await resumedSocket.waitForSentFrame(type: "INPUT")
+        try resumedSocket.enqueueFrame(
+            ["type": .string("OUTPUT"), "result": .string("charged once")]
+        )
+        _ = try await promptTask.value
+
+        let originalID = try XCTUnwrap(firstInput["input_id"]?.stringValue)
+        XCTAssertFalse(originalID.isEmpty)
+        XCTAssertEqual(
+            resentInput["input_id"]?.stringValue,
+            originalID,
+            "a resent INPUT must reuse the original input_id so the agent can drop the duplicate"
+        )
         await connection.close()
     }
 
