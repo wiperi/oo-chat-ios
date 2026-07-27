@@ -6,7 +6,6 @@ import XCTest
 final class ChatJourneyIntegrationTests: XCTestCase {
     private static let address = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 
-
     // prompt → tool call → approval card → approved → agent reply, then a relaunch
     func testToolCallAndApprovalJourneySurvivesRelaunch() async throws {
         let app = try AppInstallation()
@@ -23,11 +22,11 @@ final class ChatJourneyIntegrationTests: XCTestCase {
                 id: "approval-1",
                 tool: "write_file",
                 arguments: ["path": .string("RELEASE.md")]
-            ),
+            )
         ]
         app.transport.streamedEvents = [
             .toolCall(id: "tool-1", name: "write_file", arguments: ["path": .string("RELEASE.md")]),
-            .toolResult(id: "tool-1", name: "write_file", output: "Wrote RELEASE.md", state: .completed),
+            .toolResult(id: "tool-1", name: "write_file", output: "Wrote RELEASE.md", state: .completed)
         ]
         app.transport.sendBehavior = .succeed(output: "Release notes are ready.")
 
@@ -114,7 +113,7 @@ final class ChatJourneyIntegrationTests: XCTestCase {
         let staging = viewModel.createConversation(for: agent)
         app.transport.streamedEvents = [
             .toolCall(id: "tool-1", name: "deploy", arguments: ["env": .string("staging")]),
-            .toolResult(id: "tool-1", name: "deploy", output: "Deployed staging", state: .completed),
+            .toolResult(id: "tool-1", name: "deploy", output: "Deployed staging", state: .completed)
         ]
         app.transport.sendBehavior = .succeed(output: "Staging is live.")
         viewModel.prompt = "Deploy staging"
@@ -124,7 +123,7 @@ final class ChatJourneyIntegrationTests: XCTestCase {
         let production = viewModel.createConversation(for: agent)
         app.transport.streamedEvents = [
             .toolCall(id: "tool-1", name: "deploy", arguments: ["env": .string("prod")]),
-            .toolResult(id: "tool-1", name: "deploy", output: "Deployed prod", state: .completed),
+            .toolResult(id: "tool-1", name: "deploy", output: "Deployed prod", state: .completed)
         ]
         app.transport.sendBehavior = .succeed(output: "Prod is live.")
         viewModel.prompt = "Deploy prod"
@@ -172,7 +171,7 @@ final class ChatJourneyIntegrationTests: XCTestCase {
                 id: "tool-long",
                 name: "run_tests",
                 arguments: ["suite": .string("integration"), "timeout": .number(600)]
-            ),
+            )
         ]
         app.transport.sendBehavior = .succeed(output: "All green.")
 
