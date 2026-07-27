@@ -45,6 +45,7 @@
 		100000000000000000000129 /* OfflineBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000033 /* OfflineBanner.swift */; };
 		100000000000000000000130 /* NetworkRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000034 /* NetworkRecoveryTests.swift */; };
 		100000000000000000000131 /* AgentQRCodePayloadTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000035 /* AgentQRCodePayloadTests.swift */; };
+		100000000000000000000170 /* IdentityStoreErrorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000075 /* IdentityStoreErrorTests.swift */; };
 		100000000000000000000132 /* AgentQRCodeScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000036 /* AgentQRCodeScanner.swift */; };
 		100000000000000000000133 /* AgentQRCodeShareView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000037 /* AgentQRCodeShareView.swift */; };
 		100000000000000000000134 /* MarkdownCodeBlockLanguageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000038 /* MarkdownCodeBlockLanguageTests.swift */; };
@@ -127,6 +128,7 @@
 		100000000000000000000033 /* OfflineBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineBanner.swift; sourceTree = "<group>"; };
 		100000000000000000000034 /* NetworkRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkRecoveryTests.swift; sourceTree = "<group>"; };
 		100000000000000000000035 /* AgentQRCodePayloadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentQRCodePayloadTests.swift; sourceTree = "<group>"; };
+		100000000000000000000075 /* IdentityStoreErrorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentityStoreErrorTests.swift; sourceTree = "<group>"; };
 		100000000000000000000036 /* AgentQRCodeScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentQRCodeScanner.swift; sourceTree = "<group>"; };
 		100000000000000000000037 /* AgentQRCodeShareView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentQRCodeShareView.swift; sourceTree = "<group>"; };
 		100000000000000000000038 /* MarkdownCodeBlockLanguageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownCodeBlockLanguageTests.swift; sourceTree = "<group>"; };
@@ -376,6 +378,7 @@
 			children = (
 				100000000000000000000038 /* MarkdownCodeBlockLanguageTests.swift */,
 				100000000000000000000035 /* AgentQRCodePayloadTests.swift */,
+				100000000000000000000075 /* IdentityStoreErrorTests.swift */,
 				100000000000000000000072 /* AgentSettingsViewTests.swift */,
 				100000000000000000000031 /* AgentsFeatureTests.swift */,
 				100000000000000000000068 /* ChatCardViewTests.swift */,
@@ -574,6 +577,7 @@
 			files = (
 				100000000000000000000134 /* MarkdownCodeBlockLanguageTests.swift in Sources */,
 				100000000000000000000131 /* AgentQRCodePayloadTests.swift in Sources */,
+				100000000000000000000170 /* IdentityStoreErrorTests.swift in Sources */,
 				100000000000000000000167 /* AgentSettingsViewTests.swift in Sources */,
 				100000000000000000000127 /* AgentsFeatureTests.swift in Sources */,
 				100000000000000000000163 /* ChatCardViewTests.swift in Sources */,

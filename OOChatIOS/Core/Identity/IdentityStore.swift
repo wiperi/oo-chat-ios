@@ -2,9 +2,29 @@ import CryptoKit
 import Foundation
 import Security
 
-enum IdentityStoreError: Error {
+enum IdentityStoreError: LocalizedError {
     case invalidStoredKey
     case keychain(OSStatus)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidStoredKey:
+            return "This device's saved identity key is unreadable, so the app can't sign messages."
+        case .keychain(let status):
+            // refine error message
+            return "Couldn't load this device's identity from the Keychain (\(Self.keychainDetail(status))). "
+                + "If you're running in the Simulator without code signing, this is expected."
+        }
+    }
+
+    private static func keychainDetail(_ status: OSStatus) -> String {
+        let code = "OSStatus \(status)"
+        guard let message = SecCopyErrorMessageString(status, nil) as String?,
+              !message.hasPrefix("OSStatus") else {
+            return code
+        }
+        return "\(code): \(message)"
+    }
 }
 
 final class IdentityStore {
