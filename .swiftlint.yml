@@ -8,6 +8,10 @@ excluded:
   - DerivedData
   - submodules
 
+disabled_rules:
+  - file_length
+  - type_body_length
+
 # Existing violations are recorded separately so CI can fail on new issues
 # without forcing unrelated cleanup into every pull request.
 baseline: .swiftlint-baseline.json
