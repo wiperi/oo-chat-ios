@@ -40,6 +40,7 @@ struct ChatScreen: View {
     @State private var scrollViewportHeight: CGFloat = 0
     @State private var shouldFollowLatest = true
     @State private var promptFocusRequest = 0
+    @State private var isPromptFocused = false
     private let bottomAnchorID = "chat.bottomAnchor"
     private let scrollCoordinateSpace = "chat.scroll"
 
@@ -179,15 +180,25 @@ struct ChatScreen: View {
                         updateFollowLatest()
                     }
                     .onPreferenceChange(ChatViewportHeightPreferenceKey.self) { value in
+                        let wasFollowingLatest = shouldFollowLatest
                         scrollViewportHeight = value
                         updateFollowLatest()
+                        if isPromptFocused && wasFollowingLatest {
+                            scrollToBottom(proxy)
+                        }
                     }
                     .safeAreaInset(edge: .bottom, spacing: 0) {
                         if showsComposer {
                             Composer(
                                 viewModel: viewModel,
                                 focusRequest: promptFocusRequest
-                            )
+                            ) { isFocused in
+                                isPromptFocused = isFocused
+                                guard isFocused, shouldFollowLatest else {
+                                    return
+                                }
+                                scrollToBottomAfterKeyboardLayout(proxy)
+                            }
                                 .padding(.top, 8)
                                 .background {
                                     ChatSurfacePalette.backgroundBase
@@ -329,6 +340,16 @@ struct ChatScreen: View {
             } else {
                 proxy.scrollTo(bottomAnchorID, anchor: .bottom)
             }
+        }
+    }
+
+    private func scrollToBottomAfterKeyboardLayout(_ proxy: ScrollViewProxy) {
+        scrollToBottom(proxy)
+        DispatchQueue.main.asyncAfter(deadline: .now() + ChatScrollMetrics.keyboardFollowUpDelay) {
+            guard isPromptFocused else {
+                return
+            }
+            scrollToBottom(proxy)
         }
     }
 
@@ -867,6 +888,7 @@ private struct ChatScrollUpdate: Equatable {
 
 private enum ChatScrollMetrics {
     static let followThreshold: CGFloat = 80
+    static let keyboardFollowUpDelay: DispatchTimeInterval = .milliseconds(250)
 }
 
 // Caps the message column so text stays at a readable line length on iPad, where the

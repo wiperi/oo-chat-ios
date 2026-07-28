@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 struct Composer: View {
     @ObservedObject var viewModel: ChatViewModel
     var focusRequest = 0
+    var onPromptFocusChange: (Bool) -> Void = { _ in }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @FocusState private var isPromptFocused: Bool
@@ -49,6 +50,9 @@ struct Composer: View {
         }
         .onChange(of: focusRequest) {
             isPromptFocused = true
+        }
+        .onChange(of: isPromptFocused) { _, isFocused in
+            onPromptFocusChange(isFocused)
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background {
