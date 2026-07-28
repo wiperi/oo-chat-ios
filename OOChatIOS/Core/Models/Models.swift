@@ -528,6 +528,12 @@ struct AgentInfo: Decodable {
     var advertisedSkills: [AgentSkill] {
         skills ?? profile?.skills ?? []
     }
+
+    var advertisedName: String? {
+        [name, profile?.alias]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty }
+    }
 }
 
 struct ResolvedEndpoint {

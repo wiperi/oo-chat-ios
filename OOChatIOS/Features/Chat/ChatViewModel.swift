@@ -438,6 +438,14 @@ final class ChatViewModel: ObservableObject {
         return next
     }
 
+    func fetchAgentName(for address: String) async -> String? {
+        let trimmedAddress = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard HostedAgentClient.isHostedAgentAddress(trimmedAddress) else {
+            return nil
+        }
+        return try? await client.fetchAgentName(agentAddress: trimmedAddress)
+    }
+
     func switchToAgentForChat(_ agent: AgentConnection) {
         agentAddressDraft = agent.address
         if let conversation = conversations(for: agent).first {

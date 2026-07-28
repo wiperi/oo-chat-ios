@@ -77,6 +77,17 @@ final class AgentFormViewTests: XCTestCase {
         XCTAssertEqual(savedDraft?.address, hostedAddress)
         XCTAssertEqual(savedDraft?.shouldConnectAfterSave, false)
     }
+
+    func testViewModelFetchesAdvertisedAgentName() async {
+        let transport = MockAgentTransport()
+        transport.agentNamesByAddress[hostedAddress] = "Scanned Agent"
+        let viewModel = ViewFixtures.chatViewModel(transport: transport)
+
+        let name = await viewModel.fetchAgentName(for: hostedAddress)
+
+        XCTAssertEqual(name, "Scanned Agent")
+        XCTAssertEqual(transport.fetchedNameAddresses, [hostedAddress])
+    }
 }
 
 @MainActor

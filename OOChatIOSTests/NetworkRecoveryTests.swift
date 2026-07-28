@@ -61,6 +61,7 @@ final class MockAgentTransport: HostedAgentTransport {
     var askUserRequests: [AskUserRequest] = []
     var availableSkills: [AgentSkill] = []
     var skillsByAddress: [String: [AgentSkill]] = [:]
+    var agentNamesByAddress: [String: String] = [:]
     var skillFetchError: Error?
     var onSend: (@MainActor () -> Void)?
     var waitAfterInteractionsUntilCancelled = false
@@ -74,6 +75,7 @@ final class MockAgentTransport: HostedAgentTransport {
     private(set) var planReviewDecisions: [PlanReviewDecision] = []
     private(set) var askUserDecisions: [AskUserDecision] = []
     private(set) var fetchedSkillAddresses: [String] = []
+    private(set) var fetchedNameAddresses: [String] = []
     private(set) var interactionResponseWaits: [(agentAddress: String, conversationID: String)] = []
 
     func connect(agentAddress: String, conversation: Conversation) async throws -> HostedAgentResult {
@@ -107,6 +109,11 @@ final class MockAgentTransport: HostedAgentTransport {
             throw skillFetchError
         }
         return skillsByAddress[agentAddress] ?? availableSkills
+    }
+
+    func fetchAgentName(agentAddress: String) async throws -> String? {
+        fetchedNameAddresses.append(agentAddress)
+        return agentNamesByAddress[agentAddress]
     }
 
     func sendPrompt(

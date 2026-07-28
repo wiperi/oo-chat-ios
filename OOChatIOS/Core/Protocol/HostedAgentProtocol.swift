@@ -432,6 +432,7 @@ protocol HostedAgentTransport {
     var onConnectionStateChange: (@MainActor (String, ConnectionState) -> Void)? { get set }
 
     func connect(agentAddress: String, conversation: Conversation) async throws -> HostedAgentResult
+    func fetchAgentName(agentAddress: String) async throws -> String?
     func fetchSkills(agentAddress: String) async throws -> [AgentSkill]
     func sendPrompt(
         agentAddress: String,

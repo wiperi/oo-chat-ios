@@ -24,21 +24,36 @@ struct AgentFormView: View {
     @State private var validationMessage: String?
     @State private var isPresentingScanner = false
     @State private var scannedAddress: String?
+    @State private var isFetchingAgentName = false
     let onSave: (AgentFormDraft) -> Bool
     let onCancel: () -> Void
+    let fetchAgentName: (String) async -> String?
 
-    init(draft: AgentFormDraft, onSave: @escaping (AgentFormDraft) -> Bool, onCancel: @escaping () -> Void) {
+    init(
+        draft: AgentFormDraft,
+        onSave: @escaping (AgentFormDraft) -> Bool,
+        onCancel: @escaping () -> Void,
+        fetchAgentName: @escaping (String) async -> String? = { _ in nil }
+    ) {
         _draft = State(initialValue: draft)
         self.onSave = onSave
         self.onCancel = onCancel
+        self.fetchAgentName = fetchAgentName
     }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section("Agent") {
-                    TextField("Name", text: $draft.name)
-                        .textInputAutocapitalization(.words)
+                    HStack {
+                        TextField("Name", text: $draft.name)
+                            .textInputAutocapitalization(.words)
+                        if isFetchingAgentName {
+                            ProgressView()
+                                .controlSize(.small)
+                                .accessibilityLabel("Looking up agent name")
+                        }
+                    }
                     TextField("Agent address", text: $draft.address, axis: .vertical)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
@@ -106,6 +121,9 @@ struct AgentFormView: View {
                 onUnavailable: handleScannerUnavailable
             )
         }
+        .task(id: scannedAddress) {
+            await populateNameFromScannedAgent()
+        }
     }
 
     private func handleScannedCode(_ code: String) {
@@ -124,5 +142,27 @@ struct AgentFormView: View {
     private func handleScannerUnavailable(_ message: String) {
         isPresentingScanner = false
         validationMessage = message
+    }
+
+    private func populateNameFromScannedAgent() async {
+        guard let address = scannedAddress else {
+            return
+        }
+        let originalName = draft.name
+        isFetchingAgentName = true
+        defer {
+            if scannedAddress == address {
+                isFetchingAgentName = false
+            }
+        }
+
+        guard let name = await fetchAgentName(address),
+              !Task.isCancelled,
+              scannedAddress == address,
+              draft.address == address,
+              draft.name == originalName else {
+            return
+        }
+        draft.name = name
     }
 }

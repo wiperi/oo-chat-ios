@@ -141,6 +141,8 @@ struct ChatSidebarView: View {
                     saveAgentDraft(savedDraft)
                 } onCancel: {
                     agentFormDraft = nil
+                } fetchAgentName: { address in
+                    await viewModel.fetchAgentName(for: address)
                 }
             }
     }

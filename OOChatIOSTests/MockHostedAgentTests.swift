@@ -61,6 +61,19 @@ final class MockHostedAgentTests: XCTestCase {
             relay.advertisedSkills,
             [AgentSkill(name: "commit", description: "Create a commit")]
         )
+        XCTAssertEqual(direct.advertisedName, "Local agent")
+        XCTAssertEqual(relay.advertisedName, "Relay agent")
+    }
+
+    func testAgentInfoIgnoresBlankNamesAndFallsBackToRelayAlias() throws {
+        let info = try JSONDecoder().decode(AgentInfo.self, from: Data("""
+        {
+          "name": "   ",
+          "profile": {"alias": "  Relay agent  "}
+        }
+        """.utf8))
+
+        XCTAssertEqual(info.advertisedName, "Relay agent")
     }
 
     func testAgentInfoTreatsMissingSkillDescriptionsAsEmpty() throws {

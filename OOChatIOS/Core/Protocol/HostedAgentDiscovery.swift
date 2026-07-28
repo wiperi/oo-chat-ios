@@ -2,6 +2,7 @@ import Foundation
 
 struct HostedAgentDiscoveryResult {
     let endpoint: ResolvedEndpoint
+    let name: String?
     let skills: [AgentSkill]
     let metadataAvailable: Bool
 }
@@ -30,14 +31,21 @@ actor HostedAgentDiscovery {
         let relayHTTP = normalizedRelay.replacingOccurrences(of: "wss://", with: "https://")
             .replacingOccurrences(of: "ws://", with: "http://")
         var relaySkills: [AgentSkill] = []
+        var relayName: String?
         var relayMetadataAvailable = false
         if let url = URL(string: "\(relayHTTP)/api/relay/agents/\(agentAddress)"),
            let relayInfo: AgentInfo = try? await fetchJSON(url: url, timeout: 3.0) {
             relayMetadataAvailable = true
+            relayName = relayInfo.advertisedName
             relaySkills = normalizedSkills(relayInfo.advertisedSkills)
             for httpURL in sortByProximity(relayInfo.endpoints ?? []) where httpURL.hasPrefix("http") {
                 if let result = try await probe(httpURL: httpURL, agentAddress: agentAddress, timeout: 2.5) {
-                    return result
+                    return HostedAgentDiscoveryResult(
+                        endpoint: result.endpoint,
+                        name: result.name ?? relayName,
+                        skills: result.skills,
+                        metadataAvailable: true
+                    )
                 }
             }
         }
@@ -47,6 +55,7 @@ actor HostedAgentDiscovery {
         }
         return HostedAgentDiscoveryResult(
             endpoint: ResolvedEndpoint(wsURL: relaySocketURL, kind: .relay, label: normalizedRelay),
+            name: relayName,
             skills: relaySkills,
             metadataAvailable: relayMetadataAvailable
         )
@@ -71,8 +80,9 @@ actor HostedAgentDiscovery {
             endpoint: ResolvedEndpoint(
                 wsURL: wsURL,
                 kind: .direct,
-                label: info.name.map { "\($0) at \(httpURL)" } ?? httpURL
+                label: info.advertisedName.map { "\($0) at \(httpURL)" } ?? httpURL
             ),
+            name: info.advertisedName,
             skills: normalizedSkills(info.advertisedSkills),
             metadataAvailable: true
         )

@@ -104,6 +104,17 @@ final class HostedAgentClient: HostedAgentTransport {
         return try await connectionPool.connect(agentAddress: agentAddress, conversation: conversation)
     }
 
+    func fetchAgentName(agentAddress: String) async throws -> String? {
+        guard Self.isHostedAgentAddress(agentAddress) else {
+            throw HostedAgentClientError.invalidAddress
+        }
+        let result = try await discovery.discover(agentAddress: agentAddress)
+        guard result.metadataAvailable else {
+            throw HostedAgentClientError.server("Agent metadata is unavailable.")
+        }
+        return result.name
+    }
+
     func fetchSkills(agentAddress: String) async throws -> [AgentSkill] {
         guard Self.isHostedAgentAddress(agentAddress) else {
             throw HostedAgentClientError.invalidAddress
