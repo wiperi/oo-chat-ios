@@ -77,8 +77,8 @@ struct ChatScreen: View {
                                     viewModel.allowPendingApprovalOnce(id: approval.id)
                                 } onTrustSession: {
                                     viewModel.trustPendingApprovalForSession(id: approval.id)
-                                } onReject: {
-                                    viewModel.rejectPendingApproval(id: approval.id)
+                                } onSkip: {
+                                    viewModel.skipPendingApproval(id: approval.id)
                                 } onStop: {
                                     viewModel.stopPendingApproval(id: approval.id)
                                 } onExplain: {

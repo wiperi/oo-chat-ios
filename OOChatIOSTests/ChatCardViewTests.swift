@@ -238,7 +238,7 @@ final class ApprovalCardTests: XCTestCase {
             approval: PendingApproval(conversationID: "con1", request: request),
             onAllowOnce: { self.receivedActions.append("allow") },
             onTrustSession: { self.receivedActions.append("trust") },
-            onReject: { self.receivedActions.append("reject") },
+            onSkip: { self.receivedActions.append("skip") },
             onStop: { self.receivedActions.append("stop") },
             onExplain: { self.receivedActions.append("explain") }
         )
@@ -262,10 +262,10 @@ final class ApprovalCardTests: XCTestCase {
 
         XCTAssertTrue(ViewHost.activate(identifier: "approval.allowOnce.appr1", in: window))
         XCTAssertTrue(ViewHost.activate(identifier: "approval.trustSession.appr1", in: window))
-        XCTAssertTrue(ViewHost.activate(identifier: "approval.reject.appr1", in: window))
+        XCTAssertTrue(ViewHost.activate(identifier: "approval.skip.appr1", in: window))
         XCTAssertTrue(ViewHost.activate(identifier: "approval.stop.appr1", in: window))
         XCTAssertTrue(ViewHost.activate(identifier: "approval.explain.appr1", in: window))
-        XCTAssertEqual(receivedActions, ["allow", "trust", "reject", "stop", "explain"])
+        XCTAssertEqual(receivedActions, ["allow", "trust", "skip", "stop", "explain"])
     }
 
     func testLongCommandUsesGenericTrustTitle() {

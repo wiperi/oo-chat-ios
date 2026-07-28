@@ -793,7 +793,7 @@ final class NetworkRecoveryTests: XCTestCase {
         XCTAssertNil(viewModel.activePendingApproval)
     }
 
-    func testSafeModeRejectsToolAndContinues() async {
+    func testSafeModeSkipsToolAndContinues() async {
         let (viewModel, transport, _) = makeEnvironment()
         setUpAgentAndConversation(viewModel)
         transport.approvalRequests = [approvalRequest(tool: "bash")]
@@ -801,7 +801,7 @@ final class NetworkRecoveryTests: XCTestCase {
         viewModel.prompt = "Run a command"
         viewModel.sendPrompt()
         await waitForPendingApproval(on: viewModel)
-        viewModel.rejectPendingApproval(id: viewModel.activePendingApproval!.id)
+        viewModel.skipPendingApproval(id: viewModel.activePendingApproval!.id)
         await viewModel.sendTask?.value
 
         XCTAssertEqual(transport.approvalDecisions, [.rejectSoft(feedback: nil)])
@@ -820,7 +820,7 @@ final class NetworkRecoveryTests: XCTestCase {
         await waitForPendingApproval(on: viewModel)
         let approvalID = viewModel.activePendingApproval!.id
         viewModel.allowPendingApprovalOnce(id: approvalID)
-        viewModel.rejectPendingApproval(id: approvalID)
+        viewModel.skipPendingApproval(id: approvalID)
         await viewModel.sendTask?.value
 
         XCTAssertEqual(transport.approvalDecisions, [.allowOnce])
@@ -959,7 +959,7 @@ final class NetworkRecoveryTests: XCTestCase {
         XCTAssertTrue(viewModel.hasPendingInteraction(forConversationID: firstConversation.id))
 
         viewModel.selectConversation(firstConversation)
-        viewModel.rejectPendingApproval(id: sharedRequest.id)
+        viewModel.skipPendingApproval(id: sharedRequest.id)
         await viewModel.sendTask?.value
 
         XCTAssertEqual(
@@ -1150,7 +1150,7 @@ final class NetworkRecoveryTests: XCTestCase {
             XCTAssertEqual(viewModel.activePendingApproval?.request.tool, "credit_card_charge")
             XCTAssertTrue(transport.approvalDecisions.isEmpty, "\(mode.label) resolved approval automatically")
 
-            viewModel.rejectPendingApproval(id: viewModel.activePendingApproval!.id)
+            viewModel.skipPendingApproval(id: viewModel.activePendingApproval!.id)
             await viewModel.sendTask?.value
             XCTAssertEqual(transport.approvalDecisions, [.rejectSoft(feedback: nil)])
         }
@@ -1208,7 +1208,7 @@ final class NetworkRecoveryTests: XCTestCase {
 
     func testApprovalSupportsStopAndExplain() async {
         for expected in [
-            ApprovalDecision.rejectHard(feedback: "Approval cancelled."),
+            ApprovalDecision.rejectHard(feedback: nil),
             ApprovalDecision.rejectExplain(feedback: nil),
         ] {
             let (viewModel, transport, _) = makeEnvironment()
@@ -1219,7 +1219,7 @@ final class NetworkRecoveryTests: XCTestCase {
             viewModel.sendPrompt()
             await waitForPendingApproval(on: viewModel)
             let id = viewModel.activePendingApproval!.id
-            if expected == .rejectHard(feedback: "Approval cancelled.") {
+            if expected == .rejectHard(feedback: nil) {
                 viewModel.stopPendingApproval(id: id)
             } else {
                 viewModel.explainPendingApproval(id: id)
@@ -1227,6 +1227,7 @@ final class NetworkRecoveryTests: XCTestCase {
             await viewModel.sendTask?.value
 
             XCTAssertEqual(transport.approvalDecisions, [expected])
+            XCTAssertTrue(transport.interactionResponseWaits.isEmpty)
         }
     }
 

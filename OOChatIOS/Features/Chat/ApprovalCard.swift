@@ -4,7 +4,7 @@ struct ApprovalCard: View {
     let approval: PendingApproval
     var onAllowOnce: () -> Void
     var onTrustSession: () -> Void
-    var onReject: () -> Void
+    var onSkip: () -> Void
     var onStop: () -> Void
     var onExplain: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -211,17 +211,17 @@ struct ApprovalCard: View {
             .accessibilityIdentifier("approval.trustSession.\(request.id)")
 
             HStack(spacing: 0) {
-                Button(role: .destructive) {
-                    onReject()
+                Button {
+                    onSkip()
                 } label: {
-                    Text("Reject")
+                    Text("Skip tool")
                         .font(.footnote.weight(.semibold))
-                        .foregroundStyle(AppTheme.destructive)
+                        .foregroundStyle(Color.primary.opacity(0.72))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 9)
                 }
                 .buttonStyle(AppPressButtonStyle(pressedScale: 0.97, pressedOpacity: 0.78))
-                .accessibilityIdentifier("approval.reject.\(request.id)")
+                .accessibilityIdentifier("approval.skip.\(request.id)")
 
                 Divider()
                     .frame(height: 20)
@@ -229,7 +229,7 @@ struct ApprovalCard: View {
                 Button(role: .destructive) {
                     onStop()
                 } label: {
-                    Text("Stop all")
+                    Text("Stop response")
                         .font(.footnote.weight(.semibold))
                         .foregroundStyle(AppTheme.destructive)
                         .frame(maxWidth: .infinity)

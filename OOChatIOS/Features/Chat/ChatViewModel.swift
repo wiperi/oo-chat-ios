@@ -783,15 +783,12 @@ final class ChatViewModel: ObservableObject {
         resolvePendingApproval(id: id, with: .allowSession)
     }
 
-    func rejectPendingApproval(id: String) {
+    func skipPendingApproval(id: String) {
         resolvePendingApproval(id: id, with: .rejectSoft(feedback: nil))
     }
 
     func stopPendingApproval(id: String) {
-        guard activePendingApproval?.id == id else {
-            return
-        }
-        stopActiveResponse()
+        resolvePendingApproval(id: id, with: .rejectHard(feedback: nil))
     }
 
     func explainPendingApproval(id: String) {
