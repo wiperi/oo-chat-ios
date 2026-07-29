@@ -90,6 +90,7 @@ private struct MarkdownCodeBlockView: View {
         .markdownMargin(top: 0, bottom: 16)
         .onDisappear {
             copyResetTask?.cancel()
+            isCopied = false
         }
     }
 }

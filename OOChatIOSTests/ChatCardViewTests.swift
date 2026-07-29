@@ -353,6 +353,24 @@ final class MarkdownMessageViewRenderTests: XCTestCase {
         XCTAssertNotNil(ViewHost.element(labelContains: "Code copied", in: window))
     }
 
+    func testCopyFeedbackResetsAfterCodeBlockLeavesViewport() {
+        let content = """
+        ```swift
+        let x = 1
+        ```
+        """
+        let window = ViewHost.host(MarkdownCopyFeedbackScrollHost(content: content))
+        ViewHost.pump(0.3)
+
+        XCTAssertTrue(ViewHost.activate(labelContains: "Copy code", in: window))
+        XCTAssertTrue(ViewHost.activate(labelContains: "Scroll away", in: window))
+        ViewHost.pump(0.3)
+        XCTAssertTrue(ViewHost.activate(labelContains: "Scroll to code", in: window))
+        ViewHost.pump(0.3)
+
+        XCTAssertNotNil(ViewHost.element(labelContains: "Copy code", in: window))
+    }
+
     func testCodeBlockWithoutLanguageFallsBackToCodeLabel() {
         let content = """
         ```
@@ -363,5 +381,34 @@ final class MarkdownMessageViewRenderTests: XCTestCase {
         ViewHost.pump(0.3)
         XCTAssertNotNil(ViewHost.element(labelContains: "plain block", in: window))
         XCTAssertNotNil(ViewHost.element(labelContains: "Copy code", in: window))
+    }
+}
+
+private struct MarkdownCopyFeedbackScrollHost: View {
+    let content: String
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            VStack(spacing: 12) {
+                HStack {
+                    Button("Scroll to code") {
+                        proxy.scrollTo("code", anchor: .top)
+                    }
+                    Button("Scroll away") {
+                        proxy.scrollTo("bottom", anchor: .bottom)
+                    }
+                }
+
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        MarkdownMessageView(content: content)
+                            .id("code")
+                        Color.clear
+                            .frame(height: 2_000)
+                            .id("bottom")
+                    }
+                }
+            }
+        }
     }
 }
