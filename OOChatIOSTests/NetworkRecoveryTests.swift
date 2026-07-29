@@ -47,6 +47,7 @@ final class MockAgentTransport: HostedAgentTransport {
         case succeed(output: String)
         case fail(Error)
         case wait(gate: PromptGate, output: String)
+        case waitThenFail(gate: PromptGate, error: Error)
         case waitUntilCancelled
     }
 
@@ -66,6 +67,7 @@ final class MockAgentTransport: HostedAgentTransport {
     var onSend: (@MainActor () -> Void)?
     var waitAfterInteractionsUntilCancelled = false
 
+    private(set) var closeConnectionsCount = 0
     private(set) var connectedAddresses: [String] = []
     private(set) var sentPrompts: [String] = []
     private(set) var sentImages: [[String]] = []
@@ -96,6 +98,9 @@ final class MockAgentTransport: HostedAgentTransport {
                 endpointLabel: "mock",
                 serverSession: ["session_id": .string(conversation.id)]
             )
+        case .waitThenFail(let gate, let error):
+            await gate.wait()
+            throw error
         case .waitUntilCancelled:
             while true {
                 try await Task.sleep(nanoseconds: 10_000_000)
@@ -139,6 +144,9 @@ final class MockAgentTransport: HostedAgentTransport {
             await gate.wait()
             try Task.checkCancellation()
             output = value
+        case .waitThenFail(let gate, let error):
+            await gate.wait()
+            throw error
         case .waitUntilCancelled:
             while true {
                 try await Task.sleep(nanoseconds: 10_000_000)
@@ -185,6 +193,10 @@ final class MockAgentTransport: HostedAgentTransport {
             await MainActor.run { onSend() }
         }
         return HostedAgentResult(output: output, endpointLabel: "mock", serverSession: nil)
+    }
+
+    func closeConnections() async {
+        closeConnectionsCount += 1
     }
 
     func waitForPendingInteractionResponses(agentAddress: String, conversationID: String) async {
@@ -573,6 +585,71 @@ final class NetworkRecoveryTests: XCTestCase {
         XCTAssertNotNil(viewModel.errorMessage)
         XCTAssertEqual(viewModel.connectionState, .disconnected)
         XCTAssertFalse(viewModel.isProcessing)
+    }
+
+    // one dropped network, one banner
+    func testConnectionLossAfterGoingOfflineKeepsOnlyTheOfflineBanner() async {
+        let (viewModel, transport, monitor) = makeEnvironment()
+        setUpAgentAndConversation(viewModel)
+        let gate = PromptGate()
+        transport.sendBehavior = .waitThenFail(gate: gate, error: HostedAgentClientError.closed)
+        viewModel.prompt = "in flight"
+        viewModel.sendPrompt()
+
+        monitor.simulate(online: false)
+        await gate.open()
+        await viewModel.sendTask?.value
+
+        XCTAssertTrue(viewModel.shouldShowOfflineBanner)
+        XCTAssertNil(viewModel.errorMessage, "the offline banner already reports the dropped network")
+        let userMessage = (viewModel.activeConversation?.messages ?? []).last { $0.role == .user }
+        XCTAssertEqual(userMessage?.deliveryState, .failed, "the failure still reaches the user on the bubble")
+    }
+
+    func testGoingOfflineRetractsAConnectionErrorRaisedFirst() async {
+        let (viewModel, transport, monitor) = makeEnvironment()
+        setUpAgentAndConversation(viewModel)
+        transport.sendBehavior = .fail(HostedAgentClientError.closed)
+        viewModel.prompt = "will drop"
+        viewModel.sendPrompt()
+        await viewModel.sendTask?.value
+        XCTAssertNotNil(viewModel.errorMessage, "nothing knows the network is gone yet")
+
+        monitor.simulate(online: false)
+
+        XCTAssertTrue(viewModel.shouldShowOfflineBanner)
+        XCTAssertNil(viewModel.errorMessage)
+    }
+
+    func testGoingOfflineKeepsBannersThatAreNotAboutTheNetwork() {
+        let (viewModel, _, monitor) = makeEnvironment()
+        setUpAgentAndConversation(viewModel)
+        viewModel.errorMessage = "That photo is larger than 10 MB."
+
+        monitor.simulate(online: false)
+
+        XCTAssertEqual(viewModel.errorMessage, "That photo is larger than 10 MB.")
+    }
+
+    func testAgentReportedFailureWhileOfflineStillRaisesABanner() async {
+        let (viewModel, transport, monitor) = makeEnvironment()
+        setUpAgentAndConversation(viewModel)
+        let gate = PromptGate()
+        transport.sendBehavior = .waitThenFail(
+            gate: gate,
+            error: HostedAgentClientError.server("out of disk")
+        )
+        viewModel.prompt = "in flight"
+        viewModel.sendPrompt()
+
+        monitor.simulate(online: false)
+        await gate.open()
+        await viewModel.sendTask?.value
+
+        XCTAssertTrue(
+            viewModel.errorMessage?.contains("out of disk") ?? false,
+            "an agent-side failure says something the offline banner does not"
+        )
     }
 
     func testRetryResendsFailedMessage() async {
@@ -1536,6 +1613,53 @@ final class NetworkRecoveryTests: XCTestCase {
         XCTAssertEqual(transport.sentPrompts, ["auto delivered"])
         let userMessage = (viewModel.activeConversation?.messages ?? []).last { $0.role == .user }
         XCTAssertEqual(userMessage?.deliveryState, .sent)
+    }
+
+    func testLosingTheNetworkClosesTheTransportsSockets() async {
+        let (viewModel, transport, monitor) = makeEnvironment()
+        setUpAgentAndConversation(viewModel)
+
+        monitor.simulate(online: false)
+        await viewModel.disconnectTask?.value
+
+        XCTAssertEqual(
+            transport.closeConnectionsCount,
+            1,
+            "a socket left believing it is connected makes every later probe answer from cache"
+        )
+    }
+
+    func testProbeReconnectRunsAfterTheSocketsAreClosed() async {
+        let (viewModel, transport, monitor) = makeEnvironment()
+        setUpAgentAndConversation(viewModel)
+        viewModel.probeInterval = 0.01
+        monitor.simulate(online: false)
+
+        await viewModel.probeTask?.value
+
+        XCTAssertEqual(transport.closeConnectionsCount, 1)
+        XCTAssertEqual(transport.connectedAddresses, [address], "the probe must open a fresh connection")
+        XCTAssertFalse(viewModel.isOffline)
+    }
+
+    // the reported flow: drop the network, wait through a few probe cycles, then send
+    func testSendingWhileOfflineQueuesAndNeverLooksLikeWork() async {
+        let (viewModel, transport, monitor) = makeEnvironment()
+        setUpAgentAndConversation(viewModel)
+        viewModel.probeInterval = 0.01
+        transport.connectBehavior = .fail(HostedAgentClientError.closed)
+        monitor.simulate(online: false)
+        try? await Task.sleep(nanoseconds: 50_000_000)
+
+        viewModel.prompt = "typed while offline"
+        viewModel.sendPrompt()
+
+        XCTAssertTrue(viewModel.shouldShowOfflineBanner, "probes that cannot connect must not clear the banner")
+        XCTAssertTrue(transport.sentPrompts.isEmpty)
+        XCTAssertFalse(viewModel.isProcessing, "nothing is in flight, so the agent is not working")
+        let messages = viewModel.activeConversation?.messages ?? []
+        XCTAssertEqual(messages.last { $0.role == .user }?.deliveryState, .queued)
+        XCTAssertFalse(messages.contains { $0.role == .thinking })
     }
 
     func testProbingStopsWhenMonitorReportsOnline() {

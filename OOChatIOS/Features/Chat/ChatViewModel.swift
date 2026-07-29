@@ -58,6 +58,10 @@ final class ChatViewModel: ObservableObject {
         recoveryCoordinator.probeTask
     }
 
+    var disconnectTask: Task<Void, Never>? {
+        recoveryCoordinator.disconnectTask
+    }
+
     private let interactionCoordinator: InteractionCoordinator
     private let deliveryCoordinator: MessageDeliveryCoordinator
     private let recoveryCoordinator: ConnectionRecoveryCoordinator
@@ -68,6 +72,11 @@ final class ChatViewModel: ObservableObject {
     private var skillChangeCancellable: AnyCancellable?
     private var conversationStateChangeCancellable: AnyCancellable?
     private var persistenceErrorCancellable: AnyCancellable?
+    private var offlineStateCancellable: AnyCancellable?
+    /// Text of the banner currently raised by a connectivity failure, so going offline can
+    /// retract it. Nothing else is retracted: a banner about a photo or the store is still
+    /// news once the network drops.
+    private var connectivityErrorMessage: String?
     private var voiceInputChangeCancellable: AnyCancellable?
     private var imageDraftsByConversationID: [String: [ChatImageAttachment]] = [:]
     private var fileDraftsByConversationID: [String: [ChatFileAttachment]] = [:]
@@ -328,20 +337,14 @@ final class ChatViewModel: ObservableObject {
         if let storeError {
             self.errorMessage = "Couldn’t open your saved conversations, so this session won’t be saved. \(storeError.localizedDescription)"
         }
-        recoveryCoordinator.onRecoveryError = { [weak self] conversationID, message in
-            guard self?.activeConversationID == conversationID else {
-                return
-            }
-            self?.errorMessage = message
+        recoveryCoordinator.onRecoveryError = { [weak self] conversationID, error in
+            self?.presentConnectionError(error, forConversationID: conversationID)
         }
         recoveryCoordinator.onReconnect = { [weak self] agent in
             self?.skillCoordinator.refreshSkills(for: agent)
         }
-        deliveryCoordinator.onDeliveryError = { [weak self] conversationID, message in
-            guard self?.activeConversationID == conversationID else {
-                return
-            }
-            self?.errorMessage = message
+        deliveryCoordinator.onDeliveryError = { [weak self] conversationID, error in
+            self?.presentConnectionError(error, forConversationID: conversationID)
         }
         deliveryCoordinator.onDeliveriesIdle = { [weak self] in
             self?.endBackgroundDeliveryHold()
@@ -361,6 +364,14 @@ final class ChatViewModel: ObservableObject {
         conversationStateChangeCancellable = conversationState.objectWillChange.sink { [weak self] in
             self?.objectWillChange.send()
         }
+        offlineStateCancellable = recoveryCoordinator.$isOffline
+            .removeDuplicates()
+            .sink { [weak self] isOffline in
+                guard isOffline else {
+                    return
+                }
+                self?.retractConnectivityError()
+            }
         persistenceErrorCancellable = conversationState.$persistenceError
             .compactMap { $0 }
             .sink { [weak self] error in
@@ -868,6 +879,35 @@ final class ChatViewModel: ObservableObject {
     }
 
     func dismissError() {
+        errorMessage = nil
+        connectivityErrorMessage = nil
+    }
+
+    // Raises a banner for a failed delivery or reconnect
+    private func presentConnectionError(_ error: Error, forConversationID conversationID: String) {
+        guard activeConversationID == conversationID else {
+            return
+        }
+        let message = error.localizedDescription
+        guard HostedAgentClientError.isConnectivityFailure(error) else {
+            errorMessage = message
+            return
+        }
+        // Recorded even while suppressed so a later drop can retract an identical banner.
+        connectivityErrorMessage = message
+        guard !isOffline else {
+            return
+        }
+        errorMessage = message
+    }
+
+    /// The socket dying and the path monitor noticing race, so suppressing at presentation time
+    /// only covers one order. When the monitor is the one that arrives second, take the banner
+    /// its message supersedes back down.
+    private func retractConnectivityError() {
+        guard errorMessage != nil, errorMessage == connectivityErrorMessage else {
+            return
+        }
         errorMessage = nil
     }
 

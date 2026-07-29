@@ -12,7 +12,7 @@ final class MessageDeliveryCoordinator: ObservableObject {
 
     var onConnectionStateChange: ((String, ConnectionState) -> Void)?
     var connectionState: ((String) -> ConnectionState)?
-    var onDeliveryError: ((String, String) -> Void)?
+    var onDeliveryError: ((String, Error) -> Void)?
     var onDeliveriesIdle: (() -> Void)?
 
     var hasActiveDeliveries: Bool {
@@ -318,7 +318,7 @@ final class MessageDeliveryCoordinator: ObservableObject {
             updated.messages[index].deliveryState = .failed
         }
         conversationState.clearCompletedUnread(conversationID: conversationID)
-        onDeliveryError?(conversationID, error.localizedDescription)
+        onDeliveryError?(conversationID, error)
         onConnectionStateChange?(conversationID, .disconnected)
         conversationState.upsert(updated)
     }

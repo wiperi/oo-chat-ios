@@ -1067,6 +1067,54 @@ final class HostedAgentConnectionPoolTests: XCTestCase {
         await pool.closeAll()
     }
 
+    // A connected socket answers `connect` from cache, which is the right call for a reused
+    // conversation and the wrong one after the network disappeared: the recovery layer would
+    // read that cached success as proof it is back. Closing has to leave nothing to answer from.
+    func testConnectAfterCloseAllHandshakesAgainInsteadOfAnsweringFromCache() async throws {
+        let factory = MockHostedAgentSocketFactory()
+        let pool = makePool(factory: factory, maximumSize: 2)
+        let conversation = makeConversation(id: "pool-close-then-connect")
+        try await connect(pool, conversation: conversation, factory: factory, socketIndex: 0)
+        let reused = try await pool.connect(agentAddress: agentAddress, conversation: conversation)
+        XCTAssertEqual(reused.endpointLabel, endpoint.label)
+        XCTAssertEqual(factory.count, 1, "a live conversation reuses its socket")
+
+        await pool.closeAll()
+        try await connect(pool, conversation: conversation, factory: factory, socketIndex: 1)
+
+        XCTAssertEqual(factory.count, 2)
+        await pool.closeAll()
+    }
+
+    func testCloseAllFailsAPendingPromptRightAwayInsteadOfLeavingItWaiting() async throws {
+        let factory = MockHostedAgentSocketFactory()
+        let pool = makePool(factory: factory, maximumSize: 2)
+        let conversation = makeConversation(id: "pool-close-pending")
+        try await connect(pool, conversation: conversation, factory: factory, socketIndex: 0)
+        let socket = try await factory.socket(at: 0)
+        let prompt = Task {
+            try await pool.sendPrompt(
+                agentAddress: agentAddress,
+                conversation: conversation,
+                prompt: "in flight",
+                onEvent: nil,
+                onInteraction: nil
+            )
+        }
+        _ = try await socket.waitForSentFrame(type: "INPUT")
+
+        await pool.closeAll()
+
+        do {
+            _ = try await prompt.value
+            XCTFail("Expected the pending prompt to fail with the socket")
+        } catch let error as HostedAgentClientError {
+            guard case .closed = error else {
+                return XCTFail("Expected closed, got \(error)")
+            }
+        }
+    }
+
     func testPoolSendPromptSuccessAndFailureReleaseLeases() async throws {
         let factory = MockHostedAgentSocketFactory()
         let pool = makePool(factory: factory, maximumSize: 2)

@@ -10,6 +10,7 @@ final class ConnectionRecoveryCoordinator: ObservableObject {
     private(set) var recoveryTask: Task<Void, Never>?
     private(set) var probeTask: Task<Void, Never>?
     private(set) var launchFlushTask: Task<Void, Never>?
+    private(set) var disconnectTask: Task<Void, Never>?
     /// Clamped on read: `UInt64(negative)` traps, so a non-positive interval would crash the
     /// probe loop rather than just polling too eagerly.
     var probeInterval: TimeInterval = 5 {
@@ -18,7 +19,7 @@ final class ConnectionRecoveryCoordinator: ObservableObject {
         }
     }
 
-    var onRecoveryError: ((String, String) -> Void)?
+    var onRecoveryError: ((String, Error) -> Void)?
     var onReconnect: ((AgentConnection) -> Void)?
 
     private var recoveryConversationID: String?
@@ -59,6 +60,7 @@ final class ConnectionRecoveryCoordinator: ObservableObject {
         probeTask?.cancel()
         recoveryTask?.cancel()
         launchFlushTask?.cancel()
+        disconnectTask?.cancel()
     }
 
     var shouldShowOfflineBanner: Bool {
@@ -117,6 +119,7 @@ final class ConnectionRecoveryCoordinator: ObservableObject {
             for conversationID in conversationState.conversations.map(\.id) {
                 statesByConversationID[conversationID] = .disconnected
             }
+            closeConnections()
             startRecoveryProbing(forConversationID: conversationState.activeConversationID)
             return
         }
@@ -136,6 +139,14 @@ final class ConnectionRecoveryCoordinator: ObservableObject {
             return
         }
         startRecovery(forConversationID: conversationID, requiresSuccessfulReconnect: false)
+    }
+
+    private func closeConnections() {
+        disconnectTask?.cancel()
+        let transport = transport
+        disconnectTask = Task {
+            await transport.closeConnections()
+        }
     }
 
     private func startRecovery(
@@ -208,6 +219,8 @@ final class ConnectionRecoveryCoordinator: ObservableObject {
             return false
         }
 
+        await disconnectTask?.value
+
         if !silently {
             setConnectionState(.reconnecting, forConversationID: conversationID)
         }
@@ -240,7 +253,7 @@ final class ConnectionRecoveryCoordinator: ObservableObject {
             if !silently {
                 setConnectionState(.disconnected, forConversationID: conversationID)
                 if conversationState.activeConversationID == conversationID {
-                    onRecoveryError?(conversationID, error.localizedDescription)
+                    onRecoveryError?(conversationID, error)
                 }
             }
             return false

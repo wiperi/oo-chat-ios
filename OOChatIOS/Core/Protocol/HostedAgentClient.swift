@@ -156,6 +156,10 @@ final class HostedAgentClient: HostedAgentTransport {
         )
     }
 
+    func closeConnections() async {
+        await connectionPool.closeAll()
+    }
+
     func applicationDidBecomeActive() {
         let connectionPool = connectionPool
         Task {
