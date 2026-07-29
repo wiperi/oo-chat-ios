@@ -336,6 +336,23 @@ final class MarkdownMessageViewRenderTests: XCTestCase {
         XCTAssertNotNil(ViewHost.element(labelContains: "Copy code", in: window))
     }
 
+    func testRepeatedCopyKeepsConfirmationVisibleAfterEarlierReset() {
+        let content = """
+        ```swift
+        let x = 1
+        ```
+        """
+        let window = ViewHost.host(MarkdownMessageView(content: content))
+        ViewHost.pump(0.3)
+
+        XCTAssertTrue(ViewHost.activate(labelContains: "Copy code", in: window))
+        ViewHost.pump(0.9)
+        XCTAssertTrue(ViewHost.activate(labelContains: "Code copied", in: window))
+        ViewHost.pump(0.5)
+
+        XCTAssertNotNil(ViewHost.element(labelContains: "Code copied", in: window))
+    }
+
     func testCodeBlockWithoutLanguageFallsBackToCodeLabel() {
         let content = """
         ```

@@ -38,6 +38,7 @@ struct MarkdownMessageView: View {
 private struct MarkdownCodeBlockView: View {
     let configuration: CodeBlockConfiguration
     @State private var isCopied = false
+    @State private var copyResetTask: Task<Void, Never>?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -51,8 +52,12 @@ private struct MarkdownCodeBlockView: View {
                 Button {
                     UIPasteboard.general.string = configuration.content
                     isCopied = true
-                    Task {
+                    copyResetTask?.cancel()
+                    copyResetTask = Task {
                         try? await Task.sleep(for: .seconds(1.2))
+                        guard !Task.isCancelled else {
+                            return
+                        }
                         isCopied = false
                     }
                 } label: {
@@ -83,5 +88,8 @@ private struct MarkdownCodeBlockView: View {
         .background(Color(.secondarySystemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .markdownMargin(top: 0, bottom: 16)
+        .onDisappear {
+            copyResetTask?.cancel()
+        }
     }
 }
