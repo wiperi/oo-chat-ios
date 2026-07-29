@@ -56,7 +56,7 @@ extension HostedAgentClientError {
         .dnsLookupFailed,
         .timedOut,
         .internationalRoamingOff,
-        .dataNotAllowed,
+        .dataNotAllowed
     ]
 }
 enum HostedAgentEvent: Equatable {

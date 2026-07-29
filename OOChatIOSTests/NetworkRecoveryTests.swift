@@ -133,17 +133,32 @@ final class MockAgentTransport: HostedAgentTransport {
         sentPrompts.append(prompt)
         sentImages.append(images)
         sentFiles.append(files)
-        let behavior = sendBehaviorsByPrompt[prompt] ?? sendBehavior
-        let output: String
+        let output = try await output(for: sendBehaviorsByPrompt[prompt] ?? sendBehavior)
+        try await replayInteractions(onInteraction: onInteraction)
+        if waitAfterInteractionsUntilCancelled {
+            while true {
+                try await Task.sleep(nanoseconds: 10_000_000)
+            }
+        }
+        for event in streamedEvents {
+            await onEvent?(event)
+        }
+        if let onSend {
+            await MainActor.run { onSend() }
+        }
+        return HostedAgentResult(output: output, endpointLabel: "mock", serverSession: nil)
+    }
+
+    private func output(for behavior: Behavior) async throws -> String {
         switch behavior {
         case .succeed(let value):
-            output = value
+            return value
         case .fail(let error):
             throw error
         case .wait(let gate, let value):
             await gate.wait()
             try Task.checkCancellation()
-            output = value
+            return value
         case .waitThenFail(let gate, let error):
             await gate.wait()
             throw error
@@ -152,7 +167,11 @@ final class MockAgentTransport: HostedAgentTransport {
                 try await Task.sleep(nanoseconds: 10_000_000)
             }
         }
+    }
 
+    private func replayInteractions(
+        onInteraction: (@MainActor (HostedAgentInteraction) async -> HostedAgentInteractionDecision)?
+    ) async throws {
         for request in approvalRequests {
             guard let onInteraction,
                   case .approval(let decision) = await onInteraction(.approval(request)) else {
@@ -181,18 +200,6 @@ final class MockAgentTransport: HostedAgentTransport {
             }
             askUserDecisions.append(decision)
         }
-        if waitAfterInteractionsUntilCancelled {
-            while true {
-                try await Task.sleep(nanoseconds: 10_000_000)
-            }
-        }
-        for event in streamedEvents {
-            await onEvent?(event)
-        }
-        if let onSend {
-            await MainActor.run { onSend() }
-        }
-        return HostedAgentResult(output: output, endpointLabel: "mock", serverSession: nil)
     }
 
     func closeConnections() async {

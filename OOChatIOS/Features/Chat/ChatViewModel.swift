@@ -337,6 +337,12 @@ final class ChatViewModel: ObservableObject {
         if let storeError {
             self.errorMessage = "Couldn’t open your saved conversations, so this session won’t be saved. \(storeError.localizedDescription)"
         }
+        observeCoordinators()
+        recoveryCoordinator.start()
+    }
+
+    /// Everything the coordinators call back into, wired once the stored properties exist.
+    private func observeCoordinators() {
         recoveryCoordinator.onRecoveryError = { [weak self] conversationID, error in
             self?.presentConnectionError(error, forConversationID: conversationID)
         }
@@ -348,21 +354,6 @@ final class ChatViewModel: ObservableObject {
         }
         deliveryCoordinator.onDeliveriesIdle = { [weak self] in
             self?.endBackgroundDeliveryHold()
-        }
-        interactionChangeCancellable = interactionCoordinator.objectWillChange.sink { [weak self] in
-            self?.objectWillChange.send()
-        }
-        deliveryChangeCancellable = deliveryCoordinator.objectWillChange.sink { [weak self] in
-            self?.objectWillChange.send()
-        }
-        recoveryChangeCancellable = recoveryCoordinator.objectWillChange.sink { [weak self] in
-            self?.objectWillChange.send()
-        }
-        skillChangeCancellable = skillCoordinator.objectWillChange.sink { [weak self] in
-            self?.objectWillChange.send()
-        }
-        conversationStateChangeCancellable = conversationState.objectWillChange.sink { [weak self] in
-            self?.objectWillChange.send()
         }
         offlineStateCancellable = recoveryCoordinator.$isOffline
             .removeDuplicates()
@@ -377,11 +368,24 @@ final class ChatViewModel: ObservableObject {
             .sink { [weak self] error in
                 self?.errorMessage = error.localizedDescription
             }
-        voiceInputChangeCancellable = self.voiceInputController.objectWillChange
-            .sink { [weak self] in
-                self?.objectWillChange.send()
-            }
-        recoveryCoordinator.start()
+        forwardChangesFromCoordinators()
+    }
+
+    /// The coordinators own the state the views read through this view model, so their
+    /// changes have to reach SwiftUI as changes to this object.
+    private func forwardChangesFromCoordinators() {
+        interactionChangeCancellable = forwardingChanges(from: interactionCoordinator.objectWillChange)
+        deliveryChangeCancellable = forwardingChanges(from: deliveryCoordinator.objectWillChange)
+        recoveryChangeCancellable = forwardingChanges(from: recoveryCoordinator.objectWillChange)
+        skillChangeCancellable = forwardingChanges(from: skillCoordinator.objectWillChange)
+        conversationStateChangeCancellable = forwardingChanges(from: conversationState.objectWillChange)
+        voiceInputChangeCancellable = forwardingChanges(from: voiceInputController.objectWillChange)
+    }
+
+    private func forwardingChanges(from publisher: ObservableObjectPublisher) -> AnyCancellable {
+        publisher.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
     }
 
     func agent(withID id: String) -> AgentConnection? {
