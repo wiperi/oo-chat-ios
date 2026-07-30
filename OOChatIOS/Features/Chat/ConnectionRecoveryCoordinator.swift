@@ -1,10 +1,17 @@
 import Combine
 import Foundation
 
+enum ConnectionRecoveryTrigger {
+    case probe
+    case pathRestored
+    case userRetry
+}
+
 @MainActor
 final class ConnectionRecoveryCoordinator: ObservableObject {
     @Published private(set) var isOffline = false
     @Published private(set) var isOfflineBannerDismissed = false
+    @Published private(set) var isRetryingConnectivity = false
     @Published private var statesByConversationID: [String: ConnectionState] = [:]
 
     private(set) var recoveryTask: Task<Void, Never>?
@@ -23,6 +30,7 @@ final class ConnectionRecoveryCoordinator: ObservableObject {
     var onReconnect: ((AgentConnection) -> Void)?
 
     private var recoveryConversationID: String?
+    private var recoveryGeneration = 0
     private var probeConversationID: String?
     private var hasFlushedOnLaunch = false
     private let conversationState: ConversationState
@@ -95,14 +103,14 @@ final class ConnectionRecoveryCoordinator: ObservableObject {
         guard isOffline, let conversationID = conversationState.activeConversationID else {
             return
         }
-        startRecovery(forConversationID: conversationID, requiresSuccessfulReconnect: true)
+        startRecovery(forConversationID: conversationID, trigger: .userRetry)
     }
 
     func reconnectActiveConversation() async {
         guard let conversationID = conversationState.activeConversationID else {
             return
         }
-        _ = await reconnect(conversationID: conversationID, silently: false)
+        _ = await reconnect(conversationID: conversationID, trigger: .userRetry)
     }
 
     private func handleNetworkChange(isOnline: Bool) {
@@ -119,7 +127,7 @@ final class ConnectionRecoveryCoordinator: ObservableObject {
             for conversationID in conversationState.conversations.map(\.id) {
                 statesByConversationID[conversationID] = .disconnected
             }
-            closeConnections()
+            noteNetworkLost()
             startRecoveryProbing(forConversationID: conversationState.activeConversationID)
             return
         }
@@ -138,33 +146,43 @@ final class ConnectionRecoveryCoordinator: ObservableObject {
         guard wasOffline, let conversationID = conversationState.activeConversationID else {
             return
         }
-        startRecovery(forConversationID: conversationID, requiresSuccessfulReconnect: false)
+        startRecovery(forConversationID: conversationID, trigger: .pathRestored)
     }
 
-    private func closeConnections() {
+    private func noteNetworkLost() {
         disconnectTask?.cancel()
         let transport = transport
         disconnectTask = Task {
-            await transport.closeConnections()
+            await transport.noteNetworkLost()
         }
     }
 
     private func startRecovery(
         forConversationID conversationID: String,
-        requiresSuccessfulReconnect: Bool
+        trigger: ConnectionRecoveryTrigger
     ) {
         recoveryTask?.cancel()
         recoveryConversationID = conversationID
+        recoveryGeneration += 1
+        let generation = recoveryGeneration
+        isRetryingConnectivity = trigger == .userRetry
         recoveryTask = Task { [weak self] in
             guard let self else {
                 return
             }
+            // A cancelled attempt finishes after its replacement started
+            defer {
+                if self.recoveryGeneration == generation {
+                    self.isRetryingConnectivity = false
+                }
+            }
             let connected = await self.reconnect(
                 conversationID: conversationID,
-                silently: false
+                trigger: trigger
             )
+            // A retry only counts if it actually reconnected
             guard !Task.isCancelled,
-                  !requiresSuccessfulReconnect || connected else {
+                  trigger != .userRetry || connected else {
                 return
             }
             if connected {
@@ -195,7 +213,7 @@ final class ConnectionRecoveryCoordinator: ObservableObject {
                 }
                 if await self?.reconnect(
                     conversationID: conversationID,
-                    silently: true
+                    trigger: .probe
                 ) == true {
                     guard !Task.isCancelled, let self else {
                         return
@@ -211,7 +229,7 @@ final class ConnectionRecoveryCoordinator: ObservableObject {
 
     private func reconnect(
         conversationID: String,
-        silently: Bool
+        trigger: ConnectionRecoveryTrigger
     ) async -> Bool {
         guard let conversation = conversationState.conversation(withID: conversationID),
               let agent = conversationState.agent(for: conversation),
@@ -221,6 +239,7 @@ final class ConnectionRecoveryCoordinator: ObservableObject {
 
         await disconnectTask?.value
 
+        let silently = trigger == .probe
         if !silently {
             setConnectionState(.reconnecting, forConversationID: conversationID)
         }
@@ -250,6 +269,9 @@ final class ConnectionRecoveryCoordinator: ObservableObject {
         } catch is CancellationError {
             return false
         } catch {
+            if let clientError = error as? HostedAgentClientError, case .busy = clientError {
+                return false
+            }
             if !silently {
                 setConnectionState(.disconnected, forConversationID: conversationID)
                 if conversationState.activeConversationID == conversationID {

@@ -67,7 +67,7 @@ final class MockAgentTransport: HostedAgentTransport {
     var onSend: (@MainActor () -> Void)?
     var waitAfterInteractionsUntilCancelled = false
 
-    private(set) var closeConnectionsCount = 0
+    private(set) var networkLossNotices = 0
     private(set) var connectedAddresses: [String] = []
     private(set) var sentPrompts: [String] = []
     private(set) var sentImages: [[String]] = []
@@ -202,8 +202,8 @@ final class MockAgentTransport: HostedAgentTransport {
         }
     }
 
-    func closeConnections() async {
-        closeConnectionsCount += 1
+    func noteNetworkLost() async {
+        networkLossNotices += 1
     }
 
     func waitForPendingInteractionResponses(agentAddress: String, conversationID: String) async {
@@ -592,6 +592,56 @@ final class NetworkRecoveryTests: XCTestCase {
         XCTAssertNotNil(viewModel.errorMessage)
         XCTAssertEqual(viewModel.connectionState, .disconnected)
         XCTAssertFalse(viewModel.isProcessing)
+    }
+
+    func testRetryThatFailsWhileOfflineLeavesOnlyTheOfflineBanner() async {
+        let (viewModel, transport, monitor) = makeEnvironment()
+        setUpAgentAndConversation(viewModel)
+        transport.connectBehavior = .fail(HostedAgentClientError.timeout)
+        monitor.simulate(online: false)
+
+        viewModel.retryConnectivity()
+        await viewModel.recoveryTask?.value
+
+        XCTAssertTrue(viewModel.shouldShowOfflineBanner)
+        XCTAssertNil(
+            viewModel.errorMessage,
+            "a failed retry while offline has nothing to add to the offline banner"
+        )
+        XCTAssertFalse(viewModel.isRetryingConnectivity)
+    }
+
+    func testRetryReportsItsProgressOnTheRetryControl() async {
+        let (viewModel, transport, monitor) = makeEnvironment()
+        setUpAgentAndConversation(viewModel)
+        let gate = PromptGate()
+        transport.connectBehavior = .wait(gate: gate, output: "")
+        monitor.simulate(online: false)
+
+        viewModel.retryConnectivity()
+        XCTAssertTrue(viewModel.isRetryingConnectivity, "the button has to show the attempt is running")
+
+        await gate.open()
+        await viewModel.recoveryTask?.value
+
+        XCTAssertFalse(viewModel.isRetryingConnectivity)
+        XCTAssertFalse(viewModel.isOffline, "a retry that connects is proof the network is back")
+    }
+
+    func testRetryWhileAPromptStillHoldsTheConnectionStaysQuiet() async {
+        let (viewModel, transport, monitor) = makeEnvironment()
+        setUpAgentAndConversation(viewModel)
+        transport.connectBehavior = .fail(HostedAgentClientError.busy)
+        monitor.simulate(online: false)
+
+        viewModel.retryConnectivity()
+        await viewModel.recoveryTask?.value
+
+        XCTAssertTrue(viewModel.shouldShowOfflineBanner)
+        XCTAssertNil(
+            viewModel.errorMessage,
+            "a connection held by its own in-flight prompt is not a failure the user can act on"
+        )
     }
 
     // one dropped network, one banner
@@ -1630,7 +1680,7 @@ final class NetworkRecoveryTests: XCTestCase {
         await viewModel.disconnectTask?.value
 
         XCTAssertEqual(
-            transport.closeConnectionsCount,
+            transport.networkLossNotices,
             1,
             "a socket left believing it is connected makes every later probe answer from cache"
         )
@@ -1644,7 +1694,7 @@ final class NetworkRecoveryTests: XCTestCase {
 
         await viewModel.probeTask?.value
 
-        XCTAssertEqual(transport.closeConnectionsCount, 1)
+        XCTAssertEqual(transport.networkLossNotices, 1)
         XCTAssertEqual(transport.connectedAddresses, [address], "the probe must open a fresh connection")
         XCTAssertFalse(viewModel.isOffline)
     }

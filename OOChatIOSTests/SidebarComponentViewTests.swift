@@ -213,6 +213,14 @@ final class SidebarBannerViewTests: XCTestCase {
         XCTAssertEqual(dismissCount, 1)
     }
 
+    func testOfflineBannerShowsAnInFlightRetryOnTheButton() {
+        let window = ViewHost.host(
+            OfflineBanner(isRetrying: true, onRetry: {}, onDismiss: {})
+        )
+
+        XCTAssertNotNil(ViewHost.element(labelContains: "Retrying", in: window))
+    }
+
     func testErrorBannerRendersMessageAndInvokesDismiss() {
         var dismissed = false
         let window = ViewHost.host(

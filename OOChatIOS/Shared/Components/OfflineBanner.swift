@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct OfflineBanner: View {
+    var isRetrying = false
     let onRetry: () -> Void
     let onDismiss: () -> Void
 
@@ -9,12 +10,13 @@ struct OfflineBanner: View {
             Label("You're offline. Messages will be queued.", systemImage: "wifi.slash")
                 .font(.footnote.weight(.semibold))
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Button("Retry") {
+            Button(isRetrying ? "Retrying…" : "Retry") {
                 onRetry()
             }
             .font(.footnote.weight(.bold))
             .buttonStyle(AppPressButtonStyle())
-            .accessibilityLabel("Retry connection")
+            .disabled(isRetrying)
+            .accessibilityLabel(isRetrying ? "Retrying connection" : "Retry connection")
             Button {
                 onDismiss()
             } label: {

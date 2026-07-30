@@ -34,30 +34,16 @@ enum HostedAgentClientError: LocalizedError {
 
 extension HostedAgentClientError {
     static func isConnectivityFailure(_ error: Error) -> Bool {
-        if let clientError = error as? HostedAgentClientError {
-            switch clientError {
-            case .closed, .timeout, .invalidURL:
-                return true
-            case .invalidAddress, .badFrame, .server, .busy:
-                return false
-            }
+        guard let clientError = error as? HostedAgentClientError else {
+            return false
         }
-        if let urlError = error as? URLError {
-            return connectivityURLErrorCodes.contains(urlError.code)
+        switch clientError {
+        case .closed, .timeout, .invalidURL:
+            return true
+        case .invalidAddress, .badFrame, .server, .busy:
+            return false
         }
-        return false
     }
-
-    private static let connectivityURLErrorCodes: Set<URLError.Code> = [
-        .notConnectedToInternet,
-        .networkConnectionLost,
-        .cannotConnectToHost,
-        .cannotFindHost,
-        .dnsLookupFailed,
-        .timedOut,
-        .internationalRoamingOff,
-        .dataNotAllowed
-    ]
 }
 enum HostedAgentEvent: Equatable {
     case toolCall(id: String, name: String, arguments: [String: JSONValue])
@@ -472,7 +458,7 @@ protocol HostedAgentTransport {
         onInteraction: (@MainActor (HostedAgentInteraction) async -> HostedAgentInteractionDecision)?
     ) async throws -> HostedAgentResult
     func waitForPendingInteractionResponses(agentAddress: String, conversationID: String) async
-    func closeConnections() async
+    func noteNetworkLost() async
     /// Called when the app returns to the foreground, so transports can refresh liveness
     /// bookkeeping that would otherwise treat the suspended time as a dead connection.
     func applicationDidBecomeActive()

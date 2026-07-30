@@ -156,8 +156,8 @@ final class HostedAgentClient: HostedAgentTransport {
         )
     }
 
-    func closeConnections() async {
-        await connectionPool.closeAll()
+    func noteNetworkLost() async {
+        await connectionPool.noteNetworkLost()
     }
 
     func applicationDidBecomeActive() {

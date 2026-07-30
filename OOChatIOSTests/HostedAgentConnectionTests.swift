@@ -1115,6 +1115,86 @@ final class HostedAgentConnectionPoolTests: XCTestCase {
         }
     }
 
+    func testNetworkLossClosesTheIdleSocketAndForcesTheNextConnectToHandshake() async throws {
+        let factory = MockHostedAgentSocketFactory()
+        let pool = makePool(factory: factory, maximumSize: 2)
+        let conversation = makeConversation(id: "pool-network-loss-idle")
+        try await connect(pool, conversation: conversation, factory: factory, socketIndex: 0)
+        let socket = try await factory.socket(at: 0)
+
+        await pool.noteNetworkLost()
+
+        XCTAssertEqual(socket.closeCode, .goingAway, "nothing is riding an idle socket")
+        try await connect(pool, conversation: conversation, factory: factory, socketIndex: 1)
+        XCTAssertEqual(factory.count, 2)
+        await pool.closeAll()
+    }
+
+    // The reason a busy connection is marked rather than closed: the prompt on it may still
+    // survive a blip through the resume path, which closing would take away.
+    func testNetworkLossLeavesAnInFlightPromptOnItsSocket() async throws {
+        let factory = MockHostedAgentSocketFactory()
+        let pool = makePool(factory: factory, maximumSize: 2)
+        let conversation = makeConversation(id: "pool-network-loss-busy")
+        try await connect(pool, conversation: conversation, factory: factory, socketIndex: 0)
+        let socket = try await factory.socket(at: 0)
+        let prompt = Task {
+            try await pool.sendPrompt(
+                agentAddress: agentAddress,
+                conversation: conversation,
+                prompt: "in flight",
+                onEvent: nil,
+                onInteraction: nil
+            )
+        }
+        _ = try await socket.waitForSentFrame(type: "INPUT")
+
+        await pool.noteNetworkLost()
+
+        XCTAssertNil(socket.closeCode, "the socket carrying a prompt is left to the resume path")
+        try socket.enqueueFrame(["type": .string("OUTPUT"), "content": .string("late reply")])
+        let result = try await prompt.value
+        XCTAssertEqual(result.output, "late reply")
+        await pool.closeAll()
+    }
+
+    func testNetworkLossStopsABusyConnectionAnsweringConnectFromCache() async throws {
+        let factory = MockHostedAgentSocketFactory()
+        let pool = makePool(factory: factory, maximumSize: 2)
+        let conversation = makeConversation(id: "pool-network-loss-probe")
+        try await connect(pool, conversation: conversation, factory: factory, socketIndex: 0)
+        let socket = try await factory.socket(at: 0)
+        let prompt = Task {
+            try await pool.sendPrompt(
+                agentAddress: agentAddress,
+                conversation: conversation,
+                prompt: "in flight",
+                onEvent: nil,
+                onInteraction: nil
+            )
+        }
+        _ = try await socket.waitForSentFrame(type: "INPUT")
+        await pool.noteNetworkLost()
+
+        // what a recovery probe does, and it must not come back a success
+        do {
+            _ = try await pool.connect(agentAddress: agentAddress, conversation: conversation)
+            XCTFail("Expected the probe to be refused")
+        } catch let error as HostedAgentClientError {
+            guard case .busy = error else {
+                return XCTFail("Expected busy, got \(error)")
+            }
+        }
+        XCTAssertEqual(factory.count, 1, "the in-flight prompt keeps its socket")
+
+        // once the prompt is done the connection still owes a real handshake
+        try socket.enqueueFrame(["type": .string("OUTPUT"), "content": .string("reply")])
+        _ = try await prompt.value
+        try await connect(pool, conversation: conversation, factory: factory, socketIndex: 1)
+        XCTAssertEqual(factory.count, 2)
+        await pool.closeAll()
+    }
+
     func testPoolSendPromptSuccessAndFailureReleaseLeases() async throws {
         let factory = MockHostedAgentSocketFactory()
         let pool = makePool(factory: factory, maximumSize: 2)

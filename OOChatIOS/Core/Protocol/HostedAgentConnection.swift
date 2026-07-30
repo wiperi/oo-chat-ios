@@ -64,6 +64,7 @@ actor HostedAgentConnection {
     private var lastNetworkActivityAt = Date()
     private var resumeAttemptsUsed = 0
     private var lastConversation: Conversation?
+    private var requiresRevalidation = false
 
     init(
         key: HostedAgentConnectionKey,
@@ -96,6 +97,12 @@ actor HostedAgentConnection {
     // shares one connection attempt across callers for the same conversation
     func ensureConnected(conversation: Conversation) async throws -> HostedAgentResult {
         lastConversation = conversation
+        if requiresRevalidation, state == .connected {
+            guard pendingPrompt == nil else {
+                throw HostedAgentClientError.busy
+            }
+            disconnect(with: HostedAgentClientError.closed, closeCode: .goingAway)
+        }
         if state == .connected, socket != nil, let endpoint {
             return HostedAgentResult(output: nil, endpointLabel: endpoint.label, serverSession: serverSession)
         }
@@ -179,6 +186,10 @@ actor HostedAgentConnection {
 
     func close() {
         disconnect(with: HostedAgentClientError.closed, closeCode: .goingAway)
+    }
+
+    func noteNetworkLost() {
+        requiresRevalidation = true
     }
 
     // wall-clock silence while the app was suspended says nothing about socket health,
@@ -761,6 +772,9 @@ actor HostedAgentConnection {
             return
         }
         state = newState
+        if newState == .connected {
+            requiresRevalidation = false
+        }
         let publicState: ConnectionState
         switch newState {
         case .disconnected:

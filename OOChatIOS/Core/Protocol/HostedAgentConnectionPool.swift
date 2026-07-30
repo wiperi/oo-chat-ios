@@ -176,6 +176,22 @@ actor HostedAgentConnectionPool {
         }
     }
 
+    func noteNetworkLost() async {
+        let idleKeys = connections.compactMap { key, entry in
+            entry.activeLeases == 0 ? key : nil
+        }
+        let idleConnections = idleKeys.compactMap { key in
+            connections.removeValue(forKey: key)?.connection
+        }
+        let leasedConnections = connections.values.map(\.connection)
+        for connection in idleConnections {
+            await connection.close()
+        }
+        for connection in leasedConnections {
+            await connection.noteNetworkLost()
+        }
+    }
+
     func closeAll() async {
         cleanupTask?.cancel()
         cleanupTask = nil

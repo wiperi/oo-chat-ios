@@ -12,7 +12,7 @@ struct ContentView: View {
         .safeAreaInset(edge: .top, spacing: 0) {
             VStack(spacing: 1) {
                 if viewModel.shouldShowOfflineBanner {
-                    OfflineBanner {
+                    OfflineBanner(isRetrying: viewModel.isRetryingConnectivity) {
                         viewModel.retryConnectivity()
                     } onDismiss: {
                         viewModel.dismissOfflineBanner()

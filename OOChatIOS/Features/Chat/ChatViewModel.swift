@@ -50,6 +50,10 @@ final class ChatViewModel: ObservableObject {
         recoveryCoordinator.shouldShowOfflineBanner
     }
 
+    var isRetryingConnectivity: Bool {
+        recoveryCoordinator.isRetryingConnectivity
+    }
+
     var recoveryTask: Task<Void, Never>? {
         recoveryCoordinator.recoveryTask
     }
@@ -887,7 +891,7 @@ final class ChatViewModel: ObservableObject {
         connectivityErrorMessage = nil
     }
 
-    // Raises a banner for a failed delivery or reconnect
+    // create banner for failed delivery or reconnect
     private func presentConnectionError(_ error: Error, forConversationID conversationID: String) {
         guard activeConversationID == conversationID else {
             return
@@ -897,12 +901,12 @@ final class ChatViewModel: ObservableObject {
             errorMessage = message
             return
         }
-        // Recorded even while suppressed so a later drop can retract an identical banner.
-        connectivityErrorMessage = message
         guard !isOffline else {
             return
         }
         errorMessage = message
+        // Recorded so a later drop can retract this banner, whose message it would only repeat.
+        connectivityErrorMessage = message
     }
 
     /// The socket dying and the path monitor noticing race, so suppressing at presentation time
