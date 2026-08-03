@@ -253,6 +253,11 @@ struct ChatScreen: View {
                     }
                     .accessibilityLabel(backgroundAttentionLabel)
                 }
+
+                // Invisible mirror of the leading button: with a leading item only, UIKit
+                // centers an overflowing principal title in the leftover asymmetric space,
+                // pushing the title and status pill right of screen center.
+                trailingBalanceItem
             }
         }
     }

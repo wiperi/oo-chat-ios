@@ -18,6 +18,29 @@ extension ChatScreen {
         }
     }
 
+    @ToolbarContentBuilder
+    var trailingBalanceItem: some ToolbarContent {
+        if #available(iOS 26.0, *) {
+            ToolbarItem(placement: .topBarTrailing) {
+                hiddenSidebarButtonMirror
+            }
+            .sharedBackgroundVisibility(.hidden)
+        } else {
+            ToolbarItem(placement: .topBarTrailing) {
+                hiddenSidebarButtonMirror
+            }
+        }
+    }
+
+    private var hiddenSidebarButtonMirror: some View {
+        Button {
+        } label: {
+            Image(systemName: "sidebar.left")
+        }
+        .hidden()
+        .accessibilityHidden(true)
+    }
+
     func scrollTarget(for interactionID: String) -> String {
         if interactionID == viewModel.activePendingApproval?.id {
             return "pendingApproval"

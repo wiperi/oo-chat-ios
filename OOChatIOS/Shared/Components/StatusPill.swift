@@ -5,7 +5,7 @@ struct StatusPill: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        ZStack(alignment: .leading) {
+        ZStack {
             sizingContent
                 .hidden()
 
