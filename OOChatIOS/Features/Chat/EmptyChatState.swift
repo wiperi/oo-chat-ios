@@ -129,18 +129,19 @@ struct EmptyChatState: View {
             height: EmptyChatMetrics.logoStageSize
         )
         .scaleEffect(logoPulse && !reduceMotion ? 1.015 : 1)
-        .animation(
-            reduceMotion
-                ? nil
-                : .easeInOut(duration: EmptyChatMetrics.logoPulseDuration)
-                    .repeatForever(autoreverses: true),
-            value: logoPulse
-        )
+        // Pulse must start via withAnimation, not a subtree-level .animation(value:):
+        // a repeat-forever subtree animation also captures coincident layout moves,
+        // leaving the logo oscillating sideways (seen on regular-width first runs).
         .onAppear {
             guard !reduceMotion else {
                 return
             }
-            logoPulse = true
+            withAnimation(
+                .easeInOut(duration: EmptyChatMetrics.logoPulseDuration)
+                    .repeatForever(autoreverses: true)
+            ) {
+                logoPulse = true
+            }
         }
         .accessibilityHidden(true)
     }
