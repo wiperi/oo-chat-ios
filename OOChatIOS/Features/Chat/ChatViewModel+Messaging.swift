@@ -48,18 +48,22 @@ extension ChatViewModel {
             isConnecting = false
             return savedAgent
         } catch {
-            let message = error.localizedDescription
-            // `conversation` may be a candidate that was never persisted, so drop its state
-            // entry entirely rather than leaving a `.disconnected` row behind forever.
-            if conversationState.conversation(withID: conversation.id) == nil {
-                recoveryCoordinator.removeConnectionState(forConversationID: conversation.id)
-            } else {
-                recoveryCoordinator.setConnectionState(.disconnected, forConversationID: conversation.id)
-            }
-            errorMessage = message
-            isConnecting = false
+            handleConnectionFailure(error, conversation: conversation)
             return nil
         }
+    }
+
+    private func handleConnectionFailure(_ error: Error, conversation: Conversation) {
+        let message = error.localizedDescription
+        // `conversation` may be a candidate that was never persisted, so drop its state
+        // entry entirely rather than leaving a `.disconnected` row behind forever.
+        if conversationState.conversation(withID: conversation.id) == nil {
+            recoveryCoordinator.removeConnectionState(forConversationID: conversation.id)
+        } else {
+            recoveryCoordinator.setConnectionState(.disconnected, forConversationID: conversation.id)
+        }
+        errorMessage = message
+        isConnecting = false
     }
 
     func sendPrompt() {

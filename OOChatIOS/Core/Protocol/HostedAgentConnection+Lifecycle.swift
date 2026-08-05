@@ -9,66 +9,15 @@ extension HostedAgentConnection {
 
         switch frame["type"]?.stringValue {
         case "PING":
-            guard let socket else {
-                return
-            }
-            do {
-                try await send(["type": .string("PONG")], over: socket)
-            } catch {
-                failConnection(error, generation: generation)
-            }
+            await handlePing(generation: generation)
         case "CONNECTED":
-            updateServerSession(from: frame)
-            connectionStatus = frame["status"]?.stringValue
-            setState(.connected)
-            connectTimeoutTask?.cancel()
-            connectTimeoutTask = nil
-            let result = HostedAgentResult(
-                output: nil,
-                endpointLabel: endpoint?.label ?? key.agentAddress,
-                serverSession: serverSession
-            )
-            let waiters = Array(connectWaiters.values)
-            connectWaiters.removeAll()
-            for waiter in waiters {
-                waiter.resume(returning: result)
-            }
-            await resumePendingPrompt(from: frame, generation: generation)
+            await handleConnected(frame, generation: generation)
         case "OUTPUT":
-            updateServerSession(from: frame)
-            connectionStatus = "connected"
-            resumeAttemptsUsed = 0
-            guard let pending = pendingPrompt else {
-                return
-            }
-            pendingPrompt = nil
-            cancelInteractionTasks()
-            pending.continuation.resume(
-                returning: HostedAgentResult(
-                    output: messageText(frame),
-                    endpointLabel: endpoint?.label ?? key.agentAddress,
-                    serverSession: serverSession
-                )
-            )
+            handleOutput(frame)
         case "tool_call", "tool_result", "mode_changed":
-            guard let pending = pendingPrompt, let event = HostedAgentEvent.from(frame) else {
-                return
-            }
-            await pending.onEvent?(event)
+            await handleEvent(frame)
         case "approval_needed", "APPROVAL_NEEDED", "ulw_turns_reached", "plan_review", "ask_user":
-            guard let pending = pendingPrompt else {
-                return
-            }
-            guard let interaction = HostedAgentInteraction.from(frame) else {
-                // decline known interaction types when their payload cannot be parsed
-                if let placeholder = HostedAgentInteraction.declinePlaceholder(for: frame) {
-                    await sendDeclineResponse(for: placeholder, generation: generation)
-                } else {
-                    failConnection(HostedAgentClientError.badFrame, generation: generation)
-                }
-                return
-            }
-            startInteractionTask(interaction, promptID: pending.id, generation: generation)
+            await handleInteraction(frame, generation: generation)
         case "ERROR":
             failConnection(
                 HostedAgentClientError.server(messageText(frame)),
@@ -77,6 +26,77 @@ extension HostedAgentConnection {
         default:
             break
         }
+    }
+
+    private func handlePing(generation: Int) async {
+        guard let socket else {
+            return
+        }
+        do {
+            try await send(["type": .string("PONG")], over: socket)
+        } catch {
+            failConnection(error, generation: generation)
+        }
+    }
+
+    private func handleConnected(_ frame: [String: JSONValue], generation: Int) async {
+        updateServerSession(from: frame)
+        connectionStatus = frame["status"]?.stringValue
+        setState(.connected)
+        connectTimeoutTask?.cancel()
+        connectTimeoutTask = nil
+        let result = HostedAgentResult(
+            output: nil,
+            endpointLabel: endpoint?.label ?? key.agentAddress,
+            serverSession: serverSession
+        )
+        let waiters = Array(connectWaiters.values)
+        connectWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume(returning: result)
+        }
+        await resumePendingPrompt(from: frame, generation: generation)
+    }
+
+    private func handleOutput(_ frame: [String: JSONValue]) {
+        updateServerSession(from: frame)
+        connectionStatus = "connected"
+        resumeAttemptsUsed = 0
+        guard let pending = pendingPrompt else {
+            return
+        }
+        pendingPrompt = nil
+        cancelInteractionTasks()
+        pending.continuation.resume(
+            returning: HostedAgentResult(
+                output: messageText(frame),
+                endpointLabel: endpoint?.label ?? key.agentAddress,
+                serverSession: serverSession
+            )
+        )
+    }
+
+    private func handleEvent(_ frame: [String: JSONValue]) async {
+        guard let pending = pendingPrompt, let event = HostedAgentEvent.from(frame) else {
+            return
+        }
+        await pending.onEvent?(event)
+    }
+
+    private func handleInteraction(_ frame: [String: JSONValue], generation: Int) async {
+        guard let pending = pendingPrompt else {
+            return
+        }
+        guard let interaction = HostedAgentInteraction.from(frame) else {
+            // decline known interaction types when their payload cannot be parsed
+            if let placeholder = HostedAgentInteraction.declinePlaceholder(for: frame) {
+                await sendDeclineResponse(for: placeholder, generation: generation)
+            } else {
+                failConnection(HostedAgentClientError.badFrame, generation: generation)
+            }
+            return
+        }
+        startInteractionTask(interaction, promptID: pending.id, generation: generation)
     }
 
     // A CONNECTED frame while a prompt is pending is a mid-prompt reconnect. The server's
