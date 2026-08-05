@@ -10,6 +10,7 @@
 		100000000000000000000101 /* OOChatIOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000001 /* OOChatIOSApp.swift */; };
 		100000000000000000000102 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000002 /* ContentView.swift */; };
 		100000000000000000000103 /* ChatViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000003 /* ChatViewModel.swift */; };
+		100000000000000000000341 /* ChatViewModel+Messaging.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000343 /* ChatViewModel+Messaging.swift */; };
 		100000000000000000000154 /* ConversationState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000059 /* ConversationState.swift */; };
 		100000000000000000000155 /* MessageDeliveryCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000060 /* MessageDeliveryCoordinator.swift */; };
 		100000000000000000000156 /* ConnectionRecoveryCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000061 /* ConnectionRecoveryCoordinator.swift */; };
@@ -72,6 +73,7 @@
 		100000000000000000000149 /* HostedAgentDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000054 /* HostedAgentDiscovery.swift */; };
 		100000000000000000000150 /* HostedAgentConnectionPool.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000055 /* HostedAgentConnectionPool.swift */; };
 		100000000000000000000151 /* HostedAgentConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000056 /* HostedAgentConnection.swift */; };
+		100000000000000000000342 /* HostedAgentConnection+Lifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000344 /* HostedAgentConnection+Lifecycle.swift */; };
 		100000000000000000000153 /* SettingsFeatureModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000058 /* SettingsFeatureModel.swift */; };
 		100000000000000000000141 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000046 /* Assets.xcassets */; };
 		100000000000000000000142 /* AppAppearance.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000047 /* AppAppearance.swift */; };
@@ -100,6 +102,7 @@
 		100000000000000000000001 /* OOChatIOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OOChatIOSApp.swift; sourceTree = "<group>"; };
 		100000000000000000000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		100000000000000000000003 /* ChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModel.swift; sourceTree = "<group>"; };
+		100000000000000000000343 /* ChatViewModel+Messaging.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ChatViewModel+Messaging.swift"; sourceTree = "<group>"; };
 		100000000000000000000059 /* ConversationState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationState.swift; sourceTree = "<group>"; };
 		100000000000000000000060 /* MessageDeliveryCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageDeliveryCoordinator.swift; sourceTree = "<group>"; };
 		100000000000000000000061 /* ConnectionRecoveryCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionRecoveryCoordinator.swift; sourceTree = "<group>"; };
@@ -166,6 +169,7 @@
 		100000000000000000000058 /* SettingsFeatureModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsFeatureModel.swift; sourceTree = "<group>"; };
 		100000000000000000000055 /* HostedAgentConnectionPool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostedAgentConnectionPool.swift; sourceTree = "<group>"; };
 		100000000000000000000056 /* HostedAgentConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostedAgentConnection.swift; sourceTree = "<group>"; };
+		100000000000000000000344 /* HostedAgentConnection+Lifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HostedAgentConnection+Lifecycle.swift"; sourceTree = "<group>"; };
 		100000000000000000000046 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		100000000000000000000047 /* AppAppearance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppAppearance.swift; sourceTree = "<group>"; };
 		100000000000000000000048 /* ChatShellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatShellView.swift; sourceTree = "<group>"; };
@@ -284,6 +288,7 @@
 			children = (
 				100000000000000000000039 /* MarkdownMessageView.swift */,
 				100000000000000000000003 /* ChatViewModel.swift */,
+				100000000000000000000343 /* ChatViewModel+Messaging.swift */,
 				100000000000000000000059 /* ConversationState.swift */,
 				100000000000000000000060 /* MessageDeliveryCoordinator.swift */,
 				100000000000000000000061 /* ConnectionRecoveryCoordinator.swift */,
@@ -365,6 +370,7 @@
 				100000000000000000000054 /* HostedAgentDiscovery.swift */,
 				100000000000000000000055 /* HostedAgentConnectionPool.swift */,
 				100000000000000000000056 /* HostedAgentConnection.swift */,
+				100000000000000000000344 /* HostedAgentConnection+Lifecycle.swift */,
 				100000000000000000000005 /* CanonicalJSON.swift */,
 			);
 			path = Protocol;
@@ -557,6 +563,7 @@
 				100000000000000000000102 /* ContentView.swift in Sources */,
 				100000000000000000000142 /* AppAppearance.swift in Sources */,
 				100000000000000000000103 /* ChatViewModel.swift in Sources */,
+				100000000000000000000341 /* ChatViewModel+Messaging.swift in Sources */,
 				100000000000000000000154 /* ConversationState.swift in Sources */,
 				100000000000000000000155 /* MessageDeliveryCoordinator.swift in Sources */,
 				100000000000000000000156 /* ConnectionRecoveryCoordinator.swift in Sources */,
@@ -575,6 +582,7 @@
 				100000000000000000000149 /* HostedAgentDiscovery.swift in Sources */,
 				100000000000000000000150 /* HostedAgentConnectionPool.swift in Sources */,
 				100000000000000000000151 /* HostedAgentConnection.swift in Sources */,
+				100000000000000000000342 /* HostedAgentConnection+Lifecycle.swift in Sources */,
 				100000000000000000000119 /* ChatView.swift in Sources */,
 				100000000000000000000331 /* ChatScreenHelpers.swift in Sources */,
 				100000000000000000000332 /* ChatScreenBackdrop.swift in Sources */,
