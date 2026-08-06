@@ -8,6 +8,7 @@ readonly PROJECT_PATH="${REPOSITORY_ROOT}/OOChatIOS.xcodeproj"
 readonly SCHEME_NAME="OOChatIOS"
 readonly MINIMUM_IOS_MAJOR=17
 readonly DEFAULT_DERIVED_DATA_PATH="${REPOSITORY_ROOT}/build/SetupDerivedData"
+readonly PORTABLE_SWIFT_PACKAGES_PATH="${REPOSITORY_ROOT}/vendor/swift-packages"
 
 info() {
   printf '[setup] %s\n' "$1"
@@ -217,14 +218,33 @@ fi
 
 DERIVED_DATA_PATH="${DERIVED_DATA_PATH:-${DEFAULT_DERIVED_DATA_PATH}}"
 info "Building ${SCHEME_NAME}..."
+XCODEBUILD_ARGUMENTS=(
+  -quiet
+  -project "${PROJECT_PATH}"
+  -scheme "${SCHEME_NAME}"
+  -configuration Debug
+  -sdk iphonesimulator
+  -destination "platform=iOS Simulator,id=${SIMULATOR_UDID_VALUE}"
+  -derivedDataPath "${DERIVED_DATA_PATH}"
+)
+
+if [[ -d "${PORTABLE_SWIFT_PACKAGES_PATH}/checkouts" ]]; then
+  info "Using bundled Swift package dependencies."
+  XCODEBUILD_ARGUMENTS+=(
+    -clonedSourcePackagesDirPath "${PORTABLE_SWIFT_PACKAGES_PATH}"
+    -disableAutomaticPackageResolution
+  )
+else
+  warn "Bundled Swift packages were not found; Xcode may download dependencies."
+fi
+
+info "Using Simulator ad-hoc signing; no Apple developer team is required."
 xcodebuild \
-  -quiet \
-  -project "${PROJECT_PATH}" \
-  -scheme "${SCHEME_NAME}" \
-  -configuration Debug \
-  -sdk iphonesimulator \
-  -destination "platform=iOS Simulator,id=${SIMULATOR_UDID_VALUE}" \
-  -derivedDataPath "${DERIVED_DATA_PATH}" \
+  "${XCODEBUILD_ARGUMENTS[@]}" \
+  CODE_SIGNING_ALLOWED=YES \
+  CODE_SIGNING_REQUIRED=YES \
+  CODE_SIGN_IDENTITY=- \
+  DEVELOPMENT_TEAM= \
   build
 
 APP_PATH="${DERIVED_DATA_PATH}/Build/Products/Debug-iphonesimulator/OOChatIOS.app"
