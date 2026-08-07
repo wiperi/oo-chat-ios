@@ -27,12 +27,8 @@ actor HostedAgentDiscovery {
         self.socketFactory = socketFactory ?? { session.webSocketTask(with: $0) }
     }
 
-    /// Checks whether the agent is currently reachable without opening a chat
-    /// session. Direct `/info` is authoritative for local agents; the relay's
-    /// `/ws/lookup` response is authoritative for hosted agents. The relay's
-    /// HTTP registry only exposes cached metadata and does not include live
-    /// presence. A transport or decode failure is deliberately inconclusive so
-    /// a temporary network problem does not erase the last known UI state.
+    /// Checks availability without opening a chat session.
+    /// Local agents use `/info`; remote agents use the relay lookup socket.
     func checkAvailability(agentAddress: String) async -> AgentAvailability {
         for httpURL in localEndpoints {
             let directResult = try? await probe(

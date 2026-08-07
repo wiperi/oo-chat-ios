@@ -28,9 +28,7 @@ final class ConnectionRecoveryCoordinator: ObservableObject {
         }
     }
 
-    /// How often the foreground sidebar refreshes agent-level availability.
-    /// Clamped for the same reason as `probeInterval`: a test or caller must not
-    /// be able to turn a bad value into an overflowing `Task.sleep` duration.
+    /// Foreground polling interval for agent presence.
     var presenceInterval: TimeInterval = 15 {
         didSet {
             presenceInterval = max(0.1, presenceInterval)
@@ -94,17 +92,13 @@ final class ConnectionRecoveryCoordinator: ObservableObject {
         networkMonitor.start()
     }
 
-    /// Stops foreground-only presence work while the scene is inactive or in the
-    /// background. The last known result remains visible until a real network
-    /// loss clears it, which avoids a misleading flicker during app switching.
+    /// Stops presence polling while the app is inactive or in the background.
     func applicationDidBecomeInactive() {
         isPresenceInForeground = false
         cancelPresenceMonitoring()
     }
 
-    /// Restarts the presence loop immediately when the scene returns to the
-    /// foreground. The network monitor may not emit another path event, so this
-    /// cannot rely on `handleNetworkChange` being called again.
+    /// Restarts presence polling when the app becomes active.
     func applicationDidBecomeActive() {
         isPresenceInForeground = true
         guard hasNetworkPathStatus, !isOffline else {
@@ -113,9 +107,7 @@ final class ConnectionRecoveryCoordinator: ObservableObject {
         startPresenceMonitoring()
     }
 
-    /// Called after agents are added, renamed, edited, or removed. It prunes
-    /// deleted addresses and performs an immediate refresh for the remaining
-    /// agents when foreground network access is available.
+    /// Prunes stale entries and refreshes presence after agent changes.
     func refreshAgentPresence() {
         pruneAgentPresence()
         guard hasNetworkPathStatus, isPresenceInForeground, !isOffline else {

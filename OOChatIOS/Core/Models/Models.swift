@@ -6,11 +6,8 @@ enum ConnectionState: String, Codable {
     case reconnecting
 }
 
-/// Reachability of an agent independent from any one conversation socket.
-///
-/// `unknown` represents a failed or inconclusive status lookup. Callers should
-/// retain their last known result for that case rather than treating a transient
-/// lookup failure as proof that the agent went offline.
+/// Result of checking whether an agent can be reached.
+/// `unknown` leaves the last known presence unchanged.
 enum AgentAvailability: Equatable, Sendable {
     case online
     case offline
