@@ -1,5 +1,50 @@
+import Foundation
 import XCTest
 @testable import OOChatIOS
+
+private final class DiscoveryURLProtocol: URLProtocol {
+    static var responses: [String: Result<(statusCode: Int, data: Data), Error>] = [:]
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        true
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        guard let url = request.url,
+              let result = Self.responses[url.absoluteString] else {
+            client?.urlProtocol(self, didFailWithError: URLError(.resourceUnavailable))
+            return
+        }
+
+        switch result {
+        case .success(let response):
+            guard let httpResponse = HTTPURLResponse(
+                url: url,
+                statusCode: response.statusCode,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            ) else {
+                client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+                return
+            }
+            client?.urlProtocol(
+                self,
+                didReceive: httpResponse,
+                cacheStoragePolicy: .notAllowed
+            )
+            client?.urlProtocol(self, didLoad: response.data)
+            client?.urlProtocolDidFinishLoading(self)
+        case .failure(let error):
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
+}
 
 final class MockHostedAgentTests: XCTestCase {
     private let endpointA = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -36,6 +81,7 @@ final class MockHostedAgentTests: XCTestCase {
         {
           "address": "\(endpointA)",
           "name": "Local agent",
+          "online": true,
           "skills": [
             {"name": "review", "description": "Review the current changes", "location": "project"}
           ]
@@ -44,6 +90,7 @@ final class MockHostedAgentTests: XCTestCase {
         let relay = try JSONDecoder().decode(AgentInfo.self, from: Data("""
         {
           "endpoints": ["https://agent.example"],
+          "online": false,
           "profile": {
             "alias": "Relay agent",
             "skills": [
@@ -63,6 +110,8 @@ final class MockHostedAgentTests: XCTestCase {
         )
         XCTAssertEqual(direct.advertisedName, "Local agent")
         XCTAssertEqual(relay.advertisedName, "Relay agent")
+        XCTAssertEqual(direct.online, true)
+        XCTAssertEqual(relay.online, false)
     }
 
     func testAgentInfoIgnoresBlankNamesAndFallsBackToRelayAlias() throws {
@@ -82,6 +131,61 @@ final class MockHostedAgentTests: XCTestCase {
         """.utf8))
 
         XCTAssertEqual(info.advertisedSkills, [AgentSkill(name: "status")])
+    }
+
+    func testAgentAvailabilityUsesDirectInfoAndRelayOnlineFlag() async {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [DiscoveryURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        let directURL = "http://local.test/info"
+        let relayURL = "https://relay.test/api/relay/agents/\(endpointA)"
+        DiscoveryURLProtocol.responses = [
+            directURL: .success((
+                statusCode: 200,
+                data: Data("{\"address\": \"\(endpointA)\"}".utf8)
+            )),
+            relayURL: .success((
+                statusCode: 200,
+                data: Data("{\"online\": false}".utf8)
+            )),
+        ]
+        defer { DiscoveryURLProtocol.responses = [:] }
+
+        let direct = HostedAgentDiscovery(
+            session: session,
+            relayURL: "wss://relay.test",
+            localEndpoints: ["http://local.test"]
+        )
+        let relay = HostedAgentDiscovery(
+            session: session,
+            relayURL: "wss://relay.test",
+            localEndpoints: []
+        )
+
+        let directAvailability = await direct.checkAvailability(agentAddress: endpointA)
+        let relayAvailability = await relay.checkAvailability(agentAddress: endpointA)
+        XCTAssertEqual(directAvailability, .online)
+        XCTAssertEqual(relayAvailability, .offline)
+    }
+
+    func testAgentAvailabilityKeepsUnknownSeparateFromOffline() async {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [DiscoveryURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        let relayURL = "https://relay.test/api/relay/agents/\(endpointA)"
+        DiscoveryURLProtocol.responses = [
+            relayURL: .failure(URLError(.timedOut)),
+        ]
+        defer { DiscoveryURLProtocol.responses = [:] }
+
+        let discovery = HostedAgentDiscovery(
+            session: session,
+            relayURL: "wss://relay.test",
+            localEndpoints: []
+        )
+
+        let availability = await discovery.checkAvailability(agentAddress: endpointA)
+        XCTAssertEqual(availability, .unknown)
     }
 
     func testToolCallFramesMapToCorrelatedCallAndResultEvents() {

@@ -20,6 +20,40 @@ actor HostedAgentDiscovery {
         self.localEndpoints = localEndpoints
     }
 
+    /// Checks whether the agent is currently reachable without opening a chat
+    /// session. Direct `/info` is authoritative for local agents; the relay's
+    /// explicit `online` flag is used for hosted agents. A transport or decode
+    /// failure is deliberately inconclusive so a temporary network problem does
+    /// not erase the last known UI state.
+    func checkAvailability(agentAddress: String) async -> AgentAvailability {
+        for httpURL in localEndpoints {
+            if (try? await probe(
+                httpURL: httpURL,
+                agentAddress: agentAddress,
+                timeout: 1.2
+            )) != nil {
+                return .online
+            }
+        }
+
+        let normalizedRelay = relayURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let relayHTTP = normalizedRelay.replacingOccurrences(of: "wss://", with: "https://")
+            .replacingOccurrences(of: "ws://", with: "http://")
+        guard let url = URL(string: "\(relayHTTP)/api/relay/agents/\(agentAddress)") else {
+            return .unknown
+        }
+
+        do {
+            let relayInfo: AgentInfo = try await fetchJSON(url: url, timeout: 3.0)
+            guard let online = relayInfo.online else {
+                return .unknown
+            }
+            return online ? .online : .offline
+        } catch {
+            return .unknown
+        }
+    }
+
     func discover(agentAddress: String) async throws -> HostedAgentDiscoveryResult {
         for httpURL in localEndpoints {
             if let result = try await probe(httpURL: httpURL, agentAddress: agentAddress, timeout: 1.2) {

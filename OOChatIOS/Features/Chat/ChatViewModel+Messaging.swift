@@ -377,10 +377,14 @@ extension ChatViewModel {
     func handleScenePhaseChange(_ phase: ScenePhase) {
         switch phase {
         case .background:
+            recoveryCoordinator.applicationDidBecomeInactive()
             beginBackgroundDeliveryHold()
         case .active:
             client.applicationDidBecomeActive()
+            recoveryCoordinator.applicationDidBecomeActive()
             endBackgroundDeliveryHold()
+        case .inactive:
+            recoveryCoordinator.applicationDidBecomeInactive()
         default:
             break
         }

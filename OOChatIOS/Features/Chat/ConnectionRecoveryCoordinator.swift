@@ -13,9 +13,11 @@ final class ConnectionRecoveryCoordinator: ObservableObject {
     @Published private(set) var isOfflineBannerDismissed = false
     @Published private(set) var isRetryingConnectivity = false
     @Published private var statesByConversationID: [String: ConnectionState] = [:]
+    @Published private var availabilityByAgentAddress: [String: AgentAvailability] = [:]
 
     private(set) var recoveryTask: Task<Void, Never>?
     private(set) var probeTask: Task<Void, Never>?
+    private(set) var presenceTask: Task<Void, Never>?
     private(set) var launchFlushTask: Task<Void, Never>?
     private(set) var disconnectTask: Task<Void, Never>?
     /// Clamped on read: `UInt64(negative)` traps, so a non-positive interval would crash the
@@ -26,12 +28,24 @@ final class ConnectionRecoveryCoordinator: ObservableObject {
         }
     }
 
+    /// How often the foreground sidebar refreshes agent-level availability.
+    /// Clamped for the same reason as `probeInterval`: a test or caller must not
+    /// be able to turn a bad value into an overflowing `Task.sleep` duration.
+    var presenceInterval: TimeInterval = 15 {
+        didSet {
+            presenceInterval = max(0.1, presenceInterval)
+        }
+    }
+
     var onRecoveryError: ((String, Error) -> Void)?
     var onReconnect: ((AgentConnection) -> Void)?
 
     private var recoveryConversationID: String?
     private var recoveryGeneration = 0
     private var probeConversationID: String?
+    private var presenceGeneration = 0
+    private var isPresenceInForeground = true
+    private var hasNetworkPathStatus = false
     private var hasFlushedOnLaunch = false
     private let conversationState: ConversationState
     private let deliveryCoordinator: MessageDeliveryCoordinator
@@ -66,6 +80,7 @@ final class ConnectionRecoveryCoordinator: ObservableObject {
     deinit {
         networkMonitor.cancel()
         probeTask?.cancel()
+        presenceTask?.cancel()
         recoveryTask?.cancel()
         launchFlushTask?.cancel()
         disconnectTask?.cancel()
@@ -79,8 +94,47 @@ final class ConnectionRecoveryCoordinator: ObservableObject {
         networkMonitor.start()
     }
 
+    /// Stops foreground-only presence work while the scene is inactive or in the
+    /// background. The last known result remains visible until a real network
+    /// loss clears it, which avoids a misleading flicker during app switching.
+    func applicationDidBecomeInactive() {
+        isPresenceInForeground = false
+        cancelPresenceMonitoring()
+    }
+
+    /// Restarts the presence loop immediately when the scene returns to the
+    /// foreground. The network monitor may not emit another path event, so this
+    /// cannot rely on `handleNetworkChange` being called again.
+    func applicationDidBecomeActive() {
+        isPresenceInForeground = true
+        guard hasNetworkPathStatus, !isOffline else {
+            return
+        }
+        startPresenceMonitoring()
+    }
+
+    /// Called after agents are added, renamed, edited, or removed. It prunes
+    /// deleted addresses and performs an immediate refresh for the remaining
+    /// agents when foreground network access is available.
+    func refreshAgentPresence() {
+        pruneAgentPresence()
+        guard hasNetworkPathStatus, isPresenceInForeground, !isOffline else {
+            return
+        }
+        startPresenceMonitoring()
+    }
+
     func connectionState(forConversationID conversationID: String) -> ConnectionState {
         statesByConversationID[conversationID] ?? .disconnected
+    }
+
+    func isAgentOnline(_ agent: AgentConnection) -> Bool {
+        if availabilityByAgentAddress[agent.address] == .online {
+            return true
+        }
+        return conversationState.conversations(for: agent).contains { conversation in
+            connectionState(forConversationID: conversation.id) == .connected
+        }
     }
 
     func setConnectionState(
@@ -114,6 +168,7 @@ final class ConnectionRecoveryCoordinator: ObservableObject {
     }
 
     private func handleNetworkChange(isOnline: Bool) {
+        hasNetworkPathStatus = true
         let wasOffline = isOffline
         isOffline = !isOnline
         deliveryCoordinator.setDeliveryEnabled(isOnline)
@@ -121,6 +176,8 @@ final class ConnectionRecoveryCoordinator: ObservableObject {
         guard isOnline else {
             recoveryTask?.cancel()
             recoveryConversationID = nil
+            cancelPresenceMonitoring()
+            availabilityByAgentAddress.removeAll()
             if !wasOffline {
                 isOfflineBannerDismissed = false
             }
@@ -134,6 +191,9 @@ final class ConnectionRecoveryCoordinator: ObservableObject {
 
         probeTask?.cancel()
         probeConversationID = nil
+        if isPresenceInForeground {
+            startPresenceMonitoring()
+        }
         // Messages queued in a previous session are only drained by an offline→online
         // transition, which never happens when the app launches already online. Drain
         // them once on the first online path update instead.
@@ -225,6 +285,83 @@ final class ConnectionRecoveryCoordinator: ObservableObject {
                 }
             }
         }
+    }
+
+    private func startPresenceMonitoring() {
+        presenceTask?.cancel()
+        presenceGeneration += 1
+        let generation = presenceGeneration
+        pruneAgentPresence()
+
+        guard !isOffline,
+              hasNetworkPathStatus,
+              isPresenceInForeground,
+              !conversationState.agents.isEmpty else {
+            presenceTask = nil
+            return
+        }
+
+        presenceTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard await self?.refreshAgentPresence(generation: generation) == true,
+                      let interval = self?.presenceInterval else {
+                    return
+                }
+                do {
+                    try await Task.sleep(
+                        nanoseconds: UInt64(interval * 1_000_000_000)
+                    )
+                } catch {
+                    return
+                }
+            }
+        }
+    }
+
+    private func refreshAgentPresence(generation: Int) async -> Bool {
+        guard generation == presenceGeneration,
+              hasNetworkPathStatus,
+              isPresenceInForeground,
+              !isOffline else {
+            return false
+        }
+
+        pruneAgentPresence()
+        for agent in conversationState.agents {
+            guard !Task.isCancelled,
+                  generation == presenceGeneration,
+                  hasNetworkPathStatus,
+                  isPresenceInForeground,
+                  !isOffline else {
+                return false
+            }
+            let availability = await transport.checkAgentAvailability(
+                agentAddress: agent.address
+            )
+            guard !Task.isCancelled, generation == presenceGeneration else {
+                return false
+            }
+            switch availability {
+            case .online, .offline:
+                availabilityByAgentAddress[agent.address] = availability
+            case .unknown:
+                break
+            }
+        }
+        return true
+    }
+
+    private func pruneAgentPresence() {
+        let addresses = Set(conversationState.agents.map(\.address))
+        for address in Array(availabilityByAgentAddress.keys) where !addresses.contains(address) {
+            availabilityByAgentAddress[address] = nil
+        }
+    }
+
+    private func cancelPresenceMonitoring() {
+        presenceGeneration += 1
+        presenceTask?.cancel()
+        presenceTask = nil
     }
 
     private func reconnect(

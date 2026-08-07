@@ -104,6 +104,13 @@ final class HostedAgentClient: HostedAgentTransport {
         return try await connectionPool.connect(agentAddress: agentAddress, conversation: conversation)
     }
 
+    func checkAgentAvailability(agentAddress: String) async -> AgentAvailability {
+        guard Self.isHostedAgentAddress(agentAddress) else {
+            return .unknown
+        }
+        return await discovery.checkAvailability(agentAddress: agentAddress)
+    }
+
     func fetchAgentName(agentAddress: String) async throws -> String? {
         guard Self.isHostedAgentAddress(agentAddress) else {
             throw HostedAgentClientError.invalidAddress

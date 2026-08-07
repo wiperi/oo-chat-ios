@@ -6,6 +6,17 @@ enum ConnectionState: String, Codable {
     case reconnecting
 }
 
+/// Reachability of an agent independent from any one conversation socket.
+///
+/// `unknown` represents a failed or inconclusive status lookup. Callers should
+/// retain their last known result for that case rather than treating a transient
+/// lookup failure as proof that the agent went offline.
+enum AgentAvailability: Equatable, Sendable {
+    case online
+    case offline
+    case unknown
+}
+
 enum ChatRole: String, Codable {
     case user
     case agent
@@ -524,6 +535,7 @@ struct AgentInfo: Decodable {
     let endpoints: [String]?
     let skills: [AgentSkill]?
     let profile: AgentProfile?
+    let online: Bool?
 
     var advertisedSkills: [AgentSkill] {
         skills ?? profile?.skills ?? []

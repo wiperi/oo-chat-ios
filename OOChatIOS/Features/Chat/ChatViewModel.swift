@@ -96,6 +96,15 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
+    var presenceInterval: TimeInterval {
+        get {
+            recoveryCoordinator.presenceInterval
+        }
+        set {
+            recoveryCoordinator.presenceInterval = newValue
+        }
+    }
+
     let conversationState: ConversationState
     var client: HostedAgentTransport
 
@@ -268,9 +277,7 @@ final class ChatViewModel: ObservableObject {
     }
 
     func isAgentOnline(_ agent: AgentConnection) -> Bool {
-        conversations(for: agent).contains { conversation in
-            recoveryCoordinator.connectionState(forConversationID: conversation.id) == .connected
-        }
+        recoveryCoordinator.isAgentOnline(agent)
     }
 
     var slashSkillSuggestions: [AgentSkill] {
@@ -448,12 +455,26 @@ final class ChatViewModel: ObservableObject {
             return nil
         }
         errorMessage = nil
+        let existingAgent = id.flatMap { conversationState.agent(withID: $0) }
+        let addressChanged = existingAgent.map { $0.address != trimmedAddress } ?? false
+        let affectedConversationIDs = existingAgent.map {
+            conversations(for: $0).map(\.id)
+        } ?? []
         let next = conversationState.saveAgent(
             id: id,
             name: trimmedName,
             address: trimmedAddress
         )
+        if addressChanged {
+            for conversationID in affectedConversationIDs {
+                recoveryCoordinator.setConnectionState(
+                    .disconnected,
+                    forConversationID: conversationID
+                )
+            }
+        }
         agentAddressDraft = next.address
+        recoveryCoordinator.refreshAgentPresence()
         return next
     }
 
@@ -512,6 +533,7 @@ final class ChatViewModel: ObservableObject {
             recoveryCoordinator.removeConnectionState(forConversationID: conversationID)
         }
         conversationState.deleteAgent(agent, currentDraft: prompt)
+        recoveryCoordinator.refreshAgentPresence()
         for conversationID in deletedConversationIDs {
             imageDraftsByConversationID[conversationID] = nil
             fileDraftsByConversationID[conversationID] = nil

@@ -63,6 +63,8 @@ final class MockAgentTransport: HostedAgentTransport {
     var availableSkills: [AgentSkill] = []
     var skillsByAddress: [String: [AgentSkill]] = [:]
     var agentNamesByAddress: [String: String] = [:]
+    var agentAvailabilityByAddress: [String: AgentAvailability] = [:]
+    var defaultAgentAvailability: AgentAvailability = .unknown
     var skillFetchError: Error?
     var onSend: (@MainActor () -> Void)?
     var waitAfterInteractionsUntilCancelled = false
@@ -78,6 +80,7 @@ final class MockAgentTransport: HostedAgentTransport {
     private(set) var askUserDecisions: [AskUserDecision] = []
     private(set) var fetchedSkillAddresses: [String] = []
     private(set) var fetchedNameAddresses: [String] = []
+    private(set) var checkedAvailabilityAddresses: [String] = []
     private(set) var interactionResponseWaits: [(agentAddress: String, conversationID: String)] = []
 
     func connect(agentAddress: String, conversation: Conversation) async throws -> HostedAgentResult {
@@ -119,6 +122,11 @@ final class MockAgentTransport: HostedAgentTransport {
     func fetchAgentName(agentAddress: String) async throws -> String? {
         fetchedNameAddresses.append(agentAddress)
         return agentNamesByAddress[agentAddress]
+    }
+
+    func checkAgentAvailability(agentAddress: String) async -> AgentAvailability {
+        checkedAvailabilityAddresses.append(agentAddress)
+        return agentAvailabilityByAddress[agentAddress] ?? defaultAgentAvailability
     }
 
     func sendPrompt(
@@ -278,6 +286,151 @@ final class NetworkRecoveryTests: XCTestCase {
 
         XCTAssertFalse(viewModel.isAgentOnline(firstAgent))
         XCTAssertEqual(viewModel.onlineAgentCount, 0)
+    }
+
+    func testPresencePollingMarksAgentOnlineWithoutOpeningConversationSocket() async {
+        let (viewModel, transport, monitor) = makeEnvironment()
+        viewModel.presenceInterval = 0.01
+        let agent = setUpAgentAndConversation(viewModel)
+        let checksBeforeRefresh = transport.checkedAvailabilityAddresses.count
+        transport.agentAvailabilityByAddress[agent.address] = .online
+
+        monitor.simulate(online: true)
+        await waitForAvailabilityCheck(
+            on: transport,
+            address: agent.address,
+            minimumCount: checksBeforeRefresh + 1
+        )
+
+        XCTAssertTrue(viewModel.isAgentOnline(agent))
+        XCTAssertEqual(viewModel.onlineAgentCount, 1)
+        XCTAssertTrue(transport.connectedAddresses.isEmpty)
+        XCTAssertEqual(viewModel.connectionState, .disconnected)
+    }
+
+    func testUnknownPresenceKeepsLastKnownAvailabilityAndOfflineClearsIt() async {
+        let (viewModel, transport, monitor) = makeEnvironment()
+        viewModel.presenceInterval = 0.01
+        let agent = setUpAgentAndConversation(viewModel)
+        let checksBeforeRefresh = transport.checkedAvailabilityAddresses.count
+        transport.agentAvailabilityByAddress[agent.address] = .online
+
+        monitor.simulate(online: true)
+        await waitForAvailabilityCheck(
+            on: transport,
+            address: agent.address,
+            minimumCount: checksBeforeRefresh + 1
+        )
+        XCTAssertTrue(viewModel.isAgentOnline(agent))
+
+        transport.agentAvailabilityByAddress[agent.address] = .unknown
+        let checksBeforeUnknown = transport.checkedAvailabilityAddresses.count
+        await waitForAvailabilityCheck(
+            on: transport,
+            address: agent.address,
+            minimumCount: checksBeforeUnknown + 1
+        )
+        XCTAssertTrue(viewModel.isAgentOnline(agent))
+
+        monitor.simulate(online: false)
+        XCTAssertFalse(viewModel.isAgentOnline(agent))
+        XCTAssertEqual(viewModel.onlineAgentCount, 0)
+    }
+
+    func testPresencePollingStopsInBackgroundAndResumesOnForeground() async {
+        let (viewModel, transport, monitor) = makeEnvironment()
+        viewModel.presenceInterval = 0.01
+        let agent = setUpAgentAndConversation(viewModel)
+        transport.agentAvailabilityByAddress[agent.address] = .online
+
+        monitor.simulate(online: true)
+        await waitForAvailabilityCheck(on: transport, address: agent.address)
+        let checksBeforeBackground = transport.checkedAvailabilityAddresses.count
+
+        viewModel.handleScenePhaseChange(.background)
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(
+            transport.checkedAvailabilityAddresses.count,
+            checksBeforeBackground,
+            "backgrounded scenes must not keep polling"
+        )
+
+        viewModel.handleScenePhaseChange(.active)
+        await waitForAvailabilityCheck(
+            on: transport,
+            address: agent.address,
+            minimumCount: checksBeforeBackground + 1
+        )
+    }
+
+    func testDeletingAgentPrunesItsPresenceAndAddingAgentRefreshesIt() async {
+        let (viewModel, transport, monitor) = makeEnvironment()
+        viewModel.presenceInterval = 0.01
+        let firstAgent = setUpAgentAndConversation(viewModel)
+        let firstChecksBeforeRefresh = transport.checkedAvailabilityAddresses.count
+        transport.agentAvailabilityByAddress[firstAgent.address] = .online
+        monitor.simulate(online: true)
+        await waitForAvailabilityCheck(
+            on: transport,
+            address: firstAgent.address,
+            minimumCount: firstChecksBeforeRefresh + 1
+        )
+        XCTAssertEqual(viewModel.onlineAgentCount, 1)
+
+        let secondAddress = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        transport.agentAvailabilityByAddress[secondAddress] = .online
+        let secondChecksBeforeRefresh = transport.checkedAvailabilityAddresses.filter {
+            $0 == secondAddress
+        }.count
+        let secondAgent = viewModel.saveAgent(name: "Second", address: secondAddress)!
+        _ = viewModel.createConversation(for: secondAgent)
+        await waitForAvailabilityCheck(
+            on: transport,
+            address: secondAddress,
+            minimumCount: secondChecksBeforeRefresh + 1
+        )
+        XCTAssertTrue(viewModel.isAgentOnline(secondAgent))
+
+        viewModel.deleteAgent(firstAgent)
+        XCTAssertFalse(viewModel.isAgentOnline(firstAgent))
+        XCTAssertEqual(viewModel.onlineAgentCount, 1)
+    }
+
+    func testEditingAgentAddressDropsOldSocketStateAndRefreshesNewAddress() async {
+        let (viewModel, transport, monitor) = makeEnvironment()
+        viewModel.presenceInterval = 0.01
+        let agent = setUpAgentAndConversation(viewModel)
+        let conversationID = viewModel.activeConversation!.id
+        let firstChecksBeforeRefresh = transport.checkedAvailabilityAddresses.count
+        transport.agentAvailabilityByAddress[agent.address] = .online
+        monitor.simulate(online: true)
+        await waitForAvailabilityCheck(
+            on: transport,
+            address: agent.address,
+            minimumCount: firstChecksBeforeRefresh + 1
+        )
+        transport.simulateConnectionState(.connected, conversationID: conversationID)
+        XCTAssertTrue(viewModel.isAgentOnline(agent))
+
+        let replacementAddress = "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        transport.agentAvailabilityByAddress[replacementAddress] = .online
+        let replacementChecksBeforeRefresh = transport.checkedAvailabilityAddresses.filter {
+            $0 == replacementAddress
+        }.count
+        let editedAgent = viewModel.saveAgent(
+            id: agent.id,
+            name: agent.name,
+            address: replacementAddress
+        )!
+
+        XCTAssertEqual(viewModel.connectionState, .disconnected)
+        await waitForAvailabilityCheck(
+            on: transport,
+            address: replacementAddress,
+            minimumCount: replacementChecksBeforeRefresh + 1
+        )
+        XCTAssertTrue(viewModel.isAgentOnline(editedAgent))
+        XCTAssertFalse(viewModel.isAgentOnline(agent))
     }
 
     // queueing while offline
@@ -1960,6 +2113,22 @@ final class NetworkRecoveryTests: XCTestCase {
             await Task.yield()
         }
         XCTAssertFalse(transport.fetchedSkillAddresses.isEmpty)
+    }
+
+    private func waitForAvailabilityCheck(
+        on transport: MockAgentTransport,
+        address: String,
+        minimumCount: Int = 1
+    ) async {
+        for _ in 0..<200 {
+            if transport.checkedAvailabilityAddresses.filter({ $0 == address }).count >= minimumCount {
+                await Task.yield()
+                await Task.yield()
+                return
+            }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        XCTFail("Timed out waiting for an availability check for \(address)")
     }
 
     private func waitForSentPrompt(transport: MockAgentTransport) async {
