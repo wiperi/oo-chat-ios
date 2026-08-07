@@ -3,6 +3,17 @@ import XCTest
 @testable import OOChatIOS
 
 @MainActor
+final class StatusPillTests: XCTestCase {
+    func testOnlineAndOfflineLabelsDescribeAgentPresence() {
+        let onlineWindow = ViewHost.host(StatusPill(isOnline: true).padding())
+        let offlineWindow = ViewHost.host(StatusPill(isOnline: false).padding())
+
+        XCTAssertNotNil(ViewHost.element(labelContains: "Agent status: Online", in: onlineWindow))
+        XCTAssertNotNil(ViewHost.element(labelContains: "Agent status: Offline", in: offlineWindow))
+    }
+}
+
+@MainActor
 final class ChatSidebarHeaderViewTests: XCTestCase {
     func testHeaderShowsBrandConnectionSummaryAndSearchAction() {
         var toggleCount = 0

@@ -226,7 +226,7 @@ struct ChatScreen: View {
                         .contentTransition(.opacity)
 
                     HStack {
-                        StatusPill(state: viewModel.connectionState)
+                        StatusPill(isOnline: viewModel.isActiveAgentOnline)
                     }
                     .contentTransition(.opacity)
                 }

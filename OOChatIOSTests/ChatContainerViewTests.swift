@@ -72,6 +72,40 @@ final class ChatViewTests: XCTestCase {
         XCTAssertNotNil(ViewHost.element(labelContains: "Chat mode: Safe", in: window))
     }
 
+    func testToolbarPresenceMatchesSidebarWithoutConversationSocket() async {
+        let fixture = ChatContainerFixture()
+        let conversation = fixture.conversation()
+        let transport = MockAgentTransport()
+        let monitor = MockNetworkMonitor()
+        transport.agentAvailabilityByAddress[fixture.agent.address] = .online
+        let viewModel = makeContainerViewModel(
+            agents: [fixture.agent],
+            conversations: [conversation],
+            activeAgentID: fixture.agent.id,
+            activeConversationID: conversation.id,
+            client: transport,
+            networkMonitor: monitor
+        )
+        let window = ViewHost.host(
+            NavigationStack {
+                ChatView(viewModel: viewModel)
+            }
+        )
+
+        monitor.simulate(online: true)
+        let deadline = Date().addingTimeInterval(1)
+        while !viewModel.isActiveAgentOnline, Date() < deadline {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        ViewHost.pump()
+
+        XCTAssertTrue(viewModel.isActiveAgentOnline)
+        XCTAssertEqual(viewModel.connectionState, .disconnected)
+        XCTAssertNotNil(
+            ViewHost.element(labelContains: "Agent status: Online", in: window)
+        )
+    }
+
     func testEmptyConversationShowsStartersAndPopulatesComposer() {
         let fixture = ChatContainerFixture()
         let conversation = fixture.conversation()
@@ -237,7 +271,9 @@ private func makeContainerViewModel(
     agents: [AgentConnection],
     conversations: [Conversation],
     activeAgentID: String? = nil,
-    activeConversationID: String? = nil
+    activeConversationID: String? = nil,
+    client: MockAgentTransport = MockAgentTransport(),
+    networkMonitor: MockNetworkMonitor = MockNetworkMonitor()
 ) -> ChatViewModel {
     let repository = InMemoryConversationRepository(
         snapshot: ChatSnapshot(
@@ -249,7 +285,7 @@ private func makeContainerViewModel(
     )
     return ChatViewModel(
         store: repository,
-        client: MockAgentTransport(),
-        networkMonitor: MockNetworkMonitor()
+        client: client,
+        networkMonitor: networkMonitor
     )
 }

@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct StatusPill: View {
-    let state: ConnectionState
+    let isOnline: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -16,7 +16,7 @@ struct StatusPill: View {
         .font(.caption)
         .animation(statusTransition, value: label)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Connection status: \(label)")
+        .accessibilityLabel("Agent status: \(label)")
     }
 
     private var statusContent: some View {
@@ -36,7 +36,7 @@ struct StatusPill: View {
             Circle()
                 .frame(width: 6, height: 6)
 
-            Text("Reconnecting")
+            Text("Offline")
                 .lineLimit(1)
         }
     }
@@ -46,24 +46,10 @@ struct StatusPill: View {
     }
 
     private var label: String {
-        switch state {
-        case .connected:
-            return "Connected"
-        case .reconnecting:
-            return "Reconnecting"
-        case .disconnected:
-            return "Disconnected"
-        }
+        isOnline ? "Online" : "Offline"
     }
 
     private var statusColor: Color {
-        switch state {
-        case .connected:
-            return .green
-        case .reconnecting:
-            return .orange
-        case .disconnected:
-            return .secondary
-        }
+        isOnline ? .green : .secondary
     }
 }

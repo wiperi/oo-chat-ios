@@ -143,6 +143,16 @@ final class ChatViewModel: ObservableObject {
         return recoveryCoordinator.connectionState(forConversationID: activeConversationID)
     }
 
+    /// Agent-level presence shown in both the sidebar and the chat toolbar.
+    /// This deliberately includes proactive availability checks as well as a
+    /// live conversation socket so the two indicators cannot disagree.
+    var isActiveAgentOnline: Bool {
+        guard let activeAgent else {
+            return false
+        }
+        return isAgentOnline(activeAgent)
+    }
+
     var isProcessing: Bool {
         guard let activeConversationID else {
             return false

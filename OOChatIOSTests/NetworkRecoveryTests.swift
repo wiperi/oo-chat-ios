@@ -303,6 +303,7 @@ final class NetworkRecoveryTests: XCTestCase {
         )
 
         XCTAssertTrue(viewModel.isAgentOnline(agent))
+        XCTAssertTrue(viewModel.isActiveAgentOnline)
         XCTAssertEqual(viewModel.onlineAgentCount, 1)
         XCTAssertTrue(transport.connectedAddresses.isEmpty)
         XCTAssertEqual(viewModel.connectionState, .disconnected)
