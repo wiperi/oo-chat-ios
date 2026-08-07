@@ -35,11 +35,12 @@ actor HostedAgentDiscovery {
     /// a temporary network problem does not erase the last known UI state.
     func checkAvailability(agentAddress: String) async -> AgentAvailability {
         for httpURL in localEndpoints {
-            if (try? await probe(
+            let directResult = try? await probe(
                 httpURL: httpURL,
                 agentAddress: agentAddress,
                 timeout: 1.2
-            )) != nil {
+            )
+            guard directResult == nil else {
                 return .online
             }
         }
@@ -181,19 +182,7 @@ actor HostedAgentDiscovery {
             socket.cancel(with: .goingAway, reason: nil)
         }
 
-        let data: Data
-        switch message {
-        case .string(let text):
-            guard let encoded = text.data(using: .utf8) else {
-                throw HostedAgentClientError.badFrame
-            }
-            data = encoded
-        case .data(let encoded):
-            data = encoded
-        @unknown default:
-            throw HostedAgentClientError.badFrame
-        }
-
+        let data = try webSocketData(from: message)
         let response = try JSONDecoder().decode(RelayLookupResponse.self, from: data)
         guard response.type == "AGENT_INFO",
               response.agent?.address == agentAddress,
@@ -201,6 +190,20 @@ actor HostedAgentDiscovery {
             throw HostedAgentClientError.badFrame
         }
         return online ? .online : .offline
+    }
+
+    private func webSocketData(from message: URLSessionWebSocketTask.Message) throws -> Data {
+        switch message {
+        case .string(let text):
+            guard let data = text.data(using: .utf8) else {
+                throw HostedAgentClientError.badFrame
+            }
+            return data
+        case .data(let data):
+            return data
+        @unknown default:
+            throw HostedAgentClientError.badFrame
+        }
     }
 
     private func normalizedSkills(_ skills: [AgentSkill]) -> [AgentSkill] {

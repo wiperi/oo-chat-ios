@@ -5,11 +5,11 @@ import XCTest
 private final class DiscoveryURLProtocol: URLProtocol {
     static var responses: [String: Result<(statusCode: Int, data: Data), Error>] = [:]
 
-    override class func canInit(with request: URLRequest) -> Bool {
+    override static func canInit(with request: URLRequest) -> Bool {
         true
     }
 
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+    override static func canonicalRequest(for request: URLRequest) -> URLRequest {
         request
     }
 
@@ -171,7 +171,7 @@ final class MockHostedAgentTests: XCTestCase {
             directURL: .success((
                 statusCode: 200,
                 data: Data("{\"address\": \"\(endpointA)\"}".utf8)
-            )),
+            ))
         ]
         defer { DiscoveryURLProtocol.responses = [:] }
 
