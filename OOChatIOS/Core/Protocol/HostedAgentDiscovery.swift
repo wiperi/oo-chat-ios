@@ -13,18 +13,26 @@ actor HostedAgentDiscovery {
     private let session: URLSession
     private let relayURL: String
     private let localEndpoints: [String]
+    private let socketFactory: HostedAgentWebSocketFactory
 
-    init(session: URLSession, relayURL: String, localEndpoints: [String]) {
+    init(
+        session: URLSession,
+        relayURL: String,
+        localEndpoints: [String],
+        socketFactory: HostedAgentWebSocketFactory? = nil
+    ) {
         self.session = session
         self.relayURL = relayURL
         self.localEndpoints = localEndpoints
+        self.socketFactory = socketFactory ?? { session.webSocketTask(with: $0) }
     }
 
     /// Checks whether the agent is currently reachable without opening a chat
     /// session. Direct `/info` is authoritative for local agents; the relay's
-    /// explicit `online` flag is used for hosted agents. A transport or decode
-    /// failure is deliberately inconclusive so a temporary network problem does
-    /// not erase the last known UI state.
+    /// `/ws/lookup` response is authoritative for hosted agents. The relay's
+    /// HTTP registry only exposes cached metadata and does not include live
+    /// presence. A transport or decode failure is deliberately inconclusive so
+    /// a temporary network problem does not erase the last known UI state.
     func checkAvailability(agentAddress: String) async -> AgentAvailability {
         for httpURL in localEndpoints {
             if (try? await probe(
@@ -37,18 +45,19 @@ actor HostedAgentDiscovery {
         }
 
         let normalizedRelay = relayURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let relayHTTP = normalizedRelay.replacingOccurrences(of: "wss://", with: "https://")
-            .replacingOccurrences(of: "ws://", with: "http://")
-        guard let url = URL(string: "\(relayHTTP)/api/relay/agents/\(agentAddress)") else {
+        let relayWebSocket = normalizedRelay
+            .replacingOccurrences(of: "https://", with: "wss://")
+            .replacingOccurrences(of: "http://", with: "ws://")
+        guard let url = URL(string: "\(relayWebSocket)/ws/lookup") else {
             return .unknown
         }
 
         do {
-            let relayInfo: AgentInfo = try await fetchJSON(url: url, timeout: 3.0)
-            guard let online = relayInfo.online else {
-                return .unknown
-            }
-            return online ? .online : .offline
+            return try await lookupAvailability(
+                url: url,
+                agentAddress: agentAddress,
+                timeout: 3.0
+            )
         } catch {
             return .unknown
         }
@@ -132,6 +141,68 @@ actor HostedAgentDiscovery {
         return try JSONDecoder().decode(T.self, from: data)
     }
 
+    private func lookupAvailability(
+        url: URL,
+        agentAddress: String,
+        timeout: TimeInterval
+    ) async throws -> AgentAvailability {
+        let socket = socketFactory(url)
+        socket.resume()
+        defer {
+            socket.cancel(with: .normalClosure, reason: nil)
+        }
+
+        let request = RelayLookupRequest(type: "GET_AGENT", address: agentAddress)
+        let requestData = try JSONEncoder().encode(request)
+        guard let requestText = String(data: requestData, encoding: .utf8) else {
+            throw HostedAgentClientError.badFrame
+        }
+        try await socket.send(.string(requestText))
+
+        let message = try await withTaskCancellationHandler {
+            try await withThrowingTaskGroup(
+                of: URLSessionWebSocketTask.Message.self
+            ) { group in
+                group.addTask {
+                    try await socket.receive()
+                }
+                group.addTask {
+                    try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                    socket.cancel(with: .goingAway, reason: nil)
+                    throw HostedAgentClientError.timeout
+                }
+                guard let first = try await group.next() else {
+                    throw HostedAgentClientError.badFrame
+                }
+                group.cancelAll()
+                return first
+            }
+        } onCancel: {
+            socket.cancel(with: .goingAway, reason: nil)
+        }
+
+        let data: Data
+        switch message {
+        case .string(let text):
+            guard let encoded = text.data(using: .utf8) else {
+                throw HostedAgentClientError.badFrame
+            }
+            data = encoded
+        case .data(let encoded):
+            data = encoded
+        @unknown default:
+            throw HostedAgentClientError.badFrame
+        }
+
+        let response = try JSONDecoder().decode(RelayLookupResponse.self, from: data)
+        guard response.type == "AGENT_INFO",
+              response.agent?.address == agentAddress,
+              let online = response.agent?.online else {
+            throw HostedAgentClientError.badFrame
+        }
+        return online ? .online : .offline
+    }
+
     private func normalizedSkills(_ skills: [AgentSkill]) -> [AgentSkill] {
         var seen: Set<String> = []
         return skills.compactMap { skill in
@@ -211,4 +282,14 @@ actor HostedAgentDiscovery {
         let scheme = httpURL.hasPrefix("https://") ? "wss" : "ws"
         return "\(scheme)://\(base)/ws"
     }
+}
+
+private struct RelayLookupRequest: Encodable {
+    let type: String
+    let address: String
+}
+
+private struct RelayLookupResponse: Decodable {
+    let type: String
+    let agent: AgentInfo?
 }
